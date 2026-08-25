@@ -8,18 +8,59 @@ The engine has now been **verified line by line against the actual Pine source.*
 
 ---
 
-## ⚠️ Please read first — NY AM session mismatch
+## ⚠️ One question before go-live: your NY AM session time
 
-One discrepancy remains open, and **only the client can settle it**:
+There's one setting I need you to check on your own TradingView chart. It takes about
+thirty seconds, and it affects every single buy signal the bot produces.
 
-| | NY AM window |
-| :--- | :--- |
-| Implementation Guide v2 states | `0930-1200` |
-| The Pine source ships as its default | `0930-1100` |
+### What I need you to do
 
-The bot currently uses **`0930-1200`**, following the guide. If the client never changed that input on their own chart, their indicator is running `0930-1100` — and every NY AM reference high/low the bot locks will be wrong, which in turn moves the sweep, the FVG and the BUY.
+Open your chart, click the settings gear next to **GPS SYSTEM INDICATOR ALGO**, and find the
+row labelled **NY AM**. There's a time box next to it. Just tell me what it says — it will
+look like `0930-1100` or `0930-1200`.
 
-**Please confirm the NY AM window in the client's indicator settings.** It is editable in the bot under *Advanced → Session Windows*, so this is a one-field change either way.
+### Why this one number matters so much
+
+The two documents I was given disagree:
+
+- The **implementation guide** says your NY AM session runs **9:30 to 12:00**
+- The **indicator's own code** ships with **9:30 to 11:00** as its default
+
+I have no way to tell from the outside which one you're actually running, because you may or
+may not have changed it on your chart.
+
+Here's why it changes everything downstream.
+
+The indicator draws a box around each trading session and remembers **the lowest price inside
+that box**. That low becomes the trigger line. The bot then waits for price to dip below it —
+and that dip is what starts every trade. No dip below the line, no trade at all.
+
+Now: if your session ends at **12:00**, the box covers everything up to noon. If it ends at
+**11:00**, everything after eleven is left outside the box entirely.
+
+So picture a morning where price makes its low at **11:40**.
+
+- With the **12:00** setting, that low sits inside the box and becomes the trigger line.
+- With the **11:00** setting, it doesn't. The trigger line ends up higher — wherever the
+  lowest price happened to be before eleven.
+
+Two different trigger lines, at two different prices. Price could easily dip below one and
+never touch the other. **One setting produces a trade, the other produces nothing — from the
+exact same chart on the exact same day.**
+
+And because the trigger line is the first domino, everything after it moves too: the sweep
+fires at a different moment, the FVG forms in a different place, and the buy lands on a
+different candle — or never comes at all.
+
+That's why I'd rather ask than guess. If I set the bot to 12:00 and you're actually running
+11:00, the bot's signals will quietly drift away from what you see on your chart, and it would
+be genuinely difficult for either of us to work out why.
+
+### Either way, it's a quick fix
+
+The bot is currently set to **9:30–12:00**, following the implementation guide. All four
+session times are editable in the bot under *Advanced → Session Windows*, so the moment you
+confirm the number, it's a one-field change and we're done.
 
 ---
 
@@ -151,7 +192,7 @@ Values are the client's confirmed live settings, not the Pine defaults. Settings
 | :--- | :--- | :--- |
 | Asia | `2000-0000` | **ENABLED** |
 | London | `0200-0500` | **ENABLED** |
-| NY AM | `0930-1200` ⚠️ | **ENABLED** — see the note at the top |
+| NY AM | `0930-1200` ⚠️ | **ENABLED** — please confirm this one, see top of page |
 | NY Lunch | `1200-1300` | **DISABLED** — excluded from the signal loop |
 
 All four are editable, to match whatever is set on the client's chart.
@@ -217,7 +258,7 @@ Coverage includes: the full signal sequence with each milestone on its own bar; 
 
 1. Load `gps_bot.html` into Liquid Charts Pro as an external widget.
 2. Set **Instrument** to the broker's exact symbol name (reference test: XAUUSD on M5). If no candles arrive within 20 seconds, this field is almost always why.
-3. Confirm the **NY AM window** matches the client's chart (see the note at the top).
+3. Confirm the **NY AM session time** matches your chart — see the question at the top of this page.
 4. Leave **Trading mode** on **Dry Run**.
 5. Open the GPS indicator on TradingView on the same pair and timeframe.
 6. Press **Start Bot**.
