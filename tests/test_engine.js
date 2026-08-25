@@ -118,10 +118,16 @@ sandbox.cfg = {
   tradingMode: "live", sizingMode: "fixed", fixedLots: 0.1, riskPct: 1, hardMaxLot: 2,
   confirmOrders: false,
   sessions: { "ASIA": true, "LONDON": true, "NY AM": true, "NY LUNCH": false },
-  preSessionFvg: true, maxCarryBars: 50,
-  requireRetest: true, strictRetest: true, requireBullish: true, requireOpenBelow: true, minBodyPct: 15,
+  sessionWindows: {
+    "ASIA":     { open: 20 * 60,     close: 24 * 60 },
+    "LONDON":   { open: 2 * 60,      close: 5 * 60 },
+    "NY AM":    { open: 9 * 60 + 30, close: 12 * 60 },
+    "NY LUNCH": { open: 12 * 60,     close: 13 * 60 }
+  },
+  persistSessions: true, preSessionFvg: true, maxCarryBars: 50,
+  requireRetest: true, strictRetest: false, requireBullish: true, requireOpenBelow: true, minBodyPct: 15,
   invalidateFvg: false, volumeFilter: false, sizeFilter: false,
-  swingLookback: 50, pivotWidth: 2, tpAtrSpacing: 0.5,
+  swingLookback: 50, pivotWidth: 1, tpAtrSpacing: 0.5,
   attachSl: true, attachTp: true, slBuffer: 0,
   enableAddOns: true, maxAddOns: 3, addOnCooldown: 3, addOnLots: 0.05, addOnRiskPct: 0.5,
   maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
@@ -175,10 +181,12 @@ const checks = [
   ["order is a BUY", sentOrders.length > 0 && sentOrders[0].tradingAction === "BUY"],
   ["order SL == 2001.8", sentOrders.length > 0 && Math.abs(sentOrders[0].sl - 2001.8) < 1e-9],
   ["add-on fired", s.addons >= 1],
-  ["retest is NOT on the FVG formation bar",
-    !logLines.some(l => l.includes("00:15") && l.includes("FVG RETEST"))],
-  ["retest logged on the later bar 00:20",
-    logLines.some(l => l.includes("00:20") && l.includes("FVG RETEST"))],
+  // Pine marks the zone tested on the FORMATION bar (low == fvg_top there), and step 3 runs
+  // in the same bar pass. Verified against the source; strictRetest=false reproduces it.
+  ["retest IS marked on the FVG formation bar (matches Pine)",
+    logLines.some(l => l.includes("00:15") && l.includes("FVG RETEST"))],
+  ["fire is still blocked on the formation bar by above_fvg",
+    !logLines.some(l => l.includes("00:15") && l.includes("BUY SIGNAL"))],
   ["initial BUY and add-on are on DIFFERENT bars",
     (() => {
       const buy = logLines.find(l => l.includes("*** BUY SIGNAL ***"));

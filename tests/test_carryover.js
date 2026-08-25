@@ -90,7 +90,8 @@ function buildCrossSession() {
   check("B: expiry reset fired after 50 bars", lines.some((l) => /carry-over exceeded 50 bars/.test(l)));
   check("B: sweep cleared by the reset", s.sweep === false);
   check("B: no order was placed", sb.__orders.length === 0);
-  check("B: ref levels survived the reset", s.ref_low !== null);
+  // Pine's sig_reset() clears ref_high/ref_low/ref_name outright (ref_name := "").
+  check("B: sig_reset cleared the ref levels (matches Pine sig_reset)", s.ref_low === null);
 }
 
 // ---------- Scenario C: NY Lunch is not a signal session ----------

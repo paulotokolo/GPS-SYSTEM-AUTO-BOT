@@ -62,10 +62,16 @@ function defaultCfg(over) {
     tradingMode: "live", sizingMode: "fixed", fixedLots: 0.1, riskPct: 1, hardMaxLot: 2,
     confirmOrders: false,
     sessions: { "ASIA": true, "LONDON": true, "NY AM": true, "NY LUNCH": false },
-    preSessionFvg: true, maxCarryBars: 50,
-    requireRetest: true, strictRetest: true, requireBullish: true, requireOpenBelow: true,
+    sessionWindows: {
+      "ASIA":     { open: 20 * 60,     close: 24 * 60 },
+      "LONDON":   { open: 2 * 60,      close: 5 * 60 },
+      "NY AM":    { open: 9 * 60 + 30, close: 12 * 60 },
+      "NY LUNCH": { open: 12 * 60,     close: 13 * 60 }
+    },
+    persistSessions: true, preSessionFvg: true, maxCarryBars: 50,
+    requireRetest: true, strictRetest: false, requireBullish: true, requireOpenBelow: true,
     minBodyPct: 15, invalidateFvg: false, volumeFilter: false, sizeFilter: false,
-    swingLookback: 50, pivotWidth: 2, tpAtrSpacing: 0.5,
+    swingLookback: 50, pivotWidth: 1, tpAtrSpacing: 0.5,
     attachSl: true, attachTp: true, slBuffer: 0,
     enableAddOns: true, maxAddOns: 3, addOnCooldown: 3, addOnLots: 0.05, addOnRiskPct: 0.5,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true

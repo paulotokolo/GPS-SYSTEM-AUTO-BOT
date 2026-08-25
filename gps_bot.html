@@ -111,6 +111,21 @@ button:active { transform: scale(0.98); }
   background: #0c1224; border: 1px solid rgba(111,227,255,0.15); color: #5b6788;
 }
 .step.done { background: rgba(38,214,166,0.14); border-color: rgba(38,214,166,0.4); color: #4dffcf; }
+/* Amber = provisionally true on the still-forming bar; confirms only when the bar closes. */
+.step.pending {
+  background: rgba(255,183,77,0.14); border-color: rgba(255,183,77,0.45); color: #ffcf6f;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+.live-bar {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
+  font-size: 11px; letter-spacing: 0.3px; opacity: 0.85;
+}
+.live-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #5b6788; flex: 0 0 auto;
+}
+.live-dot.on { background: #4dffcf; box-shadow: 0 0 8px rgba(77,255,207,0.8); animation: pulse 1.4s ease-in-out infinite; }
+.state-value.pending { color: #ffcf6f; }
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
 .stat-box { background: #0c1224; border: 1px solid rgba(111,227,255,0.18); border-radius: 10px; padding: 10px 12px; }
 .stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.6; display: block; margin-bottom: 4px; }
@@ -152,6 +167,10 @@ button:active { transform: scale(0.98); }
   <!-- ---------------- Live signal state ---------------- -->
   <fieldset>
     <legend>Signal State (live)</legend>
+    <div class="live-bar">
+      <span class="live-dot" id="liveDot"></span>
+      <span id="liveText">Idle — press Start Bot</span>
+    </div>
     <div class="step-track">
       <div class="step" id="stepRef">Ref Locked</div>
       <div class="step" id="stepSweep">Sweep</div>
@@ -173,7 +192,14 @@ button:active { transform: scale(0.98); }
       <div class="state-box"><span class="state-label">Carry-over bars</span><span class="state-value" id="stCarry">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Add-ons used</span><span class="state-value" id="stAddons">0 / 3</span></div>
       <div class="state-box"><span class="state-label">Bar / NY time</span><span class="state-value" id="stBar">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Live price (forming bar)</span><span class="state-value" id="stLivePrice">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Next bar closes in</span><span class="state-value" id="stCountdown">&mdash;</span></div>
     </div>
+    <small class="hint">
+      Green = confirmed on a closed bar. <b style="color:#ffcf6f">Amber = forming</b> — true right now on the
+      live bar but not yet confirmed. The indicator evaluates on <code>barstate.isconfirmed</code>, so signals
+      only become real at bar close; amber tells you what is developing before then.
+    </small>
   </fieldset>
 
   <!-- ---------------- Core settings ---------------- -->
@@ -251,26 +277,33 @@ button:active { transform: scale(0.98); }
         Confirmed from the user's live indicator. NY Lunch (12:00&ndash;13:00) is DISABLED and is not
         a signal session. Times auto-adjust for EST/EDT daylight saving.
       </small>
-      <div class="row"><label>Asia 20:00&ndash;00:00</label><input type="checkbox" id="sessAsia" checked></div>
-      <div class="row"><label>London 02:00&ndash;05:00</label><input type="checkbox" id="sessLondon" checked></div>
-      <div class="row"><label>NY AM 09:30&ndash;12:00</label><input type="checkbox" id="sessNyam" checked></div>
-      <div class="row"><label>NY Lunch 12:00&ndash;13:00</label><input type="checkbox" id="sessNylunch"></div>
-      <small class="hint">NY Lunch stays OFF to match the confirmed settings. Turning it on deviates from the indicator.</small>
+      <div class="row"><label>Asia</label><input type="checkbox" id="sessAsia" checked><input type="text" id="sessAsiaTime" value="2000-0000"></div>
+      <div class="row"><label>London</label><input type="checkbox" id="sessLondon" checked><input type="text" id="sessLondonTime" value="0200-0500"></div>
+      <div class="row"><label>NY AM</label><input type="checkbox" id="sessNyam" checked><input type="text" id="sessNyamTime" value="0930-1200"></div>
+      <div class="row"><label>NY Lunch</label><input type="checkbox" id="sessNylunch"><input type="text" id="sessNylunchTime" value="1200-1300"></div>
+      <small class="hint">
+        Format <b>HHMM-HHMM</b>, EST. NY Lunch stays OFF to match the confirmed settings.<br>
+        <b>⚠️ NY AM discrepancy:</b> the implementation guide states <b>0930-1200</b> and that is
+        what is set here, but the Pine source ships <b>0930-1100</b> as its default. If the client
+        never changed that input on their chart, set this to <b>0930-1100</b> or the bot's NY AM
+        reference high/low will not match the indicator.
+      </small>
     </fieldset>
 
     <!-- ---------------- Signal engine ---------------- -->
     <fieldset>
       <legend>Signal Engine — confirmed indicator settings</legend>
       <small class="hint">These defaults are the user's confirmed values. Changing them will break parity with TradingView.</small>
+      <div class="row"><label>Persist Through Sessions</label><input type="checkbox" id="persistSessions" checked></div>
+      <small class="hint">ON (confirmed). While ON, a session opening never resets the setup — this is what the Pine <code>else if not sig_persist_session</code> branch means.</small>
       <div class="row"><label>Pre-Session FVG</label><input type="checkbox" id="preSessionFvg" checked></div>
       <div class="row"><label>Max carry-over bars</label><input type="number" id="maxCarryBars" value="50" step="1" min="1"></div>
       <div class="row"><label>Require retest of FVG</label><input type="checkbox" id="requireRetest" checked></div>
-      <div class="row"><label>Retest must be a later bar</label><input type="checkbox" id="strictRetest" checked></div>
+      <div class="row"><label>Retest must be a later bar</label><input type="checkbox" id="strictRetest"></div>
       <small class="hint">
         The FVG bar's own low equals the zone top, so a literal reading marks the zone "tested"
-        the instant it forms and the retest requirement stops filtering anything. ON (default)
-        makes the tap come from a later bar, matching "price must tap into the zone first".
-        Turn OFF only if the TradingView comparison shows the indicator firing earlier.
+        the instant it forms and the retest requirement stops filtering anything. OFF (default) matches the Pine source exactly. Turning it ON is a stricter reading
+        that will NOT match TradingView.
       </small>
       <div class="row"><label>Require bullish candle</label><input type="checkbox" id="requireBullish" checked></div>
       <div class="row"><label>Open at/below FVG top</label><input type="checkbox" id="requireOpenBelow" checked></div>
@@ -284,8 +317,8 @@ button:active { transform: scale(0.98); }
     <fieldset>
       <legend>TP / SL</legend>
       <div class="row"><label>Swing high lookback</label><input type="number" id="swingLookback" value="50" step="1" min="5"></div>
-      <div class="row"><label>Swing pivot width</label><input type="number" id="pivotWidth" value="2" step="1" min="1"></div>
-      <small class="hint">Bars either side that a high must exceed to count as a swing high.</small>
+      <div class="row"><label>Swing pivot width</label><input type="number" id="pivotWidth" value="1" step="1" min="1"></div>
+      <small class="hint">Bars either side that a high must exceed. The Pine source uses <b>1</b> — changing it shifts every TP level.</small>
       <div class="row"><label>Min TP spacing (ATR)</label><input type="number" id="tpAtrSpacing" value="0.5" step="0.1" min="0"></div>
       <div class="row"><label>Attach stop-loss</label><input type="checkbox" id="attachSl" checked></div>
       <div class="row"><label>Attach take-profit</label><input type="checkbox" id="attachTp" checked></div>
@@ -296,7 +329,8 @@ button:active { transform: scale(0.98); }
     <!-- ---------------- Add-ons ---------------- -->
     <fieldset>
       <legend>Add-On Entries</legend>
-      <div class="row"><label>Enable add-ons</label><input type="checkbox" id="enableAddOns" checked></div>
+      <div class="row"><label>Enable add-ons</label><input type="checkbox" id="enableAddOns"></div>
+      <small class="hint"><b>Not part of the indicator.</b> The Pine source has no add-on logic at all — these are extra bot-side entries from the implementation guide. Default OFF so every BUY the bot places corresponds 1:1 with a BUY label on TradingView. Turn ON only once signal parity is confirmed.</small>
       <div class="row"><label>Max add-ons</label><input type="number" id="maxAddOns" value="3" step="1" min="0"></div>
       <div class="row"><label>Cooldown bars</label><input type="number" id="addOnCooldown" value="3" step="1" min="0"></div>
       <div class="row"><label>Add-on lots</label><input type="number" id="addOnLots" value="0.05" step="0.01" min="0.01"></div>
@@ -383,16 +417,12 @@ function newSig() {
   };
 }
 
-// sig_reset() clears the SETUP but deliberately preserves ref_high/ref_low/ref_name.
-// The reference levels are locked session data, not part of the setup — Pine calls
-// sig_reset() on session open without reassigning a ref afterwards, so wiping the refs
-// here would leave the engine permanently unable to detect a sweep.
+// sig_reset() — verified against the Pine source (method sig_reset). It clears EVERYTHING,
+// reference levels included. Every caller that needs a ref reassigns it immediately afterwards.
+// (An earlier build preserved the refs here; the real indicator does not.)
 function sigReset(reason) {
-  if (!sig) { sig = newSig(); return; }
-  var keepHigh = sig.ref_high, keepLow = sig.ref_low, keepName = sig.ref_name;
-  var had = sig.sweep || sig.fvg_found || sig.fired;
+  var had = sig && (sig.sweep || sig.fvg_found || sig.fired);
   sig = newSig();
-  sig.ref_high = keepHigh; sig.ref_low = keepLow; sig.ref_name = keepName;
   if (had && reason) logBar("Setup reset — " + reason, "log-info");
 }
 
@@ -429,21 +459,27 @@ function nyParts(ts) {
   };
 }
 
-// Session windows in minutes-from-NY-midnight, [open, close). Asia closes exactly at
-// midnight, so no window here actually wraps across a day boundary.
-var SESSIONS = [
-  { name: "ASIA",     open: 20 * 60,      close: 24 * 60,      key: "sessAsia" },
-  { name: "LONDON",   open: 2 * 60,       close: 5 * 60,       key: "sessLondon" },
-  { name: "NY AM",    open: 9 * 60 + 30,  close: 12 * 60,      key: "sessNyam" },
-  { name: "NY LUNCH", open: 12 * 60,      close: 13 * 60,      key: "sessNylunch" }
-];
+// Parses a Pine session string ("2000-0000", "0930-1200") into minutes from NY midnight.
+// A close of "0000" means end-of-day, matching Pine, so nothing here wraps across midnight.
+function parseSessionWindow(str) {
+  var m = /^\s*(\d{2})(\d{2})\s*-\s*(\d{2})(\d{2})\s*$/.exec(str || "");
+  if (!m) return null;
+  var open = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  var close = parseInt(m[3], 10) * 60 + parseInt(m[4], 10);
+  if (close === 0) close = 24 * 60;   // "0000" as a close time = midnight at end of day
+  if (close <= open) return null;
+  return { open: open, close: close };
+}
 
 // Which enabled session does this bar's open time fall inside? null = no signal session.
+// Windows come from config so they can be matched to whatever is set on the client's chart.
 function sessionAt(mins) {
-  for (var i = 0; i < SESSIONS.length; i++) {
-    var s = SESSIONS[i];
-    if (!cfg.sessions[s.name]) continue; // disabled — never a signal session
-    if (mins >= s.open && mins < s.close) return s.name;
+  var order = ["ASIA", "LONDON", "NY AM", "NY LUNCH"];
+  for (var i = 0; i < order.length; i++) {
+    var name = order[i];
+    if (!cfg.sessions[name]) continue;      // disabled — excluded from _kz, never a signal session
+    var w = cfg.sessionWindows[name];
+    if (w && mins >= w.open && mins < w.close) return name;
   }
   return null;
 }
@@ -517,20 +553,26 @@ function processBar(idx) {
     }
     activeSession = null;
 
-    // ---- SESSION OPEN -> Pre-Session FVG handling (user has this ON) ----
+    // ---- SESSION OPEN -> Pre-Session FVG handling ----
+    // Pine:
+    //   if sig_presession_fvg and (sweep or fvg_found) and not fired
+    //       if na(presess_bar): presess_bar := bar_index
+    //   else if not sig_persist_session
+    //       sig_reset()
+    //
+    // With Persist Through Sessions ON (the confirmed setting) that else-branch can never
+    // run, so a session opening NEVER resets anything. An earlier build reset here whenever
+    // no setup was active, which silently wiped `fired` and re-armed the setup a session
+    // early — a direct source of BUYs the indicator does not produce.
     if (sessName) {
-      if (cfg.preSessionFvg) {
-        if (hasActiveSetup()) {
-          // DO NOT reset — carry the setup across the boundary, just mark the start bar.
-          if (sig.presess_bar === null) {
-            sig.presess_bar = barIndex;
-            logBar("SESSION OPEN — " + sessName + ": active setup carried over (pre-session FVG ON)", "log-sig");
-          }
-        } else {
-          sigReset("session open, no active setup");
+      if (cfg.preSessionFvg && hasActiveSetup()) {
+        // DO NOT reset — carry the setup across the boundary, just mark the start bar.
+        if (sig.presess_bar === null) {
+          sig.presess_bar = barIndex;
+          logBar("SESSION OPEN — " + sessName + ": active setup carried over (pre-session FVG ON)", "log-sig");
         }
-      } else {
-        sigReset("session open (pre-session FVG OFF)");
+      } else if (!cfg.persistSessions) {
+        sigReset("session open (Persist Through Sessions is OFF)");
       }
       activeSession = { name: sessName, dayKey: ny.dayKey, high: bar.h, low: bar.l };
     }
@@ -574,6 +616,8 @@ function processBar(idx) {
       sig.fvg_bar       = barIndex;
       sig.fvg_swing_low = mid.l;  // MIDDLE candle low = STOP LOSS
       sig.fvg_found     = true;
+      sig.fvg_tested    = false;  // Pine clears this explicitly at formation
+
       logBar("FIRST FVG FOUND — zone " + fmt(sig.fvg_bot) + " -> " + fmt(sig.fvg_top) +
              "  |  SL (fvg_swing_low) = " + fmt(sig.fvg_swing_low), "log-sig");
     }
@@ -587,20 +631,25 @@ function processBar(idx) {
 
     // Track the retest — price enters the zone.
     //
-    // The FVG-forming bar's own low IS fvg_top by definition, so a literal transcription of
-    // the Pine line marks the setup "tested" on the formation bar itself and the Require-Retest
-    // gate then blocks nothing at all. The confirmed settings describe this as "price must tap
-    // into the zone first", and the documented sequence lists FVG Found and FVG Retest as two
-    // separate events, so by default the retest must come from a LATER bar. Turn strictRetest
-    // off to fall back to the literal Pine behaviour if the side-by-side check calls for it.
+    // Pine runs this on the formation bar too, where low == fvg_top, so the zone is marked
+    // tested the moment it forms. That is the indicator's real behaviour, so strictRetest
+    // now defaults OFF to match it exactly. Turning it ON requires the tap to come from a
+    // later bar — a stricter reading that no longer matches TradingView.
     if (!sig.fvg_tested && bar.l <= sig.fvg_top && (!cfg.strictRetest || barIndex > sig.fvg_bar)) {
       sig.fvg_tested = true;
       logBar("FVG RETEST — price tapped the zone (low " + fmt(bar.l) + " <= top " + fmt(sig.fvg_top) + ")", "log-sig");
     }
 
-    // Invalidation is OFF in the confirmed settings, so the zone is never killed here.
-    if (cfg.invalidateFvg && bar.l < sig.fvg_bot) {
-      sigReset("FVG filled (invalidation enabled)");
+    // Invalidation (OFF in the confirmed settings). Pine tests CLOSE below fvg_bot, and clears
+    // only the FVG fields — the sweep and swing_low survive, so the setup goes back to hunting
+    // for a new FVG rather than being torn down completely.
+    if (cfg.invalidateFvg && bar.c < sig.fvg_bot) {
+      sig.fvg_found  = false;
+      sig.fvg_tested = false;
+      sig.fvg_top    = null;
+      sig.fvg_bot    = null;
+      sig.fvg_bar    = null;
+      logBar("FVG INVALIDATED — close below zone bottom; hunting for a new FVG", "log-info");
     } else {
       // ---- Signal fire — every enabled condition must pass ----
       var above_fvg  = (barIndex > sig.fvg_bar) && (bar.c > sig.fvg_top);
@@ -612,7 +661,7 @@ function processBar(idx) {
       var body_size  = bar.c - bar.o;
       var body_above = bar.c - sig.fvg_top;
       var body_pct_above = body_size > 0 ? (body_above / body_size) * 100.0 : 0.0;
-      var body_ok    = body_pct_above >= cfg.minBodyPct;
+      var body_ok    = cfg.minBodyPct <= 0 || body_pct_above >= cfg.minBodyPct;
 
       // Volume and candle-size filters are OFF — treated as always passing, never evaluated.
       var vol_ok  = true;
@@ -658,32 +707,50 @@ function processBar(idx) {
 //  TP / SL RESOLUTION
 // =====================================================================================
 
-// A swing high is a bar whose high exceeds every high within `width` bars either side.
-// Scans back `lookback` bars from the entry bar, newest-first through the store.
-function findSwingHighs(entryIdx, lookback, width) {
+// Mirrors Pine's find_swing_highs(). A swing high is a bar whose high exceeds the bar on
+// EITHER SIDE by `width` bars — Pine compares high[i] against high[i+1] and high[i-1], i.e.
+// a 1-bar fractal, which is why pivotWidth now defaults to 1. (An earlier build used 2,
+// which skipped valid levels and shifted every TP.)
+//
+// Pine indexes i bars back from the signal bar; here that is store index entryIdx + i, with
+// LOWER indices being NEWER bars. i runs 1..safe_lb-1, so high[i-1] can be the signal bar.
+function findSwingHighs(entryIdx, lookback, width, abovePrice) {
   var out = [];
   var n = tradingStore.length;
-  for (var j = entryIdx + width; j <= entryIdx + lookback; j++) {
-    if (j + width >= n) break;              // not enough older bars to confirm the pivot
+  var safeLb = Math.min(lookback, barIndex - 1);
+  if (safeLb < 2) return out;
+
+  var mintick = priceDecimals > 0 ? Math.pow(10, -priceDecimals) : 0.00001;
+
+  for (var i = width; i <= safeLb - width; i++) {
+    var j = entryIdx + i;
+    if (j + width >= n) break;                  // not enough older bars to confirm the pivot
     var pivot = tradingStore.GetCandle(j);
     if (!pivot) break;
+
     var isSwing = true;
     for (var k = 1; k <= width; k++) {
-      var newer = tradingStore.GetCandle(j - k); // toward the entry bar
+      var newer = tradingStore.GetCandle(j - k); // toward (and including) the signal bar
       var older = tradingStore.GetCandle(j + k);
       if (!newer || !older) { isSwing = false; break; }
       if (pivot.h <= newer.h || pivot.h <= older.h) { isSwing = false; break; }
     }
-    if (isSwing) out.push(pivot.h);
+    if (!isSwing || pivot.h <= abovePrice) continue;
+
+    // Pine deduplicates candidates that match within one mintick.
+    var dup = false;
+    for (var d = 0; d < out.length; d++) {
+      if (Math.abs(out[d] - pivot.h) < mintick) { dup = true; break; }
+    }
+    if (!dup) out.push(pivot.h);
   }
   return out;
 }
 
 // TP1/TP2/TP3 = the nearest swing highs above entry, each at least
-// (tpAtrSpacing x ATR14) above the previous one.
+// (tpAtrSpacing x ATR14) above the previous KEPT level — matching Pine's last_kept filter.
 function resolveTps(entryPrice, entryIdx, atr) {
-  var highs = findSwingHighs(entryIdx, cfg.swingLookback, cfg.pivotWidth);
-  var above = highs.filter(function (h) { return h > entryPrice; });
+  var above = findSwingHighs(entryIdx, cfg.swingLookback, cfg.pivotWidth, entryPrice);
   above.sort(function (a, b) { return a - b; }); // ascending from entry price
 
   var minGap = (atr || 0) * cfg.tpAtrSpacing;
@@ -989,32 +1056,144 @@ function setStep(id, on) {
   if (el) el.className = on ? "step done" : "step";
 }
 
+// The still-forming bar (store index 0). Everything "live" is derived from this.
+function formingBar() {
+  if (!tradingStore || !tradingStore.length) return null;
+  return tradingStore.GetCandle(0);
+}
+
+// Provisional state: what is ALREADY true on the forming bar but not yet confirmed.
+// This drives the amber indicators only — it never touches sig or fires anything, because
+// the indicator itself runs on barstate.isconfirmed.
+function provisional() {
+  var p = { sweep: false, retest: false, fire: false, sweepLow: null };
+  var bar = formingBar();
+  if (!bar || !sig || !cfg) return p;
+
+  if (sig.ref_low !== null && !sig.sweep && !sig.fired && bar.l < sig.ref_low) {
+    p.sweep = true;
+    p.sweepLow = bar.l;
+  }
+  if (sig.fvg_found && !sig.fired && !sig.fvg_tested && bar.l <= sig.fvg_top) p.retest = true;
+
+  if (sig.fvg_found && !sig.fired) {
+    var tested   = sig.fvg_tested || bar.l <= sig.fvg_top;
+    var bodySize = bar.c - bar.o;
+    var bodyPct  = bodySize > 0 ? ((bar.c - sig.fvg_top) / bodySize) * 100 : 0;
+    p.fire = (barIndex >= sig.fvg_bar) && bar.c > sig.fvg_top &&
+             (!cfg.requireRetest || tested) &&
+             (!cfg.requireBullish || bar.c > bar.o) &&
+             (!cfg.requireOpenBelow || bar.o <= sig.fvg_top) &&
+             (cfg.minBodyPct <= 0 || bodyPct >= cfg.minBodyPct);
+  }
+  return p;
+}
+
+// Fires the moment price trades through the reference low, rather than waiting for the close.
+// Announced once per forming bar. The confirmed SWEEP DETECTED still comes at bar close.
+var liveSweepAlertTs = null;
+function checkLiveSweep(p, bar) {
+  if (!p.sweep || !bar) return;
+  if (liveSweepAlertTs === bar.ts) return;
+  liveSweepAlertTs = bar.ts;
+  log("⚡ SWEEP FORMING — price " + fmt(p.sweepLow) + " is through the " + sig.ref_name +
+      " ref_low " + fmt(sig.ref_low) + ". Confirms when this bar closes.", "log-sig");
+  beep();
+}
+
+function setStepState(id, done, pending) {
+  var el = document.getElementById(id);
+  if (el) el.className = done ? "step done" : (pending ? "step pending" : "step");
+}
+
+// Called both on bar close and ~1x/second by the live ticker, so the panel reflects the
+// current bar continuously instead of freezing between bar closes.
 function refreshStatePanel(ny) {
   if (replaying) return; // don't thrash the DOM through a few thousand replay bars
-  setStep("stepRef",    !!sig && sig.ref_low !== null);
-  setStep("stepSweep",  !!sig && sig.sweep);
-  setStep("stepFvg",    !!sig && sig.fvg_found);
-  setStep("stepRetest", !!sig && sig.fvg_tested);
-  setStep("stepFired",  !!sig && sig.fired);
 
-  var t = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+  var bar = formingBar();
+  var p = provisional();
+  if (isRunning) checkLiveSweep(p, bar);
+
+  setStepState("stepRef",    !!sig && sig.ref_low !== null, false);
+  setStepState("stepSweep",  !!sig && sig.sweep,      p.sweep);
+  setStepState("stepFvg",    !!sig && sig.fvg_found,  false);
+  setStepState("stepRetest", !!sig && sig.fvg_tested, p.retest);
+  setStepState("stepFired",  !!sig && sig.fired,      p.fire);
+
+  var t = function (id, v, cls) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = v;
+    el.className = "state-value" + (cls ? " " + cls : "");
+  };
   t("stRefName",  sig && sig.ref_name ? sig.ref_name : "—");
   t("stRefLevels", sig && sig.ref_low !== null ? fmt(sig.ref_low) + " / " + fmt(sig.ref_high) : "—");
   t("stFvgZone",  sig && sig.fvg_found ? fmt(sig.fvg_bot) + " → " + fmt(sig.fvg_top) : "—");
   t("stSl",       sig && sig.fvg_swing_low !== null ? fmt(sig.fvg_swing_low) : "—");
   t("stTps",      sig && sig.tps && sig.tps.length
       ? sig.tps.map(function (x) { return fmt(x); }).join(" / ") : "—");
-  t("stCarry",    sig && sig.presess_bar !== null
-      ? (barIndex - sig.presess_bar) + " / " + cfg.maxCarryBars : "—");
-  t("stAddons",   (sig ? sig.addons : 0) + " / " + (cfg ? cfg.maxAddOns : 3));
-  t("stBar",      "#" + barIndex + "  " + (ny ? ny.label : ""));
 
+  // Carry-over advances on bar close, so show the confirmed count plus the forming bar in
+  // brackets — otherwise this looks frozen for the whole length of a bar.
+  if (sig && sig.presess_bar !== null) {
+    var used = barIndex - sig.presess_bar;
+    t("stCarry", used + " / " + cfg.maxCarryBars + "  (+1 forming)",
+      used >= cfg.maxCarryBars - 3 ? "pending" : "");
+  } else {
+    t("stCarry", "—");
+  }
+
+  t("stAddons", (sig ? sig.addons : 0) + " / " + (cfg ? cfg.maxAddOns : 3));
+  t("stBar",    "#" + barIndex + (ny ? "  " + ny.label : (bar ? "  " + nyParts(bar.ts).label : "")));
+
+  if (bar) {
+    var dir = bar.c >= bar.o ? "▲" : "▼";
+    t("stLivePrice", dir + " " + fmt(bar.c) + "   L " + fmt(bar.l) + " / H " + fmt(bar.h),
+      p.sweep ? "pending" : "");
+    if (cfg && cfg.timeframe) {
+      var left = Math.max(0, Math.round((bar.ts + cfg.timeframe * 1000 - Date.now()) / 1000));
+      var mm = Math.floor(left / 60), ss = left % 60;
+      t("stCountdown", mm + ":" + ("0" + ss).slice(-2));
+    }
+  } else {
+    t("stLivePrice", "—");
+    t("stCountdown", "—");
+  }
+
+  // Session pills reflect the session the forming bar is in, not just the last closed one.
+  var liveSession = activeSession ? activeSession.name : null;
+  if (bar && cfg) {
+    var s = sessionAt(nyParts(bar.ts).mins);
+    if (s) liveSession = s;
+  }
   ["ASIA", "LONDON", "NYAM"].forEach(function (k) {
     var el = document.getElementById("pill" + k);
     if (!el) return;
     var name = k === "NYAM" ? "NY AM" : k;
-    el.className = (activeSession && activeSession.name === name) ? "sess-pill live" : "sess-pill";
+    el.className = (liveSession === name) ? "sess-pill live" : "sess-pill";
   });
+
+  var dot = document.getElementById("liveDot");
+  var txt = document.getElementById("liveText");
+  if (dot) dot.className = isRunning ? "live-dot on" : "live-dot";
+  if (txt) {
+    txt.textContent = !isRunning ? "Stopped"
+      : (bar ? "Live — updated " + new Date().toLocaleTimeString() : "Live — waiting for candles…");
+  }
+}
+
+// ---- Live ticker: keeps the panel current between bar closes -------------------------
+var uiTicker = null;
+function startUiTicker() {
+  stopUiTicker();
+  uiTicker = setInterval(function () {
+    if (!isRunning || replaying) return;
+    try { refreshStatePanel(null); } catch (e) {}
+  }, 1000);
+}
+function stopUiTicker() {
+  if (uiTicker) { clearInterval(uiTicker); uiTicker = null; }
 }
 
 function refreshStatsDisplay() {
@@ -1060,7 +1239,8 @@ function exportSignalsCsv() {
 //  CONFIG
 // =====================================================================================
 var FIELD_IDS = ["instrumentId","timeframe","tradingMode","sizingMode","fixedLots","riskPct","hardMaxLot",
-  "confirmOrders","sessAsia","sessLondon","sessNyam","sessNylunch","preSessionFvg","maxCarryBars",
+  "confirmOrders","sessAsia","sessLondon","sessNyam","sessNylunch",
+  "sessAsiaTime","sessLondonTime","sessNyamTime","sessNylunchTime","persistSessions","preSessionFvg","maxCarryBars",
   "requireRetest","strictRetest","requireBullish","requireOpenBelow","minBodyPct","invalidateFvg","volumeFilter","sizeFilter",
   "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","slBuffer",
   "enableAddOns","maxAddOns","addOnCooldown","addOnLots","addOnRiskPct","maxEntriesPerDay","replayBars"];
@@ -1092,7 +1272,14 @@ function readConfig() {
       "NY AM":    chk("sessNyam"),
       "NY LUNCH": chk("sessNylunch")
     },
+    sessionWindows: {
+      "ASIA":     parseSessionWindow(document.getElementById("sessAsiaTime").value),
+      "LONDON":   parseSessionWindow(document.getElementById("sessLondonTime").value),
+      "NY AM":    parseSessionWindow(document.getElementById("sessNyamTime").value),
+      "NY LUNCH": parseSessionWindow(document.getElementById("sessNylunchTime").value)
+    },
 
+    persistSessions: chk("persistSessions"),
     preSessionFvg: chk("preSessionFvg"),
     maxCarryBars: int("maxCarryBars", 50),
     requireRetest: chk("requireRetest"),
@@ -1190,6 +1377,10 @@ function startBot() {
   // Warn loudly about any deviation from the confirmed indicator settings — silent drift
   // here is exactly what breaks parity with TradingView.
   var deviations = [];
+  if (!cfg.persistSessions) deviations.push("Persist Through Sessions is OFF (confirmed: ON)");
+  if (cfg.strictRetest) deviations.push("'Retest must be a later bar' is ON — the Pine source marks the zone tested on the formation bar, so this WILL differ from TradingView");
+  if (cfg.pivotWidth !== 1) deviations.push("Swing pivot width is " + cfg.pivotWidth + " (Pine source uses 1) — TP levels will differ");
+  if (cfg.enableAddOns) deviations.push("Add-ons are ON — the indicator has no add-on logic, so the bot will place BUYs with no matching TradingView label");
   if (!cfg.preSessionFvg) deviations.push("Pre-Session FVG is OFF (confirmed: ON)");
   if (cfg.maxCarryBars !== 50) deviations.push("Max carry-over is " + cfg.maxCarryBars + " (confirmed: 50)");
   if (!cfg.requireRetest) deviations.push("Require Retest is OFF (confirmed: ON)");
@@ -1204,6 +1395,25 @@ function startBot() {
   if (deviations.length) {
     log("⚠️ Settings differ from the confirmed indicator config — signals will NOT match TradingView: " +
         deviations.join("; "), "log-warn");
+  }
+
+  // Every enabled session needs a parseable window, or its reference can never lock.
+  var badWindow = null;
+  ["ASIA", "LONDON", "NY AM", "NY LUNCH"].forEach(function (n) {
+    if (cfg.sessions[n] && !cfg.sessionWindows[n]) badWindow = n;
+  });
+  if (badWindow) {
+    log("Session window for " + badWindow + " is not valid. Use HHMM-HHMM, e.g. 0930-1200.", "log-err");
+    return;
+  }
+
+  // The Pine source gates the whole signal engine behind a 30-minute Timeframe Limit
+  // (tf_limit_is_equal_or_more_chart_tf). Above that the indicator produces no signals at
+  // all, so the bot must not either — otherwise it would trade setups TradingView never shows.
+  if (cfg.timeframe > 1800) {
+    log("Timeframe is above the indicator's 30-minute Timeframe Limit — the GPS indicator " +
+        "produces NO signals above M30, so the bot will not run here. Use M30 or lower.", "log-err");
+    return;
   }
 
   var instr = Framework.Instruments.get(cfg.instrumentId);
@@ -1231,6 +1441,7 @@ function startBot() {
   isRunning = true;
   setInputsDisabled(true);
   setStatus(true);
+  startUiTicker();
   log("Started on " + cfg.instrumentId + " @ " + cfg.timeframe + "s — " +
       (cfg.tradingMode === "live" ? "LIVE TRADING" : "DRY RUN (no orders)"), "log-info");
 
@@ -1256,6 +1467,7 @@ function startBot() {
 function stopBot() {
   isRunning = false;
   replaying = false;
+  stopUiTicker();
   setInputsDisabled(false);
   setStatus(false);
   log("Stopped. Open trades are NOT closed automatically — manage them manually.", "log-warn");

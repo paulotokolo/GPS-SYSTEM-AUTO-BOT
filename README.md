@@ -4,15 +4,22 @@ A BUY-only trading bot that replicates the **GPS SYSTEM INDICATOR ALGO** (Tradin
 
 Every BUY the bot fires is intended to match what the indicator produces on the same pair and timeframe.
 
+The engine has now been **verified line by line against the actual Pine source.** See [Corrections after source review](#corrections-after-source-review) for what that changed.
+
 ---
 
-## ⚠️ Please read first — missing source file
+## ⚠️ Please read first — NY AM session mismatch
 
-`GPS_SYSTEM_INDICATOR_ALGO_v8.txt` was **not included** in the files provided.
+One discrepancy remains open, and **only the client can settle it**:
 
-The implementation guide instructs the developer to read the Pine Script signal engine at lines 820–907 before implementing. That file was not in the folder, so **this engine was implemented from the guide's transcription of that logic alone.**
+| | NY AM window |
+| :--- | :--- |
+| Implementation Guide v2 states | `0930-1200` |
+| The Pine source ships as its default | `0930-1100` |
 
-The transcription is detailed and the implementation follows it precisely, but it has not been diffed against the actual Pine source. **If you can send `GPS_SYSTEM_INDICATOR_ALGO_v8.txt`, I will diff it against the engine and correct any divergence.** Two places where the guide left genuine ambiguity are documented under [Interpretation decisions](#interpretation-decisions) below — those are the most likely spots for a mismatch.
+The bot currently uses **`0930-1200`**, following the guide. If the client never changed that input on their own chart, their indicator is running `0930-1100` — and every NY AM reference high/low the bot locks will be wrong, which in turn moves the sweep, the FVG and the BUY.
+
+**Please confirm the NY AM window in the client's indicator settings.** It is editable in the bot under *Advanced → Session Windows*, so this is a one-field change either way.
 
 ---
 
@@ -21,116 +28,163 @@ The transcription is detailed and the implementation follows it precisely, but i
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite for the signal engine (62 assertions). |
+| `tests/` | Automated test suite for the signal engine (79 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
+
+The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
+
+---
+
+## Corrections after source review
+
+The first build was written from the implementation guide's transcription of the signal engine, because the Pine file was not supplied at the time. With the real source now available, the following genuine divergences were found and fixed. Several of them were producing **extra BUY signals that the indicator never generates** — the reported symptom.
+
+### 1. Session opens were resetting the setup — the main cause of wrong BUYs
+
+The guide describes an unconditional reset on session open when no setup is active. The source reads:
+
+```pine
+if sig_presession_fvg and (sig.sweep or sig.fvg_found) and not sig.fired
+    if na(sig.presess_bar)
+        sig.presess_bar := bar_index
+else if not sig_persist_session
+    sig.sig_reset()
+```
+
+**Persist Through Sessions is ON**, so `not sig_persist_session` is false and that reset branch *can never run*. A session opening never resets anything.
+
+The bot was resetting there — which silently cleared `fired` and re-armed the setup a full session early, letting a new BUY fire off a stale reference. Now matches the source, and `Persist Through Sessions` is exposed as its own setting.
+
+### 2. `sig_reset()` clears the reference levels
+
+The guide implied the refs were preserved. The source clears them outright (`s.ref_name := ""`), with every caller reassigning immediately afterwards where needed. Corrected.
+
+### 3. Swing highs use a **1-bar** fractal, not 2
+
+```pine
+h_cur = high[i], h_prev = high[i + 1], h_next = high[i - 1]
+if h_cur > h_prev and h_cur > h_next and h_cur > above_price
+```
+
+The guide never defined a swing high, so a 2-bar fractal was assumed. The source compares against the immediately adjacent bars only. A width of 2 skipped valid levels and shifted **every TP**. Default is now 1, plus the source's mintick de-duplication.
+
+### 4. The retest is marked on the FVG formation bar
+
+This was previously flagged as an open interpretation question — the source settles it. Step 3 runs in the same bar pass as step 2, where `low == fvg_top`, so the zone is marked tested the moment it forms. The stricter reading is now **off by default**; `above_fvg` still prevents any fire on the formation bar.
+
+### 5. FVG invalidation was too destructive
+
+Source: `if sig_invalidate_below and close < sig.fvg_bot` — tests the **close**, and clears only the FVG fields. The sweep and `swing_low` survive, so the setup resumes hunting for a new FVG. The bot was testing the **low** and tearing the whole setup down. (Off by default either way.)
+
+### 6. A 30-minute timeframe limit exists
+
+`tf_limit_is_equal_or_more_chart_tf` gates the entire signal block, with `tf_limit` defaulting to 30 minutes. **Above M30 the indicator produces no signals at all.** The bot now refuses to start above M30 rather than trading setups TradingView never displays.
+
+### 7. Add-on entries do not exist in the indicator
+
+The source contains no add-on logic whatsoever — no cooldown, no `in_zone`, nothing. Add-ons come from the guide alone and are purely bot-side extra entries.
+
+They are now **OFF by default**, so every BUY the bot places corresponds 1:1 with a BUY label on the chart. Turn them on only once signal parity is confirmed, and expect extra entries with no matching label when you do.
+
+### 8. `body_ok` short-circuits at zero
+
+`sig_min_body_above <= 0.0 or body_pct_above >= sig_min_body_above`. Matched.
+
+Also confirmed as already correct: the `America/New_York` timezone, killzone boxes tracking full wick high/low, `_box.get(0)` being the most recently closed session, disabled killzones being excluded from the signal loop entirely, `ta.atr(14)`, and the whole engine running on `barstate.isconfirmed` (bar close only).
+
+---
+
+## Real-time signal state
+
+The Signal State panel previously only redrew when a bar closed — on M5 that is once every five minutes, which reads as a frozen panel.
+
+It now updates **once per second** via a live ticker, showing:
+
+- **Live price** on the forming bar, with its running high and low
+- **A countdown** to the current bar's close
+- **Carry-over bars** used, with the forming bar shown separately
+- **The active session**, tracked from the forming bar
+- **A pulsing live indicator** with the last update time
+
+### Green vs amber
+
+- **Green** — confirmed on a closed bar. This is real signal state.
+- **Amber (pulsing)** — provisionally true *right now* on the forming bar, not yet confirmed.
+
+**A sweep is announced the instant price trades through the reference low**, with a log line and an audible alert, rather than waiting for the bar to close:
+
+```
+⚡ SWEEP FORMING — price 2018.40 is through the ASIA ref_low 2018.55.
+   Confirms when this bar closes.
+```
+
+The confirmed `SWEEP DETECTED` still follows at bar close.
+
+This distinction is deliberate and important: the indicator evaluates on `barstate.isconfirmed`, so **signals only become real at bar close.** Firing intrabar would produce entries TradingView never shows, and would repaint. The amber state shows what is developing without changing what the bot acts on.
 
 ---
 
 ## Confirmed settings implemented
 
-All values are taken from the client's live TradingView screenshots, **not** the Pine Script defaults. The three settings that differ from Pine defaults are marked.
+Values are the client's confirmed live settings, not the Pine defaults. Settings that differ from the Pine defaults are marked.
 
 ### Signal engine
 
 | Setting | Value | Note |
 | :--- | :--- | :--- |
-| Enable Buy Signals | **ON** | Always active — no sell side exists anywhere in the code |
-| Persist Through Sessions | **ON** | ⚠️ Pine default is OFF |
-| Pre-Session FVG | **ON** | ⚠️ Pine default is OFF — changes all session boundary behaviour |
+| Enable Buy Signals | **ON** | No sell side exists anywhere in the code |
+| Persist Through Sessions | **ON** | ⚠️ Pine default OFF — session opens never reset |
+| Pre-Session FVG | **ON** | ⚠️ Pine default OFF |
 | Max Carry-Over Bars | **50** | |
 | Require Bullish Breakout Candle | **ON** | `close > open` |
-| Require Retest of FVG | **ON** | Price must tap the zone first |
-| Breakout Candle Must Open At/Below FVG Top | **ON** | `open <= fvg_top` |
-| Min Body Above FVG | **15%** | ⚠️ Pine default is 10% |
-| Invalidate FVG If Filled | OFF | Zone is never invalidated |
-| Volume Filter | OFF | Not evaluated at all |
-| Candle Size Filter | OFF | Not evaluated at all |
+| Require Retest of FVG | **ON** | Marked on the formation bar, per source |
+| Breakout Must Open At/Below FVG Top | **ON** | `open <= fvg_top` |
+| Min Body Above FVG | **15%** | ⚠️ Pine default 10% |
+| Invalidate FVG If Filled | OFF | |
+| Volume Filter | OFF | Not evaluated |
+| Candle Size Filter | OFF | Not evaluated |
+| Timeframe Limit | **M30** | Bot refuses to start above this |
 
-### Session windows (EST — `America/New_York`)
+### Session windows (EST — `America/New_York`, DST automatic)
 
-Handled with `Intl.DateTimeFormat`, so **EST/EDT daylight saving is automatic**.
+| Session | Window | Status |
+| :--- | :--- | :--- |
+| Asia | `2000-0000` | **ENABLED** |
+| London | `0200-0500` | **ENABLED** |
+| NY AM | `0930-1200` ⚠️ | **ENABLED** — see the note at the top |
+| NY Lunch | `1200-1300` | **DISABLED** — excluded from the signal loop |
 
-| Session | Open | Close | Status |
-| :--- | :--- | :--- | :--- |
-| Asia | 20:00 | 00:00 | **ENABLED** |
-| London | 02:00 | 05:00 | **ENABLED** |
-| NY AM | 09:30 | 12:00 | **ENABLED** |
-| NY Lunch | 12:00 | 13:00 | **DISABLED** — never produces signals |
+All four are editable, to match whatever is set on the client's chart.
 
 ### TP / SL
 
 | Setting | Value |
 | :--- | :--- |
-| Stop Loss | `fvg_swing_low` — the low of the **middle** candle of the 3-bar FVG |
+| Stop Loss | `fvg_swing_low` — low of the **middle** candle of the 3-bar FVG |
 | Swing High Lookback | 50 bars |
+| Swing Pivot Width | **1** (per source) |
 | Min TP Spacing | 0.5 × ATR(14) |
 | TP1 / TP2 / TP3 | Nearest / next / third swing high above entry, ascending |
-
-### Add-on entries
-
-| Setting | Value |
-| :--- | :--- |
-| Max Add-Ons | 3 |
-| Cooldown Bars | 3 |
-| Trigger | `in_zone` → close back above `fvg_top` |
-| Add-On Stop Loss | Same `fvg_swing_low` |
-| Add-On TP | Next remaining swing high |
 
 ---
 
 ## Signal sequence
 
-The bot logs each milestone stamped with the **bar's New York time**, so it can be lined up directly against the indicator's label on the chart:
+Each milestone is logged stamped with the **bar's New York time**, to line up directly against the indicator's label:
 
 ```
 SESSION CLOSE → SWEEP DETECTED → FIRST FVG FOUND → FVG RETEST → BUY SIGNAL
 ```
 
-The `sig` state object mirrors the one specified in the guide field for field: `ref_high`, `ref_low`, `ref_name`, `sweep`, `swing_low`, `fvg_top`, `fvg_bot`, `fvg_bar`, `fvg_swing_low`, `fvg_found`, `fvg_tested`, `in_zone`, `fired`, `presess_bar`, `addons`.
-
-One implementation note worth stating explicitly: **`sig_reset()` deliberately preserves `ref_high` / `ref_low` / `ref_name`.** The reference levels are locked session data, not part of the setup. Pine calls `sig_reset()` on session open without reassigning a ref afterwards — wiping the refs there would leave the engine permanently unable to detect a sweep.
-
 ---
 
-## Additions beyond the specification
+## Additions beyond the indicator
 
-Two features were added specifically to support the verification steps in the guide:
+**Dry Run mode (default).** Runs the full engine and logs every BUY with its SL and TP levels without sending an order. This is the mode for the TradingView comparison. Live trading requires an explicit change plus a second confirming click.
 
-**Dry Run mode (default).** Runs the complete engine and logs every BUY with its SL and TP levels, but never sends an order. This is the mode to use for the TradingView side-by-side comparison. Live trading requires an explicit mode change plus a second confirming click.
+**History replay on start.** Replays recent closed bars to rebuild session references and any in-progress setup, so the bot is not blind until the next session close. Replayed bars never place orders.
 
-**History replay on start.** On Start the engine replays recent closed bars to rebuild session references and any setup already in progress, so the bot is not blind until the next session close. Replayed bars never place orders. Depth is configurable (default 1500 bars).
-
-The bot also warns loudly at startup if any setting has been changed away from the confirmed indicator configuration, since silent drift is what breaks parity with TradingView.
-
----
-
-## Two bugs found and fixed during testing
-
-**Add-on fired on the same bar as the initial BUY.** The signal candle satisfies the add-on trigger by definition — it dips into the zone and closes above the top, which is what makes it the signal. That stacked a second entry onto the same candle as the initial entry. Add-ons now require a later bar, and the cooldown counts from the last *entry*, the initial one included.
-
-**"FVG RETEST" was logged on the FVG formation bar.** `fvg_top` is set to that bar's own low, so `low <= fvg_top` is trivially true the instant the zone forms. The retest was being marked satisfied before any actual retest happened. The tap must now come from a later bar.
-
----
-
-## Interpretation decisions
-
-Two points where the guide left genuine ambiguity. Both are configurable, and both are worth confirming against the Pine source.
-
-**1. Retest timing.** A literal reading of the Pine line marks the zone "tested" the moment it forms, which makes the Require Retest setting filter nothing at all. The guide describes it as *"price must tap into the zone first"* and lists FVG Found and FVG Retest as two separate events in the verification sequence, so the stricter reading was used as the default. A **"Retest must be a later bar"** toggle reverts to literal behaviour.
-
-The practical impact is narrow: it only changes outcomes when *Open At/Below FVG Top* is disabled, because that gate already forces the signal candle to tap the zone.
-
-**2. Swing high definition.** The guide specifies a 50-bar lookback and 0.5 × ATR spacing but never defines what qualifies as a swing high. A 2-bar fractal is used — a high that exceeds the two bars either side. This is configurable via **Swing pivot width**.
-
----
-
-## A note on carry-over across sessions
-
-The guide gives this example: *"A sweep from Asia can still produce an FVG during London and fire a BUY during NY AM."*
-
-On **M5 this specific chain cannot occur.** The carry-over clock starts at the first session open after the setup begins, and 02:00 → 09:30 is roughly 90 bars — past the 50-bar limit, so the setup correctly expires first. Asia → London works and is covered by a test.
-
-This is the 50-bar rule behaving exactly as specified, not a defect. It simply means that particular three-session example needs a higher timeframe. Flagging it so the behaviour is not mistaken for a bug during review.
+**Deviation warnings.** The bot logs a loud warning at startup for any setting that would break parity with TradingView — including add-ons being enabled, a pivot width other than 1, or the stricter retest mode.
 
 ---
 
@@ -146,21 +200,14 @@ test_carryover     17 pass   0 fail
 test_conditions    11 pass   0 fail
 test_replay         9 pass   0 fail
 test_sizing         6 pass   0 fail
+test_pine_parity   17 pass   0 fail
 ----------------------------------------
-TOTAL: 62 pass, 0 fail
+TOTAL: 79 pass, 0 fail
 ```
 
-The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. Coverage:
+The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-- Full signal sequence, each milestone landing on its own distinct bar
-- Cross-session carry-over — Asia sweep, London FVG, BUY across the boundary with no reset
-- 50-bar carry-over expiry, and that reference levels survive the reset
-- Every fire condition gated independently, including that a 10% body is rejected but the same candle fires once the threshold is lowered to 10 — proving the 15% value is what rejects it
-- NY Lunch excluded as a signal session; EDT resolved correctly
-- History replay rebuilds state and places zero orders
-- Risk-based sizing against the real GPS stop distance
-
-The FXBlue API surface was verified against the live framework script rather than assumed. That caught that instruments expose `digits`, `minLot` and `lotStep` — not `decimals`, `minVolume` and `volumeStep` — and that `minVolume` is denominated in volume units, not lots.
+Coverage includes: the full signal sequence with each milestone on its own bar; cross-session carry-over and 50-bar expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; and risk sizing against the real stop distance.
 
 **Not yet tested against live market data.**
 
@@ -169,32 +216,31 @@ The FXBlue API surface was verified against the live framework script rather tha
 ## Setup
 
 1. Load `gps_bot.html` into Liquid Charts Pro as an external widget.
-2. Set the **Instrument** to your broker's exact symbol name (the guide's reference test is XAUUSD on M5). If no candles arrive within 20 seconds, this field is almost always the reason.
-3. Leave **Trading mode** on **Dry Run**.
-4. Open the GPS indicator on TradingView on the same pair and timeframe.
-5. Press **Start Bot** and let it run through a session.
+2. Set **Instrument** to the broker's exact symbol name (reference test: XAUUSD on M5). If no candles arrive within 20 seconds, this field is almost always why.
+3. Confirm the **NY AM window** matches the client's chart (see the note at the top).
+4. Leave **Trading mode** on **Dry Run**.
+5. Open the GPS indicator on TradingView on the same pair and timeframe.
+6. Press **Start Bot**.
 
 ### Before going live
 
-Per the guide's verification steps:
-
 - Confirm the log fires in sequence: Session Close → Sweep → First FVG → Retest → BUY
-- Confirm each BUY timestamp matches the indicator's BUY label on the same candle
-- Confirm the stop loss sits at `fvg_swing_low` — the middle candle of the FVG — and **not** the sweep candle low
-- Test a cross-session setup and confirm no reset occurs at the boundary
+- Confirm each BUY timestamp matches the indicator's label on the same candle
+- Confirm the stop loss sits at `fvg_swing_low` — the middle candle of the FVG — **not** the sweep candle low
+- Confirm a cross-session setup carries without resetting
 
-Only switch to **Live Trading** once the timestamps line up. Live mode places real orders on the connected account.
+Only switch to **Live Trading** once the timestamps line up. Live mode places real orders.
 
 ---
 
 ## Risk controls
 
-- Dry Run is the default; live trading requires a deliberate second confirming click
-- Fixed-lot or risk-% sizing, the latter measured against the real GPS stop distance rather than an ATR estimate
-- Hard maximum lot cap
-- Optional cap on entries per day
-- If the broker drops the SL/TP supplied on the opening request, the bot detects it and reattaches them immediately, warning loudly if that repair fails
+- Dry Run default; live trading needs a deliberate second confirming click
+- Fixed-lot or risk-% sizing, measured against the real GPS stop distance
+- Hard maximum lot cap; optional cap on entries per day
+- Refuses to start above the indicator's M30 timeframe limit
+- If the broker drops the SL/TP on the opening request, the bot reattaches them and warns loudly if that fails
 
 ---
 
-*Developed for Slow Grind Academy. Signal logic per the GPS Signal Implementation Guide v2, using the client's confirmed live indicator settings.*
+*Developed for Slow Grind Academy. Signal logic verified against the GPS SYSTEM INDICATOR ALGO Pine v6 source, using the client's confirmed live indicator settings.*

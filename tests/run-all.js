@@ -1,6 +1,6 @@
 // Runs every GPS engine test suite and prints a combined tally.
 const { execFileSync } = require("child_process");
-const suites = ["test_engine", "test_carryover", "test_conditions", "test_replay", "test_sizing"];
+const suites = ["test_engine", "test_carryover", "test_conditions", "test_replay", "test_sizing", "test_pine_parity"];
 let pass = 0, fail = 0;
 for (const s of suites) {
   const out = execFileSync(process.execPath, [__dirname + "/" + s + ".js"], { encoding: "utf8" });
