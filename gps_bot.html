@@ -1,0 +1,1311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>GPS System Auto Bot</title>
+
+<!-- Framework CSS + JS — required for all Liquid Charts Pro external widgets -->
+<link rel="stylesheet" type="text/css" href="https://mytrader.fxbluelabs.com/css/widget-css"/>
+<script src="https://mytrader.fxbluelabs.com/scripts/widget-js"></script>
+
+<style>
+html, body {
+  margin: 0; padding: 0; height: 100%;
+  font-family: var(--font-family, system-ui);
+  font-size: var(--font-size-base, 13px);
+  color: #dfe7ff;
+  background: radial-gradient(ellipse at top, #0f1730 0%, #070b16 70%);
+  overflow: hidden;
+}
+body { display: flex; flex-direction: column; }
+.widget-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-block: 12px;
+  padding-inline-start: 16px;
+  padding-inline-end: var(--widget-chrome-inset-horizontal, 40px);
+  border-bottom: 1px solid rgba(56,214,255,0.18);
+  font-weight: 700; font-size: 15px; letter-spacing: 0.3px;
+  color: #6fe3ff; text-shadow: 0 0 10px rgba(111,227,255,0.35);
+  flex: 0 0 auto;
+}
+#minimizeBtn {
+  background: rgba(111,227,255,0.08); border: 1px solid rgba(111,227,255,0.3);
+  border-radius: 6px; width: 26px; height: 26px; line-height: 1; font-size: 14px;
+  padding: 0; color: #6fe3ff; cursor: pointer;
+}
+#content { padding: 14px 16px 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+body.minimized #content { display: none; }
+.row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+.row label { flex: 0 0 160px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; opacity: 0.75; }
+.row input[type="text"], .row input[type="number"], .row select {
+  flex: 1 1 100px; min-width: 70px;
+  background: #0c1224; color: #eaf2ff;
+  border: 1px solid rgba(111,227,255,0.25);
+  border-radius: 8px; padding: 9px 10px; font-size: 13px;
+}
+.row input:focus, .row select:focus { outline: none; border-color: #6fe3ff; box-shadow: 0 0 0 2px rgba(111,227,255,0.15); }
+.row input[type="checkbox"] { width: 16px; height: 16px; }
+fieldset {
+  border: 1px solid rgba(111,227,255,0.15); border-radius: 12px; margin-bottom: 14px; padding: 12px 14px;
+  background: rgba(111,227,255,0.02);
+}
+legend { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8; padding: 0 6px; color: #9fd8ff; }
+.btnrow { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+button {
+  cursor: pointer; border-radius: 10px; border: none;
+  padding: 12px 16px; font-weight: 700; font-size: 13px; letter-spacing: 0.3px;
+  background: #131a30; color: #dfe7ff; transition: transform 0.05s ease;
+}
+button:active { transform: scale(0.98); }
+.pill-btn { background: linear-gradient(135deg, #2fd4ff, #3b6fff); color: #04101f; box-shadow: 0 4px 14px rgba(59,111,255,0.35); }
+#startBtn:disabled, #stopBtn:disabled { background: #1a2038; color: #5b6788; box-shadow: none; cursor: default; }
+#status {
+  font-weight: 700; padding: 8px 14px; border-radius: 999px; margin-bottom: 14px;
+  text-align: center; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+#status.stopped { background: rgba(239,83,80,0.12); color: #ff8a80; border-color: rgba(239,83,80,0.3); }
+#status.running { background: rgba(38,214,166,0.14); color: #4dffcf; border-color: rgba(38,214,166,0.35); }
+#status.dryrun  { background: rgba(111,227,255,0.14); color: #6fe3ff; border-color: rgba(111,227,255,0.35); }
+#versionBadge {
+  display: inline-block; margin-bottom: 10px; padding: 4px 10px; border-radius: 999px;
+  background: rgba(111,227,255,0.08); border: 1px solid rgba(111,227,255,0.25);
+  color: #9fd8ff; font-size: 10.5px; letter-spacing: 0.3px;
+}
+#log {
+  height: 220px; overflow-y: auto; font-family: monospace; font-size: 11.5px;
+  background: #060a16; border: 1px solid rgba(111,227,255,0.15);
+  border-radius: 10px; padding: 8px 10px; white-space: pre-wrap;
+}
+.log-buy { color: #4dffcf; font-weight: 700; }
+.log-sig { color: #ffd479; }
+.log-info { opacity: 0.7; }
+.log-warn { color: #ffcf6f; }
+.log-err  { color: #ff8a80; }
+.log-hist { opacity: 0.45; font-style: italic; }
+.warning-box {
+  background: rgba(255,183,77,0.10); border: 1px solid rgba(255,183,77,0.35);
+  border-radius: 10px; padding: 10px 12px; font-size: 11.5px; margin-bottom: 12px;
+}
+.intro-box {
+  background: rgba(111,227,255,0.06); border: 1px solid rgba(111,227,255,0.25);
+  border-radius: 10px; padding: 12px 14px; font-size: 12px; line-height: 1.55; margin-bottom: 14px;
+}
+.hint { display: block; font-size: 11px; opacity: 0.6; margin: -5px 0 10px 0; line-height: 1.4; }
+#advancedToggle {
+  width: 100%; text-align: center; margin-bottom: 12px;
+  background: rgba(111,227,255,0.05); border: 1px dashed rgba(111,227,255,0.25); color: #9fd8ff;
+}
+#advancedSection { display: none; }
+#advancedSection.expanded { display: block; }
+
+/* ---- Live signal-state panel: mirrors the sig object bar by bar ---- */
+.state-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.state-box { background: #0c1224; border: 1px solid rgba(111,227,255,0.18); border-radius: 10px; padding: 8px 10px; }
+.state-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.55; display: block; margin-bottom: 3px; }
+.state-value { font-size: 13px; font-weight: 700; color: #eaf2ff; word-break: break-all; }
+.step-track { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+.step {
+  flex: 1 1 0; min-width: 74px; text-align: center; font-size: 9.5px; letter-spacing: 0.3px;
+  text-transform: uppercase; padding: 7px 4px; border-radius: 8px;
+  background: #0c1224; border: 1px solid rgba(111,227,255,0.15); color: #5b6788;
+}
+.step.done { background: rgba(38,214,166,0.14); border-color: rgba(38,214,166,0.4); color: #4dffcf; }
+.stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+.stat-box { background: #0c1224; border: 1px solid rgba(111,227,255,0.18); border-radius: 10px; padding: 10px 12px; }
+.stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.6; display: block; margin-bottom: 4px; }
+.stat-value { font-size: 18px; font-weight: 700; color: #eaf2ff; }
+.stats-btnrow { display: flex; gap: 8px; margin-top: 4px; }
+.stats-btnrow button { flex: 1; padding: 8px 10px; font-size: 12px; }
+.sess-pill {
+  display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
+  background: rgba(111,227,255,0.1); border: 1px solid rgba(111,227,255,0.3); color: #9fd8ff; margin-inline-end: 6px;
+}
+.sess-pill.live { background: rgba(38,214,166,0.18); border-color: rgba(38,214,166,0.45); color: #4dffcf; }
+</style>
+</head>
+
+<body>
+<div class="widget-header">
+  <span>GPS SYSTEM AUTO BOT</span>
+  <button id="minimizeBtn" title="Minimize">&#9601;</button>
+</div>
+
+<div id="content">
+  <span id="versionBadge">GPS Signal Engine v2 &middot; BUY ONLY &middot; Slow Grind Academy</span>
+  <div id="status" class="stopped">&#9679; Bot Stopped</div>
+
+  <div class="intro-box">
+    Replicates the <b>GPS SYSTEM INDICATOR ALGO</b> (Pine v6) signal logic exactly, using the
+    confirmed live settings: Pre-Session FVG <b>ON</b>, Persist Through Sessions <b>ON</b>,
+    Require Retest <b>ON</b>, Min Body Above FVG <b>15%</b>, Volume &amp; Size filters <b>OFF</b>.
+    Sequence per setup: <b>Session Close &rarr; Sweep &rarr; First FVG &rarr; Retest &rarr; BUY</b>.
+    Stop-loss is always <b>fvg_swing_low</b> (middle candle of the 3-bar FVG).
+  </div>
+
+  <div class="warning-box">
+    <b>Verify before going live.</b> Start in <b>Dry Run</b>, load the GPS indicator on TradingView
+    on the same pair/timeframe, and confirm each logged BUY lands on the same candle. Only switch
+    to Live Trading once the sequence and timestamps match.
+  </div>
+
+  <!-- ---------------- Live signal state ---------------- -->
+  <fieldset>
+    <legend>Signal State (live)</legend>
+    <div class="step-track">
+      <div class="step" id="stepRef">Ref Locked</div>
+      <div class="step" id="stepSweep">Sweep</div>
+      <div class="step" id="stepFvg">FVG Found</div>
+      <div class="step" id="stepRetest">Retest</div>
+      <div class="step" id="stepFired">BUY Fired</div>
+    </div>
+    <div style="margin-bottom:10px;">
+      <span class="sess-pill" id="pillASIA">ASIA 20:00-00:00</span>
+      <span class="sess-pill" id="pillLONDON">LONDON 02:00-05:00</span>
+      <span class="sess-pill" id="pillNYAM">NY AM 09:30-12:00</span>
+    </div>
+    <div class="state-grid">
+      <div class="state-box"><span class="state-label">Ref (from)</span><span class="state-value" id="stRefName">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Ref Low / High</span><span class="state-value" id="stRefLevels">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">FVG Zone (bot &rarr; top)</span><span class="state-value" id="stFvgZone">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">SL — fvg_swing_low</span><span class="state-value" id="stSl">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">TP1 / TP2 / TP3</span><span class="state-value" id="stTps">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Carry-over bars</span><span class="state-value" id="stCarry">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Add-ons used</span><span class="state-value" id="stAddons">0 / 3</span></div>
+      <div class="state-box"><span class="state-label">Bar / NY time</span><span class="state-value" id="stBar">&mdash;</span></div>
+    </div>
+  </fieldset>
+
+  <!-- ---------------- Core settings ---------------- -->
+  <fieldset>
+    <legend>Core</legend>
+    <div class="row"><label>Instrument</label><input type="text" id="instrumentId" value="XAU/USD" placeholder="e.g. XAU/USD"></div>
+    <small class="hint">Must match this broker's exact symbol name. The guide's reference test is XAUUSD on M5.</small>
+
+    <div class="row"><label>Timeframe</label>
+      <select id="timeframe">
+        <option value="60">M1</option>
+        <option value="300" selected>M5</option>
+        <option value="900">M15</option>
+        <option value="1800">M30</option>
+        <option value="3600">H1</option>
+        <option value="14400">H4</option>
+      </select>
+    </div>
+
+    <div class="row"><label>Trading mode</label>
+      <select id="tradingMode">
+        <option value="dry" selected>Dry Run — log signals only</option>
+        <option value="live">Live Trading — place real orders</option>
+      </select>
+    </div>
+    <small class="hint">Dry Run runs the full engine and logs every BUY with its SL/TP, but never sends an order. Use it for the TradingView side-by-side check.</small>
+
+    <div class="row"><label>Position sizing</label>
+      <select id="sizingMode">
+        <option value="fixed" selected>Fixed lots</option>
+        <option value="risk">Risk % of equity</option>
+      </select>
+    </div>
+    <div class="row"><label>Fixed lots</label><input type="number" id="fixedLots" value="0.10" step="0.01" min="0.01"></div>
+    <div class="row"><label>Risk per trade (%)</label><input type="number" id="riskPct" value="1.0" step="0.1" min="0.1"></div>
+    <small class="hint">Risk % sizes against the real GPS stop distance (entry &minus; fvg_swing_low), not an ATR estimate.</small>
+    <div class="row"><label>Hard max lot</label><input type="number" id="hardMaxLot" value="2.0" step="0.01" min="0.01"></div>
+    <div class="row"><label>Confirm each order</label><input type="checkbox" id="confirmOrders"></div>
+  </fieldset>
+
+  <div class="btnrow">
+    <button id="startBtn" class="pill-btn">&#9654; Start Bot</button>
+    <button id="stopBtn" disabled>&#9632; Stop Bot</button>
+  </div>
+
+  <!-- ---------------- Log ---------------- -->
+  <fieldset>
+    <legend>Signal Log</legend>
+    <div id="log"></div>
+    <div class="stats-btnrow">
+      <button id="clearLogBtn">Clear log</button>
+      <button id="exportCsvBtn">Export signals CSV</button>
+    </div>
+  </fieldset>
+
+  <!-- ---------------- Performance ---------------- -->
+  <fieldset>
+    <legend>Performance (this session)</legend>
+    <div class="stats-grid">
+      <div class="stat-box"><span class="stat-label">Signals fired</span><span class="stat-value" id="statSignals">0</span></div>
+      <div class="stat-box"><span class="stat-label">Orders placed</span><span class="stat-value" id="statOrders">0</span></div>
+      <div class="stat-box"><span class="stat-label">Closed trades</span><span class="stat-value" id="statTrades">0</span></div>
+      <div class="stat-box"><span class="stat-label">Net P/L</span><span class="stat-value" id="statPL">0.00</span></div>
+    </div>
+    <div class="stats-btnrow"><button id="resetStatsBtn">Reset stats</button></div>
+  </fieldset>
+
+  <button id="advancedToggle">&#9656; Show advanced settings</button>
+
+  <div id="advancedSection">
+    <!-- ---------------- Sessions ---------------- -->
+    <fieldset>
+      <legend>Session Windows (EST / America&#47;New_York)</legend>
+      <small class="hint">
+        Confirmed from the user's live indicator. NY Lunch (12:00&ndash;13:00) is DISABLED and is not
+        a signal session. Times auto-adjust for EST/EDT daylight saving.
+      </small>
+      <div class="row"><label>Asia 20:00&ndash;00:00</label><input type="checkbox" id="sessAsia" checked></div>
+      <div class="row"><label>London 02:00&ndash;05:00</label><input type="checkbox" id="sessLondon" checked></div>
+      <div class="row"><label>NY AM 09:30&ndash;12:00</label><input type="checkbox" id="sessNyam" checked></div>
+      <div class="row"><label>NY Lunch 12:00&ndash;13:00</label><input type="checkbox" id="sessNylunch"></div>
+      <small class="hint">NY Lunch stays OFF to match the confirmed settings. Turning it on deviates from the indicator.</small>
+    </fieldset>
+
+    <!-- ---------------- Signal engine ---------------- -->
+    <fieldset>
+      <legend>Signal Engine — confirmed indicator settings</legend>
+      <small class="hint">These defaults are the user's confirmed values. Changing them will break parity with TradingView.</small>
+      <div class="row"><label>Pre-Session FVG</label><input type="checkbox" id="preSessionFvg" checked></div>
+      <div class="row"><label>Max carry-over bars</label><input type="number" id="maxCarryBars" value="50" step="1" min="1"></div>
+      <div class="row"><label>Require retest of FVG</label><input type="checkbox" id="requireRetest" checked></div>
+      <div class="row"><label>Retest must be a later bar</label><input type="checkbox" id="strictRetest" checked></div>
+      <small class="hint">
+        The FVG bar's own low equals the zone top, so a literal reading marks the zone "tested"
+        the instant it forms and the retest requirement stops filtering anything. ON (default)
+        makes the tap come from a later bar, matching "price must tap into the zone first".
+        Turn OFF only if the TradingView comparison shows the indicator firing earlier.
+      </small>
+      <div class="row"><label>Require bullish candle</label><input type="checkbox" id="requireBullish" checked></div>
+      <div class="row"><label>Open at/below FVG top</label><input type="checkbox" id="requireOpenBelow" checked></div>
+      <div class="row"><label>Min body above FVG (%)</label><input type="number" id="minBodyPct" value="15" step="0.5" min="0"></div>
+      <div class="row"><label>Invalidate FVG if filled</label><input type="checkbox" id="invalidateFvg"></div>
+      <div class="row"><label>Volume filter</label><input type="checkbox" id="volumeFilter"></div>
+      <div class="row"><label>Candle size filter</label><input type="checkbox" id="sizeFilter"></div>
+    </fieldset>
+
+    <!-- ---------------- TP / SL ---------------- -->
+    <fieldset>
+      <legend>TP / SL</legend>
+      <div class="row"><label>Swing high lookback</label><input type="number" id="swingLookback" value="50" step="1" min="5"></div>
+      <div class="row"><label>Swing pivot width</label><input type="number" id="pivotWidth" value="2" step="1" min="1"></div>
+      <small class="hint">Bars either side that a high must exceed to count as a swing high.</small>
+      <div class="row"><label>Min TP spacing (ATR)</label><input type="number" id="tpAtrSpacing" value="0.5" step="0.1" min="0"></div>
+      <div class="row"><label>Attach stop-loss</label><input type="checkbox" id="attachSl" checked></div>
+      <div class="row"><label>Attach take-profit</label><input type="checkbox" id="attachTp" checked></div>
+      <div class="row"><label>SL buffer (price)</label><input type="number" id="slBuffer" value="0" step="0.01" min="0"></div>
+      <small class="hint">Optional pad below fvg_swing_low to survive spread/wick noise. 0 = exactly at fvg_swing_low, matching the indicator.</small>
+    </fieldset>
+
+    <!-- ---------------- Add-ons ---------------- -->
+    <fieldset>
+      <legend>Add-On Entries</legend>
+      <div class="row"><label>Enable add-ons</label><input type="checkbox" id="enableAddOns" checked></div>
+      <div class="row"><label>Max add-ons</label><input type="number" id="maxAddOns" value="3" step="1" min="0"></div>
+      <div class="row"><label>Cooldown bars</label><input type="number" id="addOnCooldown" value="3" step="1" min="0"></div>
+      <div class="row"><label>Add-on lots</label><input type="number" id="addOnLots" value="0.05" step="0.01" min="0.01"></div>
+      <div class="row"><label>Add-on risk (%)</label><input type="number" id="addOnRiskPct" value="0.5" step="0.1" min="0.1"></div>
+    </fieldset>
+
+    <!-- ---------------- Safety ---------------- -->
+    <fieldset>
+      <legend>Safety</legend>
+      <div class="row"><label>Max entries per day</label><input type="number" id="maxEntriesPerDay" value="0" step="1" min="0"></div>
+      <small class="hint">0 = unlimited. Counts initial BUYs and add-ons together, per EST trading day.</small>
+      <div class="row"><label>History replay bars</label><input type="number" id="replayBars" value="1500" step="100" min="200"></div>
+      <small class="hint">
+        On Start, the engine replays this many closed bars to rebuild session refs and any live setup,
+        so it does not sit blind waiting for the next session close. Replayed bars never place orders.
+      </small>
+    </fieldset>
+  </div>
+</div>
+
+<script>
+// =====================================================================================
+//  GPS SYSTEM AUTO BOT — signal engine
+//  Implements GPS_SYSTEM_INDICATOR_ALGO_v8 (Pine v6) lines 820-907, using the settings
+//  confirmed from the user's live TradingView screenshots (NOT the Pine defaults):
+//    Pre-Session FVG ON | Persist Through Sessions ON | Require Retest ON
+//    Require Bullish ON | Open At/Below FVG Top ON | Min Body Above FVG 15%
+//    Invalidate-If-Filled OFF | Volume filter OFF | Candle size filter OFF
+//  Direction: BUY ONLY. There is no sell side anywhere in this file.
+// =====================================================================================
+
+var Framework = new FXB.Framework();
+var SETTINGS_ID = "gps-system-auto-bot-v2";
+var BOT_TAG = "GPSBOT";
+
+// ---- Runtime state ------------------------------------------------------------------
+var isRunning = false;
+var tradingStore = null;
+var cfg = null;               // snapshot of settings taken at Start
+var replaying = false;        // true while rebuilding state from history — suppresses all orders
+var pendingOrder = false;     // guards against overlapping SendOrder calls
+var barIndex = 0;             // monotonic Pine-style bar counter
+var lastProcessedTs = null;   // newest bar timestamp already fed through the engine
+var entriesToday = 0;
+var entriesDayKey = "";
+var signalCount = 0, orderCount = 0;
+var signalLog = [];           // every fired signal, for CSV export
+var tradeLog = [];            // closed trades, for the P/L tile
+var managedOrders = {};       // orderId -> { direction, entryPrice, lots }
+var pendingManagement = [];   // queued entries awaiting their OnOrderOpen
+var startConfirmArmed = false, startConfirmTimeout = null;
+
+// ---- Session box: high/low accumulator for the session currently in progress ---------
+var activeSession = null;     // { name, dayKey, high, low }
+
+// =====================================================================================
+//  THE SIGNAL STATE OBJECT — mirrors the Pine `sig` object exactly.
+//  One sig is active at a time.
+// =====================================================================================
+var sig = null;
+
+function newSig() {
+  return {
+    ref_high:      null,   // locked session high
+    ref_low:       null,   // locked session low
+    ref_name:      null,   // 'ASIA' / 'LONDON' / 'NY AM'
+    sweep:         false,  // true after low < ref_low
+    swing_low:     null,   // lowest low from sweep onward (overall anchor)
+    fvg_top:       null,   // current bar low when FVG formed
+    fvg_bot:       null,   // bar[-2].high when FVG formed
+    fvg_bar:       null,   // bar index of FVG candle
+    fvg_swing_low: null,   // bar[-1].low = STOP LOSS price
+    fvg_found:     false,  // true once first FVG identified
+    fvg_tested:    false,  // true once price tapped into zone
+    in_zone:       false,  // true while price is inside the FVG zone
+    fired:         false,  // true after the initial BUY fires
+    presess_bar:   null,   // bar index when carry-over started
+    addons:        0,      // add-on entry count
+    // --- bot-side extras, not part of the Pine object ---
+    tps:           [],     // [TP1, TP2, TP3] resolved at fire time
+    next_tp:       0,      // which TP the next entry targets
+    fired_bar:     null,   // bar index the initial BUY fired on
+    last_addon_bar: null   // for the 3-bar add-on cooldown
+  };
+}
+
+// sig_reset() clears the SETUP but deliberately preserves ref_high/ref_low/ref_name.
+// The reference levels are locked session data, not part of the setup — Pine calls
+// sig_reset() on session open without reassigning a ref afterwards, so wiping the refs
+// here would leave the engine permanently unable to detect a sweep.
+function sigReset(reason) {
+  if (!sig) { sig = newSig(); return; }
+  var keepHigh = sig.ref_high, keepLow = sig.ref_low, keepName = sig.ref_name;
+  var had = sig.sweep || sig.fvg_found || sig.fired;
+  sig = newSig();
+  sig.ref_high = keepHigh; sig.ref_low = keepLow; sig.ref_name = keepName;
+  if (had && reason) logBar("Setup reset — " + reason, "log-info");
+}
+
+// An "active setup" is one that has begun but not yet fired. This is the exact condition
+// the Pine pre-session block tests, and rule 2 reuses it for the session-close branch.
+function hasActiveSetup() {
+  return !!sig && (sig.sweep || sig.fvg_found) && !sig.fired;
+}
+
+// =====================================================================================
+//  SESSION HANDLING — all times EST via Intl, which handles EST/EDT automatically
+// =====================================================================================
+var NY_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", hour12: false,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit"
+});
+
+// Converts an epoch-ms bar timestamp into New York wall-clock parts.
+function nyParts(ts) {
+  var parts = NY_FMT.formatToParts(new Date(ts));
+  var o = {};
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].type !== "literal") o[parts[i].type] = parts[i].value;
+  }
+  var hour = parseInt(o.hour, 10);
+  if (hour === 24) hour = 0; // some engines render midnight as "24" under hour12:false
+  var minute = parseInt(o.minute, 10);
+  return {
+    dayKey: o.year + "-" + o.month + "-" + o.day,
+    hour: hour, minute: minute,
+    mins: hour * 60 + minute,
+    label: o.month + "/" + o.day + " " + ("0" + hour).slice(-2) + ":" + ("0" + minute).slice(-2) + " EST"
+  };
+}
+
+// Session windows in minutes-from-NY-midnight, [open, close). Asia closes exactly at
+// midnight, so no window here actually wraps across a day boundary.
+var SESSIONS = [
+  { name: "ASIA",     open: 20 * 60,      close: 24 * 60,      key: "sessAsia" },
+  { name: "LONDON",   open: 2 * 60,       close: 5 * 60,       key: "sessLondon" },
+  { name: "NY AM",    open: 9 * 60 + 30,  close: 12 * 60,      key: "sessNyam" },
+  { name: "NY LUNCH", open: 12 * 60,      close: 13 * 60,      key: "sessNylunch" }
+];
+
+// Which enabled session does this bar's open time fall inside? null = no signal session.
+function sessionAt(mins) {
+  for (var i = 0; i < SESSIONS.length; i++) {
+    var s = SESSIONS[i];
+    if (!cfg.sessions[s.name]) continue; // disabled — never a signal session
+    if (mins >= s.open && mins < s.close) return s.name;
+  }
+  return null;
+}
+
+// =====================================================================================
+//  LOGGING
+// =====================================================================================
+var currentBarLabel = "";
+
+function log(msg, cls) {
+  var el = document.getElementById("log");
+  if (!el) return;
+  var line = document.createElement("div");
+  if (cls) line.className = cls;
+  var t = new Date();
+  var ts = ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2) + ":" + ("0" + t.getSeconds()).slice(-2);
+  line.textContent = "[" + ts + "] " + msg;
+  el.appendChild(line);
+  while (el.childNodes.length > 800) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+// Logs an event stamped with the BAR's New York time (not wall-clock), which is what has
+// to line up with the indicator's label on the TradingView chart.
+function logBar(msg, cls) {
+  if (replaying && !cfg.verboseReplay) {
+    // during replay only the milestone events are worth showing, and they get marked as history
+    if (cls !== "log-buy" && cls !== "log-sig") return;
+    cls = "log-hist";
+  }
+  log(currentBarLabel + "  " + msg, cls);
+}
+
+// =====================================================================================
+//  ENGINE — one closed bar at a time, oldest first.
+//  `idx` is the CandleStore index of the bar being processed (newest-first: 1 = last
+//  closed bar). idx+1 is the previous bar, idx+2 the one before that.
+// =====================================================================================
+function processBar(idx) {
+  var bar = tradingStore.GetCandle(idx);
+  if (!bar) return;
+
+  barIndex++;
+  var ny = nyParts(bar.ts);
+  currentBarLabel = ny.label;
+
+  // ---------------------------------------------------------------------------------
+  //  SESSION TRANSITIONS
+  // ---------------------------------------------------------------------------------
+  var sessName = sessionAt(ny.mins);
+  var changed = !activeSession
+    ? !!sessName
+    : (sessName !== activeSession.name || ny.dayKey !== activeSession.dayKey);
+
+  if (changed) {
+    // ---- SESSION CLOSE -> lock reference high/low from that session's box ----
+    if (activeSession && activeSession.high !== null) {
+      var closing = activeSession;
+
+      // Rule 2: always update the ref. If a setup is active AND Pre-Session FVG is ON,
+      // keep the setup and update the ref. If no setup is active, reset first, then assign.
+      if (!(hasActiveSetup() && cfg.preSessionFvg)) {
+        sigReset("session close with no active setup");
+      }
+      sig.ref_high = closing.high;
+      sig.ref_low  = closing.low;
+      sig.ref_name = closing.name;
+
+      logBar("SESSION CLOSE — " + closing.name + " locked  ref_low=" + fmt(closing.low) +
+             "  ref_high=" + fmt(closing.high), "log-sig");
+    }
+    activeSession = null;
+
+    // ---- SESSION OPEN -> Pre-Session FVG handling (user has this ON) ----
+    if (sessName) {
+      if (cfg.preSessionFvg) {
+        if (hasActiveSetup()) {
+          // DO NOT reset — carry the setup across the boundary, just mark the start bar.
+          if (sig.presess_bar === null) {
+            sig.presess_bar = barIndex;
+            logBar("SESSION OPEN — " + sessName + ": active setup carried over (pre-session FVG ON)", "log-sig");
+          }
+        } else {
+          sigReset("session open, no active setup");
+        }
+      } else {
+        sigReset("session open (pre-session FVG OFF)");
+      }
+      activeSession = { name: sessName, dayKey: ny.dayKey, high: bar.h, low: bar.l };
+    }
+  } else if (activeSession) {
+    // ---- Still inside the same session: grow that session's box ----
+    if (bar.h > activeSession.high) activeSession.high = bar.h;
+    if (bar.l < activeSession.low)  activeSession.low  = bar.l;
+  }
+
+  if (!sig) sig = newSig();
+
+  // ---------------------------------------------------------------------------------
+  //  CARRY-OVER EXPIRY — stale setups must not linger indefinitely
+  // ---------------------------------------------------------------------------------
+  if (sig.presess_bar !== null && (barIndex - sig.presess_bar) > cfg.maxCarryBars) {
+    sigReset("carry-over exceeded " + cfg.maxCarryBars + " bars");
+  }
+
+  // ---------------------------------------------------------------------------------
+  //  STEP 1 — Detect sweep of the reference low
+  // ---------------------------------------------------------------------------------
+  if (sig.ref_low !== null && !sig.sweep && !sig.fired) {
+    if (bar.l < sig.ref_low) {
+      sig.sweep = true;
+      sig.swing_low = bar.l; // initial SL anchor
+      logBar("SWEEP DETECTED — low " + fmt(bar.l) + " < " + sig.ref_name + " ref_low " + fmt(sig.ref_low), "log-sig");
+    }
+  }
+
+  // ---------------------------------------------------------------------------------
+  //  STEP 2 — Post-sweep: find the FIRST bullish FVG (only one per setup)
+  // ---------------------------------------------------------------------------------
+  if (sig.sweep && !sig.fvg_found && !sig.fired) {
+    if (bar.l < sig.swing_low) sig.swing_low = bar.l; // track the lowest low
+
+    var mid = tradingStore.GetCandle(idx + 1); // bar[-1] — the MIDDLE candle
+    var left = tradingStore.GetCandle(idx + 2); // bar[-2]
+    if (barIndex >= 2 && mid && left && bar.l > left.h) {
+      sig.fvg_top       = bar.l;
+      sig.fvg_bot       = left.h;
+      sig.fvg_bar       = barIndex;
+      sig.fvg_swing_low = mid.l;  // MIDDLE candle low = STOP LOSS
+      sig.fvg_found     = true;
+      logBar("FIRST FVG FOUND — zone " + fmt(sig.fvg_bot) + " -> " + fmt(sig.fvg_top) +
+             "  |  SL (fvg_swing_low) = " + fmt(sig.fvg_swing_low), "log-sig");
+    }
+  }
+
+  // ---------------------------------------------------------------------------------
+  //  STEP 3 — FVG in place: watch for retest + breakout
+  // ---------------------------------------------------------------------------------
+  if (sig.fvg_found && !sig.fired) {
+    if (bar.l < sig.swing_low) sig.swing_low = bar.l; // keep tracking
+
+    // Track the retest — price enters the zone.
+    //
+    // The FVG-forming bar's own low IS fvg_top by definition, so a literal transcription of
+    // the Pine line marks the setup "tested" on the formation bar itself and the Require-Retest
+    // gate then blocks nothing at all. The confirmed settings describe this as "price must tap
+    // into the zone first", and the documented sequence lists FVG Found and FVG Retest as two
+    // separate events, so by default the retest must come from a LATER bar. Turn strictRetest
+    // off to fall back to the literal Pine behaviour if the side-by-side check calls for it.
+    if (!sig.fvg_tested && bar.l <= sig.fvg_top && (!cfg.strictRetest || barIndex > sig.fvg_bar)) {
+      sig.fvg_tested = true;
+      logBar("FVG RETEST — price tapped the zone (low " + fmt(bar.l) + " <= top " + fmt(sig.fvg_top) + ")", "log-sig");
+    }
+
+    // Invalidation is OFF in the confirmed settings, so the zone is never killed here.
+    if (cfg.invalidateFvg && bar.l < sig.fvg_bot) {
+      sigReset("FVG filled (invalidation enabled)");
+    } else {
+      // ---- Signal fire — every enabled condition must pass ----
+      var above_fvg  = (barIndex > sig.fvg_bar) && (bar.c > sig.fvg_top);
+      var retest_ok  = !cfg.requireRetest   || sig.fvg_tested;
+      var bullish_ok = !cfg.requireBullish  || (bar.c > bar.o);
+      var open_ok    = !cfg.requireOpenBelow || (bar.o <= sig.fvg_top);
+
+      // BODY % ABOVE FVG
+      var body_size  = bar.c - bar.o;
+      var body_above = bar.c - sig.fvg_top;
+      var body_pct_above = body_size > 0 ? (body_above / body_size) * 100.0 : 0.0;
+      var body_ok    = body_pct_above >= cfg.minBodyPct;
+
+      // Volume and candle-size filters are OFF — treated as always passing, never evaluated.
+      var vol_ok  = true;
+      var size_ok = true;
+
+      if (above_fvg && retest_ok && bullish_ok && open_ok && body_ok && vol_ok && size_ok) {
+        sig.fired = true;
+        fireBuy(bar, idx, ny, body_pct_above);
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------------
+  //  ADD-ON ENTRIES — FVG retests after the initial BUY
+  // ---------------------------------------------------------------------------------
+  // Never on the firing bar itself: that bar has already dipped into the zone and closed above
+  // the top (that is what made it the signal), so evaluating add-ons here would stack a second
+  // entry on the very same candle as the initial BUY.
+  if (sig.fired && cfg.enableAddOns && sig.addons < cfg.maxAddOns && sig.fvg_top !== null &&
+      sig.fired_bar !== null && barIndex > sig.fired_bar) {
+    // Price entered the zone...
+    if (bar.l <= sig.fvg_top) sig.in_zone = true;
+
+    // ...then closed back above the top.
+    if (sig.in_zone && bar.c > sig.fvg_top && bar.c > bar.o) {
+      // Cooldown counts from the last ENTRY — the initial BUY included — so add-ons cannot
+      // pile onto the entry that just went on.
+      var lastEntryBar = sig.last_addon_bar !== null ? sig.last_addon_bar : sig.fired_bar;
+      var cooldownOk = (barIndex - lastEntryBar) >= cfg.addOnCooldown;
+      if (cooldownOk) {
+        sig.in_zone = false;
+        sig.addons++;
+        sig.last_addon_bar = barIndex;
+        fireAddOn(bar, idx, ny);
+      }
+    }
+  }
+
+  refreshStatePanel(ny);
+}
+
+// =====================================================================================
+//  TP / SL RESOLUTION
+// =====================================================================================
+
+// A swing high is a bar whose high exceeds every high within `width` bars either side.
+// Scans back `lookback` bars from the entry bar, newest-first through the store.
+function findSwingHighs(entryIdx, lookback, width) {
+  var out = [];
+  var n = tradingStore.length;
+  for (var j = entryIdx + width; j <= entryIdx + lookback; j++) {
+    if (j + width >= n) break;              // not enough older bars to confirm the pivot
+    var pivot = tradingStore.GetCandle(j);
+    if (!pivot) break;
+    var isSwing = true;
+    for (var k = 1; k <= width; k++) {
+      var newer = tradingStore.GetCandle(j - k); // toward the entry bar
+      var older = tradingStore.GetCandle(j + k);
+      if (!newer || !older) { isSwing = false; break; }
+      if (pivot.h <= newer.h || pivot.h <= older.h) { isSwing = false; break; }
+    }
+    if (isSwing) out.push(pivot.h);
+  }
+  return out;
+}
+
+// TP1/TP2/TP3 = the nearest swing highs above entry, each at least
+// (tpAtrSpacing x ATR14) above the previous one.
+function resolveTps(entryPrice, entryIdx, atr) {
+  var highs = findSwingHighs(entryIdx, cfg.swingLookback, cfg.pivotWidth);
+  var above = highs.filter(function (h) { return h > entryPrice; });
+  above.sort(function (a, b) { return a - b; }); // ascending from entry price
+
+  var minGap = (atr || 0) * cfg.tpAtrSpacing;
+  var tps = [];
+  for (var i = 0; i < above.length && tps.length < 3; i++) {
+    if (tps.length === 0 || above[i] - tps[tps.length - 1] >= minGap) tps.push(above[i]);
+  }
+  return tps;
+}
+
+function currentAtr(idx) {
+  try {
+    var atrInd = tradingStore.ta[0];
+    var v = atrInd ? atrInd.GetValue(idx) : null;
+    return v || null;
+  } catch (e) { return null; }
+}
+
+// =====================================================================================
+//  SIGNAL FIRING
+// =====================================================================================
+function fireBuy(bar, idx, ny, bodyPct) {
+  var atr = currentAtr(idx);
+  sig.fired_bar = barIndex;
+  sig.tps = resolveTps(bar.c, idx, atr);
+  sig.next_tp = 0;
+
+  var slPrice = sig.fvg_swing_low - (cfg.slBuffer || 0);
+  var tpPrice = sig.tps.length ? sig.tps[0] : null;
+  sig.next_tp = 1;
+
+  signalCount++;
+  signalLog.push({
+    time: ny.label, kind: "BUY", entry: bar.c, sl: slPrice,
+    tp1: sig.tps[0] || "", tp2: sig.tps[1] || "", tp3: sig.tps[2] || "",
+    ref: sig.ref_name, bodyPct: bodyPct.toFixed(1)
+  });
+
+  logBar("*** BUY SIGNAL *** entry " + fmt(bar.c) +
+         "  SL " + fmt(slPrice) +
+         "  TP1 " + (sig.tps[0] !== undefined ? fmt(sig.tps[0]) : "n/a") +
+         "  TP2 " + (sig.tps[1] !== undefined ? fmt(sig.tps[1]) : "n/a") +
+         "  TP3 " + (sig.tps[2] !== undefined ? fmt(sig.tps[2]) : "n/a") +
+         "  | body " + bodyPct.toFixed(1) + "%  | ref " + sig.ref_name, "log-buy");
+
+  refreshStatsDisplay();
+  if (replaying) return;      // historical bar — state only, never an order
+  beep();
+  submitBuy(bar.c, slPrice, tpPrice, "GPS initial BUY (" + sig.ref_name + " sweep)", false);
+}
+
+function fireAddOn(bar, idx, ny) {
+  var slPrice = sig.fvg_swing_low - (cfg.slBuffer || 0);
+  var tpPrice = sig.tps.length > sig.next_tp ? sig.tps[sig.next_tp] : (sig.tps.length ? sig.tps[sig.tps.length - 1] : null);
+  if (sig.next_tp < sig.tps.length) sig.next_tp++;
+
+  signalCount++;
+  signalLog.push({
+    time: ny.label, kind: "ADD-ON " + sig.addons, entry: bar.c, sl: slPrice,
+    tp1: tpPrice || "", tp2: "", tp3: "", ref: sig.ref_name, bodyPct: ""
+  });
+
+  logBar("+++ ADD-ON " + sig.addons + "/" + cfg.maxAddOns + " +++ entry " + fmt(bar.c) +
+         "  SL " + fmt(slPrice) + "  TP " + (tpPrice !== null ? fmt(tpPrice) : "n/a"), "log-buy");
+
+  refreshStatsDisplay();
+  if (replaying) return;
+  beep();
+  submitBuy(bar.c, slPrice, tpPrice, "GPS add-on " + sig.addons + " (FVG retest)", true);
+}
+
+// =====================================================================================
+//  ORDER PLACEMENT — BUY ONLY
+// =====================================================================================
+function submitBuy(signalPrice, slPrice, tpPrice, reason, isAddOn) {
+  if (cfg.tradingMode !== "live") {
+    log("DRY RUN — no order sent (" + reason + ")", "log-info");
+    return;
+  }
+  if (pendingOrder) { log("Skipped " + reason + " — previous order still in flight", "log-warn"); return; }
+  if (!dailyCapOk()) { log("Skipped " + reason + " — daily entry cap (" + cfg.maxEntriesPerDay + ") reached", "log-warn"); return; }
+
+  var lots = computeLotSize(signalPrice, slPrice, isAddOn);
+  if (!lots || lots <= 0) return;
+
+  var req = {
+    instrumentId: cfg.instrumentId,
+    tradingAction: FXB.OrderTypes.BUY,
+    volume: { lots: lots },
+    comment: BOT_TAG
+  };
+  if (cfg.attachSl && slPrice) req.sl = slPrice;                  // absolute price
+  if (cfg.attachTp && tpPrice) req.tp = tpPrice;                  // absolute price
+
+  entriesToday++;
+  pendingOrder = true;
+  pendingManagement.push({ lots: lots, slPrice: slPrice, tpPrice: tpPrice });
+
+  var settings = cfg.confirmOrders ? { confirm: true } : {};
+  log("BUY " + lots + " lots " + cfg.instrumentId + " — " + reason +
+      (req.sl ? " | SL " + fmt(req.sl) : " | NO SL") +
+      (req.tp ? " | TP " + fmt(req.tp) : " | no TP"), "log-buy");
+
+  Framework.SendOrder(req, function (MsgResult) {
+    pendingOrder = false;
+    if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+      orderCount++;
+      refreshStatsDisplay();
+      log("Order confirmed OK", "log-info");
+    } else {
+      var errText = "unknown error";
+      try { errText = Framework.Translation.TranslateError(MsgResult.result); } catch (e) {}
+      log("Order failed / cancelled: " + errText, "log-err");
+      entriesToday--;
+      pendingManagement.pop();
+    }
+  }, settings);
+}
+
+// Sizes against the REAL GPS stop distance (entry - fvg_swing_low). Falls back to fixed
+// lots on any missing instrument data rather than guessing a size.
+function computeLotSize(entryPrice, slPrice, isAddOn) {
+  var fixed = isAddOn ? cfg.addOnLots : cfg.fixedLots;
+  if (cfg.sizingMode !== "risk") return capLot(fixed);
+  if (!cfg.attachSl || !slPrice) {
+    log("Risk % sizing needs a stop-loss — using fixed lots (" + fixed + ") for this trade.", "log-warn");
+    return capLot(fixed);
+  }
+
+  var instr = Framework.Instruments.get(cfg.instrumentId);
+  if (!instr || !instr.tickSize || !instr.tickValue) return capLot(fixed);
+
+  var slDistance = entryPrice - slPrice;
+  if (slDistance <= 0) {
+    log("Stop distance is zero or inverted — using fixed lots (" + fixed + ").", "log-warn");
+    return capLot(fixed);
+  }
+
+  var lossPerLot = (slDistance / instr.tickSize) * instr.tickValue;
+  if (!lossPerLot || lossPerLot <= 0) return capLot(fixed);
+
+  var equity = Framework.Account.equity;
+  if (!equity || equity <= 0) return capLot(fixed);
+
+  var riskPct = isAddOn ? cfg.addOnRiskPct : cfg.riskPct;
+  var rawLots = (equity * (riskPct / 100)) / lossPerLot;
+
+  // minVolume/maxVolume are in the platform's VOLUME units; minLot/maxLot/lotStep are the
+  // lot-denominated getters, and lots are what SendOrder is given here. Rounding DOWN keeps
+  // the trade inside the requested risk rather than a step above it.
+  var step = instr.lotStep || 0.01;
+  var lots = Math.floor(rawLots / step) * step;
+  lots = parseFloat(lots.toFixed(8)); // kill binary-float dust from the division above
+
+  var minLot = instr.minLot || 0;
+  if (minLot && lots < minLot) {
+    log("Risk-sized lot (" + lots + ") is below this instrument's minimum — using " + minLot + ". " +
+        "That trade risks MORE than " + riskPct + "% of equity.", "log-warn");
+    lots = minLot;
+  }
+  if (instr.maxLot && lots > instr.maxLot) lots = instr.maxLot;
+  if (lots <= 0) { log("Risk-sized lot rounded to 0 — using fixed lots (" + fixed + ").", "log-warn"); return capLot(fixed); }
+  return capLot(lots);
+}
+
+function capLot(lots) {
+  if (cfg.hardMaxLot > 0 && lots > cfg.hardMaxLot) {
+    log("Lot size " + lots + " capped to hard max " + cfg.hardMaxLot, "log-warn");
+    return cfg.hardMaxLot;
+  }
+  return lots;
+}
+
+function dailyCapOk() {
+  var key = nyParts(Date.now()).dayKey;
+  if (key !== entriesDayKey) { entriesDayKey = key; entriesToday = 0; }
+  if (!cfg.maxEntriesPerDay || cfg.maxEntriesPerDay <= 0) return true;
+  return entriesToday < cfg.maxEntriesPerDay;
+}
+
+// =====================================================================================
+//  ORDER EVENTS
+// =====================================================================================
+function isBotInstrument(id) {
+  if (!cfg || !id) return false;
+  return id === cfg.instrumentId || id === cfg.canonicalInstrumentId;
+}
+
+Framework.OnOrderOpen = function (newOrder) {
+  if (!isRunning || !newOrder || !isBotInstrument(newOrder.instrumentId)) return;
+  if (newOrder.orderType !== FXB.OrderTypes.BUY) return; // BUY only — nothing else is ours
+
+  var queued = pendingManagement.shift() || null;
+  managedOrders[newOrder.orderId] = {
+    entryPrice: newOrder.openPrice,
+    lots: queued ? queued.lots : null,
+    slPrice: queued ? queued.slPrice : null,
+    tpPrice: queued ? queued.tpPrice : null
+  };
+
+  // Verify the broker actually attached the levels. Some feeds drop an absolute sl/tp
+  // supplied on the opening request; a CHANGE right after open is the reliable repair.
+  if (!queued) return;
+  var needsSl = cfg.attachSl && queued.slPrice && !newOrder.sl;
+  var needsTp = cfg.attachTp && queued.tpPrice && !newOrder.tp;
+  if (!needsSl && !needsTp) return;
+
+  var fix = { instrumentId: newOrder.instrumentId, orderId: newOrder.orderId, tradingAction: FXB.OrderTypes.CHANGE };
+  if (needsSl) fix.sl = queued.slPrice;
+  if (needsTp) fix.tp = queued.tpPrice;
+  log("Order " + newOrder.orderId + " opened without " +
+      (needsSl ? "SL" : "") + (needsSl && needsTp ? "/" : "") + (needsTp ? "TP" : "") + " — attaching now.", "log-warn");
+  Framework.SendOrder(fix, function (MsgResult) {
+    if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+      log("Order " + newOrder.orderId + " SL/TP attached.", "log-info");
+    } else {
+      var e = "unknown error";
+      try { e = Framework.Translation.TranslateError(MsgResult.result); } catch (ex) {}
+      log("Order " + newOrder.orderId + " SL/TP attach FAILED: " + e + " — this trade may be unprotected.", "log-err");
+    }
+  });
+};
+
+Framework.OnOrderClose = function (closedOrder) {
+  if (!closedOrder || !isBotInstrument(closedOrder.instrumentId)) return;
+  if (!managedOrders[closedOrder.orderId]) return;
+  delete managedOrders[closedOrder.orderId];
+  tradeLog.push({
+    time: new Date().toLocaleString(),
+    lots: closedOrder.volume ? closedOrder.volume.lots : "",
+    profit: typeof closedOrder.profit === "number" ? closedOrder.profit : null
+  });
+  refreshStatsDisplay();
+};
+
+// =====================================================================================
+//  BAR DISPATCH — feeds every newly closed bar through the engine exactly once
+// =====================================================================================
+function onNewTradingBar() {
+  if (!isRunning) return;
+  var n = tradingStore.length;
+  if (n < 4) return;
+
+  // Collect every closed bar (index >= 1) newer than the last one we processed.
+  var todo = [];
+  for (var i = 1; i < n; i++) {
+    var c = tradingStore.GetCandle(i);
+    if (!c) break;
+    if (lastProcessedTs !== null && c.ts <= lastProcessedTs) break;
+    todo.push(i);
+    if (todo.length > 5000) break; // hard sanity bound
+  }
+  if (!todo.length) return;
+
+  todo.reverse(); // oldest first — the engine is strictly chronological
+  for (var k = 0; k < todo.length; k++) {
+    processBar(todo[k]);
+    var done = tradingStore.GetCandle(todo[k]);
+    if (done) lastProcessedTs = done.ts;
+  }
+}
+
+// Rebuilds engine state from history at Start, so the bot knows the current session refs
+// and any setup already in progress instead of sitting blind until the next session close.
+function replayHistory() {
+  var n = tradingStore.length;
+  if (n < 4) { log("Not enough history yet — waiting for candles.", "log-warn"); return false; }
+
+  var depth = Math.min(cfg.replayBars, n - 3);
+  replaying = true;
+  var t0 = Date.now();
+  for (var i = depth; i >= 1; i--) {
+    var c = tradingStore.GetCandle(i);
+    if (!c) continue;
+    processBar(i);
+    lastProcessedTs = c.ts;
+  }
+  replaying = false;
+
+  log("History replay complete — " + depth + " bars in " + (Date.now() - t0) + "ms. " +
+      "State: ref=" + (sig.ref_name || "none") +
+      (sig.ref_low !== null ? " (low " + fmt(sig.ref_low) + ")" : "") +
+      ", sweep=" + sig.sweep + ", fvg=" + sig.fvg_found + ", fired=" + sig.fired + ".", "log-info");
+  if (!sig.ref_name) {
+    log("No session close found in the replayed history — the first reference will lock at the next " +
+        "session close. Increase 'History replay bars' to reach further back.", "log-warn");
+  }
+  return true;
+}
+
+// =====================================================================================
+//  UI
+// =====================================================================================
+var priceDecimals = 2;
+
+function fmt(v) {
+  if (v === null || v === undefined || isNaN(v)) return "n/a";
+  return Number(v).toFixed(priceDecimals);
+}
+
+function setStep(id, on) {
+  var el = document.getElementById(id);
+  if (el) el.className = on ? "step done" : "step";
+}
+
+function refreshStatePanel(ny) {
+  if (replaying) return; // don't thrash the DOM through a few thousand replay bars
+  setStep("stepRef",    !!sig && sig.ref_low !== null);
+  setStep("stepSweep",  !!sig && sig.sweep);
+  setStep("stepFvg",    !!sig && sig.fvg_found);
+  setStep("stepRetest", !!sig && sig.fvg_tested);
+  setStep("stepFired",  !!sig && sig.fired);
+
+  var t = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+  t("stRefName",  sig && sig.ref_name ? sig.ref_name : "—");
+  t("stRefLevels", sig && sig.ref_low !== null ? fmt(sig.ref_low) + " / " + fmt(sig.ref_high) : "—");
+  t("stFvgZone",  sig && sig.fvg_found ? fmt(sig.fvg_bot) + " → " + fmt(sig.fvg_top) : "—");
+  t("stSl",       sig && sig.fvg_swing_low !== null ? fmt(sig.fvg_swing_low) : "—");
+  t("stTps",      sig && sig.tps && sig.tps.length
+      ? sig.tps.map(function (x) { return fmt(x); }).join(" / ") : "—");
+  t("stCarry",    sig && sig.presess_bar !== null
+      ? (barIndex - sig.presess_bar) + " / " + cfg.maxCarryBars : "—");
+  t("stAddons",   (sig ? sig.addons : 0) + " / " + (cfg ? cfg.maxAddOns : 3));
+  t("stBar",      "#" + barIndex + "  " + (ny ? ny.label : ""));
+
+  ["ASIA", "LONDON", "NYAM"].forEach(function (k) {
+    var el = document.getElementById("pill" + k);
+    if (!el) return;
+    var name = k === "NYAM" ? "NY AM" : k;
+    el.className = (activeSession && activeSession.name === name) ? "sess-pill live" : "sess-pill";
+  });
+}
+
+function refreshStatsDisplay() {
+  var net = 0, closed = 0;
+  tradeLog.forEach(function (t) { if (typeof t.profit === "number") { net += t.profit; closed++; } });
+  var g = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+  g("statSignals", signalCount);
+  g("statOrders", orderCount);
+  g("statTrades", closed);
+  g("statPL", (net >= 0 ? "" : "-") + Math.abs(net).toFixed(2));
+}
+
+function beep() {
+  try {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var tone = function (f, s, d) {
+      var o = ctx.createOscillator(), g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = f; o.type = "sine";
+      g.gain.setValueAtTime(0.12, ctx.currentTime + s);
+      o.start(ctx.currentTime + s); o.stop(ctx.currentTime + s + d);
+    };
+    tone(528, 0, 0.15); tone(660, 0.14, 0.20);
+  } catch (e) {}
+}
+
+function exportSignalsCsv() {
+  var rows = [["Bar time (EST)", "Type", "Entry", "SL", "TP1", "TP2", "TP3", "Ref session", "Body %"]];
+  signalLog.forEach(function (s) {
+    rows.push([s.time, s.kind, s.entry, s.sl, s.tp1, s.tp2, s.tp3, s.ref, s.bodyPct]);
+  });
+  var csv = rows.map(function (r) {
+    return r.map(function (v) { return '"' + String(v).replace(/"/g, '""') + '"'; }).join(",");
+  }).join("\n");
+  var blob = new Blob([csv], { type: "text/csv" });
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "gps-signals.csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+// =====================================================================================
+//  CONFIG
+// =====================================================================================
+var FIELD_IDS = ["instrumentId","timeframe","tradingMode","sizingMode","fixedLots","riskPct","hardMaxLot",
+  "confirmOrders","sessAsia","sessLondon","sessNyam","sessNylunch","preSessionFvg","maxCarryBars",
+  "requireRetest","strictRetest","requireBullish","requireOpenBelow","minBodyPct","invalidateFvg","volumeFilter","sizeFilter",
+  "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","slBuffer",
+  "enableAddOns","maxAddOns","addOnCooldown","addOnLots","addOnRiskPct","maxEntriesPerDay","replayBars"];
+
+function num(id, fallback) {
+  var v = parseFloat(document.getElementById(id).value);
+  return isNaN(v) ? fallback : v;
+}
+function int(id, fallback) {
+  var v = parseInt(document.getElementById(id).value, 10);
+  return isNaN(v) ? fallback : v;
+}
+function chk(id) { return document.getElementById(id).checked; }
+
+function readConfig() {
+  return {
+    instrumentId: document.getElementById("instrumentId").value.trim(),
+    timeframe: int("timeframe", 300),
+    tradingMode: document.getElementById("tradingMode").value,
+    sizingMode: document.getElementById("sizingMode").value,
+    fixedLots: num("fixedLots", 0.10),
+    riskPct: num("riskPct", 1.0),
+    hardMaxLot: num("hardMaxLot", 2.0),
+    confirmOrders: chk("confirmOrders"),
+
+    sessions: {
+      "ASIA":     chk("sessAsia"),
+      "LONDON":   chk("sessLondon"),
+      "NY AM":    chk("sessNyam"),
+      "NY LUNCH": chk("sessNylunch")
+    },
+
+    preSessionFvg: chk("preSessionFvg"),
+    maxCarryBars: int("maxCarryBars", 50),
+    requireRetest: chk("requireRetest"),
+    strictRetest: chk("strictRetest"),
+    requireBullish: chk("requireBullish"),
+    requireOpenBelow: chk("requireOpenBelow"),
+    minBodyPct: num("minBodyPct", 15),
+    invalidateFvg: chk("invalidateFvg"),
+    volumeFilter: chk("volumeFilter"),
+    sizeFilter: chk("sizeFilter"),
+
+    swingLookback: int("swingLookback", 50),
+    pivotWidth: int("pivotWidth", 2),
+    tpAtrSpacing: num("tpAtrSpacing", 0.5),
+    attachSl: chk("attachSl"),
+    attachTp: chk("attachTp"),
+    slBuffer: num("slBuffer", 0),
+
+    enableAddOns: chk("enableAddOns"),
+    maxAddOns: int("maxAddOns", 3),
+    addOnCooldown: int("addOnCooldown", 3),
+    addOnLots: num("addOnLots", 0.05),
+    addOnRiskPct: num("addOnRiskPct", 0.5),
+
+    maxEntriesPerDay: int("maxEntriesPerDay", 0),
+    replayBars: int("replayBars", 1500),
+    verboseReplay: false
+  };
+}
+
+function applyConfigToUI(s) {
+  if (!s) return;
+  FIELD_IDS.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (!el || s[id] === undefined) return;
+    if (el.type === "checkbox") el.checked = !!s[id]; else el.value = s[id];
+  });
+  // sessions are stored as a nested object, so they need mapping back to their checkboxes
+  if (s.sessions) {
+    var map = { "ASIA": "sessAsia", "LONDON": "sessLondon", "NY AM": "sessNyam", "NY LUNCH": "sessNylunch" };
+    Object.keys(map).forEach(function (k) {
+      if (s.sessions[k] !== undefined) document.getElementById(map[k]).checked = !!s.sessions[k];
+    });
+  }
+}
+
+function setInputsDisabled(disabled) {
+  FIELD_IDS.forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.disabled = disabled;
+  });
+}
+
+function setStatus(running) {
+  var el = document.getElementById("status");
+  if (running) {
+    var dry = cfg.tradingMode !== "live";
+    el.textContent = "● " + (dry ? "Dry Run" : "LIVE") + " — " + cfg.instrumentId;
+    el.className = dry ? "dryrun" : "running";
+  } else {
+    el.textContent = "● Bot Stopped";
+    el.className = "stopped";
+  }
+  document.getElementById("startBtn").disabled = running;
+  document.getElementById("stopBtn").disabled = !running;
+}
+
+// =====================================================================================
+//  START / STOP
+// =====================================================================================
+function startBot() {
+  var candidate = readConfig();
+
+  if (!candidate.instrumentId) { log("Enter an instrument first (e.g. XAU/USD).", "log-warn"); return; }
+
+  // Live trading places real orders, so it takes a deliberate second click. Dry Run does not.
+  if (candidate.tradingMode === "live" && !startConfirmArmed) {
+    startConfirmArmed = true;
+    var btn = document.getElementById("startBtn");
+    btn.textContent = "⚠️ Click again to confirm — places REAL orders";
+    log("LIVE mode places real orders on this account. Click Start again within 8 seconds to confirm.", "log-warn");
+    clearTimeout(startConfirmTimeout);
+    startConfirmTimeout = setTimeout(function () {
+      startConfirmArmed = false;
+      btn.textContent = "▶ Start Bot";
+    }, 8000);
+    return;
+  }
+  startConfirmArmed = false;
+  clearTimeout(startConfirmTimeout);
+  document.getElementById("startBtn").textContent = "▶ Start Bot";
+
+  cfg = candidate;
+
+  // Warn loudly about any deviation from the confirmed indicator settings — silent drift
+  // here is exactly what breaks parity with TradingView.
+  var deviations = [];
+  if (!cfg.preSessionFvg) deviations.push("Pre-Session FVG is OFF (confirmed: ON)");
+  if (cfg.maxCarryBars !== 50) deviations.push("Max carry-over is " + cfg.maxCarryBars + " (confirmed: 50)");
+  if (!cfg.requireRetest) deviations.push("Require Retest is OFF (confirmed: ON)");
+  if (!cfg.requireBullish) deviations.push("Require Bullish is OFF (confirmed: ON)");
+  if (!cfg.requireOpenBelow) deviations.push("Open At/Below FVG Top is OFF (confirmed: ON)");
+  if (cfg.minBodyPct !== 15) deviations.push("Min body is " + cfg.minBodyPct + "% (confirmed: 15%)");
+  if (cfg.invalidateFvg) deviations.push("Invalidate-If-Filled is ON (confirmed: OFF)");
+  if (cfg.sessions["NY LUNCH"]) deviations.push("NY Lunch session is ON (confirmed: OFF)");
+  if (!cfg.sessions["ASIA"] || !cfg.sessions["LONDON"] || !cfg.sessions["NY AM"]) {
+    deviations.push("One of Asia/London/NY AM is disabled (confirmed: all ON)");
+  }
+  if (deviations.length) {
+    log("⚠️ Settings differ from the confirmed indicator config — signals will NOT match TradingView: " +
+        deviations.join("; "), "log-warn");
+  }
+
+  var instr = Framework.Instruments.get(cfg.instrumentId);
+  cfg.canonicalInstrumentId = (instr && instr.instrumentId) ? instr.instrumentId : cfg.instrumentId;
+  // FXBlue instruments expose price precision as `digits`.
+  priceDecimals = (instr && typeof instr.digits === "number") ? instr.digits : 2;
+  if (!instr) log("Instrument not loaded yet — sizing and price formatting will correct themselves once it arrives.", "log-warn");
+
+  // fresh engine state
+  sig = newSig();
+  activeSession = null;
+  barIndex = 0;
+  lastProcessedTs = null;
+  managedOrders = {};
+  pendingManagement = [];
+  entriesToday = 0;
+  entriesDayKey = nyParts(Date.now()).dayKey;
+
+  tradingStore = new FXB.CandleStore({
+    ta: [ new FXB.ta.ATR({ period: 14 }) ],
+    OnNewCandle: onNewTradingBar
+  });
+  Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: cfg.timeframe }, tradingStore);
+
+  isRunning = true;
+  setInputsDisabled(true);
+  setStatus(true);
+  log("Started on " + cfg.instrumentId + " @ " + cfg.timeframe + "s — " +
+      (cfg.tradingMode === "live" ? "LIVE TRADING" : "DRY RUN (no orders)"), "log-info");
+
+  // Candles arrive asynchronously; replay once there's actually history to replay.
+  var tries = 0;
+  var seed = setInterval(function () {
+    if (!isRunning) { clearInterval(seed); return; }
+    tries++;
+    if (tradingStore.length >= 4) {
+      clearInterval(seed);
+      replayHistory();
+      refreshStatePanel(null);
+    } else if (tries > 40) {
+      clearInterval(seed);
+      log("No candles after 20s for \"" + cfg.instrumentId + "\" — the Instrument field probably does not " +
+          "match this broker's symbol name exactly. Stop, fix it, and Start again.", "log-err");
+    }
+  }, 500);
+
+  Framework.SaveCategorySettings(cfg);
+}
+
+function stopBot() {
+  isRunning = false;
+  replaying = false;
+  setInputsDisabled(false);
+  setStatus(false);
+  log("Stopped. Open trades are NOT closed automatically — manage them manually.", "log-warn");
+}
+
+// =====================================================================================
+//  LIFECYCLE
+// =====================================================================================
+Framework.OnGetState = function () {
+  // Keeps the widget alive across chart/instrument navigation instead of being unloaded.
+  return { mustRemain: true };
+};
+
+Framework.OnLoad = function () {
+  Framework.LoadCategorySettings(SETTINGS_ID, function (settings) {
+    settings = settings || {};
+    if (!settings.instrumentId && Framework.Account && Framework.Account.defaultInstrumentId) {
+      settings.instrumentId = Framework.Account.defaultInstrumentId;
+    }
+    applyConfigToUI(settings);
+    setStatus(false);
+    refreshStatsDisplay();
+    log("Ready. Confirmed GPS settings loaded. Start in Dry Run and verify against TradingView first.", "log-info");
+  });
+
+  document.getElementById("startBtn").addEventListener("click", startBot);
+  document.getElementById("stopBtn").addEventListener("click", stopBot);
+  document.getElementById("clearLogBtn").addEventListener("click", function () {
+    document.getElementById("log").innerHTML = "";
+  });
+  document.getElementById("exportCsvBtn").addEventListener("click", exportSignalsCsv);
+  document.getElementById("resetStatsBtn").addEventListener("click", function () {
+    tradeLog = []; signalLog = []; signalCount = 0; orderCount = 0;
+    refreshStatsDisplay();
+    log("Stats reset.", "log-info");
+  });
+  document.getElementById("minimizeBtn").addEventListener("click", function () {
+    var min = document.body.classList.toggle("minimized");
+    this.textContent = min ? "▢" : "▁";
+    this.title = min ? "Restore" : "Minimize";
+  });
+  document.getElementById("advancedToggle").addEventListener("click", function () {
+    var expanded = document.getElementById("advancedSection").classList.toggle("expanded");
+    this.textContent = expanded ? "▾ Hide advanced settings" : "▸ Show advanced settings";
+  });
+};
+
+Framework.OnMessage = function (Msg) {
+  if (!Msg) return;
+};
+</script>
+</body>
+</html>
