@@ -20,7 +20,14 @@ function buildSandbox() {
   const logLines = [];
   const document = {
     getElementById: (id) => elements[id] || el(id),
-    createElement: () => ({ textContent: "", className: "", href: "", download: "", click() {} }),
+    createElement: () => {
+    // The logger now assembles each line from text nodes + badge spans, so the
+    // stub has to accumulate textContent the way a real element would.
+    const n = { textContent: "", className: "", href: "", download: "", click() {} };
+    n.appendChild = (c) => { n.textContent += (c && c.textContent) ? c.textContent : ""; };
+    return n;
+  },
+  createTextNode: (t) => ({ textContent: String(t) }),
     body: { appendChild() {}, removeChild() {}, classList: { toggle: () => false } },
     querySelectorAll: () => []
   };
@@ -51,6 +58,8 @@ function buildSandbox() {
   vm.createContext(sandbox);
   vm.runInContext(code, sandbox);
 
+  // the engine's own Framework instance, so tests can stub Orders/Instruments
+  sandbox.Framework = sandbox.Framework || null;
   sandbox.__logLines = logLines;
   sandbox.__orders = sentOrders;
   return sandbox;
@@ -72,7 +81,7 @@ function defaultCfg(over) {
     requireRetest: true, strictRetest: false, requireBullish: true, requireOpenBelow: true,
     minBodyPct: 15, invalidateFvg: false, volumeFilter: false, sizeFilter: false,
     swingLookback: 50, pivotWidth: 1, tpAtrSpacing: 0.5,
-    attachSl: true, attachTp: true, slBuffer: 0,
+    attachSl: true, attachTp: true, attachMode: "open", slBuffer: 0,
     enableAddOns: true, maxAddOns: 3, addOnCooldown: 3, addOnLots: 0.05, addOnRiskPct: 0.5,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
   }, over || {});

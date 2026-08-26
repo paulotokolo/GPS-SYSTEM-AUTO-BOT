@@ -35,7 +35,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite for the signal engine (79 assertions). |
+| `tests/` | Automated test suite (118 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -195,6 +195,64 @@ SESSION CLOSE → SWEEP DETECTED → FIRST FVG FOUND → FVG RETEST → BUY SIGN
 
 ---
 
+## Trade management
+
+Beyond producing signals, the bot manages the trades it opens.
+
+### Auto Trailing
+
+Two stages, both measured in account currency rather than ATR multiples:
+
+1. **Breakeven** once floating profit reaches *half* of "Trail after profit". A buffer can be
+   added on top, because a stop at the exact entry still costs the spread if it is hit — that is
+   a small guaranteed loss, not zero.
+2. **Trail** once profit clears "Trail after profit" in full, keeping the stop "Profit lock
+   distance" behind price.
+
+Profit comes from the broker's own figure, which also derives the $-per-price ratio — so it keeps
+working for a trade re-adopted after a reload, where the original lot size was never captured.
+
+**Trailing only ever tightens.** It can never move the stop further from price than
+`fvg_swing_low` put it. A trail that would widen the stop is refused outright.
+
+### Daily circuit breaker
+
+A profit target and a stop loss, in dollars. Hit either and the bot stops trading for the day.
+
+It counts **only this bot's own trades on this instrument** — closed today plus what is floating
+right now — not whole-account equity, so a second window trading another pair cannot trip it. The
+day boundary is the **EST** day, matching the session windows. It re-arms automatically at the
+next one.
+
+Optionally flattens open trades when it fires. A close that gets rejected is retried with a
+backoff until it genuinely succeeds, rather than being logged once and abandoned — which matters
+most in exactly the away-from-the-desk case the breaker exists for.
+
+### Account size presets
+
+Small / medium / large fill risk %, lot sizes, the hard lot cap, daily limits and the trailing
+amounts in one go, and switch trailing on. Starting points, not universal numbers — everything
+stays editable.
+
+### Order path test
+
+A **Send test BUY now** button places a plain market order with no SL/TP and no strategy logic,
+behind the platform's own confirmation. It stays enabled while the bot is running, because that
+is exactly when it is needed: if signals appear in the log but no trade opens, this splits the
+problem in half. Works &rarr; the connection is fine and the issue is the signal path or the
+SL/TP format. Fails &rarr; the log carries the broker's exact reason.
+
+### SL/TP attach mode
+
+The GPS levels are absolute prices. Absolute prices are only *proven* to work on a modify
+request on this platform — sending one on the opening order is unverified, and if the platform
+rejects it the whole order fails and no trade opens.
+
+So the default is **After open**: send a plain order, then set the levels immediately. A rejected
+stop can never cost the entry itself. **On open** remains available if a broker requires it.
+
+---
+
 ## Verification
 
 ```bash
@@ -208,13 +266,15 @@ test_conditions    11 pass   0 fail
 test_replay         9 pass   0 fail
 test_sizing         6 pass   0 fail
 test_pine_parity   17 pass   0 fail
+test_orders        15 pass   0 fail
+test_management    24 pass   0 fail
 ----------------------------------------
-TOTAL: 79 pass, 0 fail
+TOTAL: 118 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-Coverage includes: the full signal sequence with each milestone on its own bar; cross-session carry-over and 50-bar expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; and risk sizing against the real stop distance.
+Coverage includes: the full signal sequence with each milestone on its own bar; cross-session carry-over and 50-bar expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
 
 **Not yet tested against live market data.**
 

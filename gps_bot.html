@@ -82,7 +82,24 @@ button:active { transform: scale(0.98); }
 .log-info { opacity: 0.7; }
 .log-warn { color: #ffcf6f; }
 .log-err  { color: #ff8a80; }
-.log-hist { opacity: 0.45; font-style: italic; }
+.log-hist { opacity: 0.55; font-style: italic; }
+
+/* Key words get their own badge inside a log line, so a BUY is findable when
+   scanning a long log — including on history lines, where .log-hist would
+   otherwise wash the line's own colour out completely. */
+.log-badge {
+  display: inline-block;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  font-style: normal;
+}
+.badge-buy    { background: #4dffcf; color: #04101f; }
+.badge-addon  { background: #6fe3ff; color: #04101f; }
+.badge-sweep  { background: #ffcf6f; color: #241a04; }
+.badge-fvg    { background: #b58cff; color: #10061f; }
+.badge-sess   { background: rgba(111,227,255,0.22); color: #9fd8ff; }
 .warning-box {
   background: rgba(255,183,77,0.10); border: 1px solid rgba(255,183,77,0.35);
   border-radius: 10px; padding: 10px 12px; font-size: 11.5px; margin-bottom: 12px;
@@ -227,6 +244,20 @@ button:active { transform: scale(0.98); }
     </div>
     <small class="hint">Dry Run runs the full engine and logs every BUY with its SL/TP, but never sends an order. Use it for the TradingView side-by-side check.</small>
 
+    <div class="row"><label>Account size</label>
+      <select id="accountSizeSelect">
+        <option value="" selected>— choose one —</option>
+        <option value="small">Small (under $1k)</option>
+        <option value="medium">Medium ($1k &ndash; $10k)</option>
+        <option value="large">Large ($10k+)</option>
+      </select>
+    </div>
+    <small class="hint">
+      Sets risk %, lot size, daily limits and the trailing amounts all at once, to sane starting
+      points for that account size. Everything stays editable afterwards — these are a starting
+      point, not universal numbers.
+    </small>
+
     <div class="row"><label>Position sizing</label>
       <select id="sizingMode">
         <option value="fixed" selected>Fixed lots</option>
@@ -244,6 +275,19 @@ button:active { transform: scale(0.98); }
     <button id="startBtn" class="pill-btn">&#9654; Start Bot</button>
     <button id="stopBtn" disabled>&#9632; Stop Bot</button>
   </div>
+
+  <!-- ---------------- Order path test ---------------- -->
+  <fieldset>
+    <legend>Order Path Test</legend>
+    <small class="hint">
+      If signals appear in the log but no trade opens, click this. It sends a plain market BUY
+      with <b>no SL/TP and no strategy logic</b> — the platform's own confirmation box will
+      appear. If this works, the connection is fine and the problem is in the signal path or the
+      SL/TP format. If it fails, the log will show the broker's exact reason.
+    </small>
+    <div class="row"><label>Test lots</label><input type="number" id="testLots" value="0.01" step="0.01" min="0.01"></div>
+    <button id="testBuyBtn">&#9654; Send test BUY now</button>
+  </fieldset>
 
   <!-- ---------------- Log ---------------- -->
   <fieldset>
@@ -322,6 +366,19 @@ button:active { transform: scale(0.98); }
       <div class="row"><label>Min TP spacing (ATR)</label><input type="number" id="tpAtrSpacing" value="0.5" step="0.1" min="0"></div>
       <div class="row"><label>Attach stop-loss</label><input type="checkbox" id="attachSl" checked></div>
       <div class="row"><label>Attach take-profit</label><input type="checkbox" id="attachTp" checked></div>
+      <div class="row"><label>SL/TP attach mode</label>
+        <select id="attachMode">
+          <option value="after" selected>After open (safer) — send a plain order, then set levels</option>
+          <option value="open">On open — send SL/TP with the order</option>
+        </select>
+      </div>
+      <small class="hint">
+        <b>Why this exists:</b> the levels here are absolute prices (e.g. SL 2001.80), and absolute
+        prices are only proven to work on a <i>modify</i> request. Sending one on the opening order
+        is unverified — if the platform rejects it, the whole order fails and no trade opens.
+        <b>After open</b> sends a plain order first, then sets the levels immediately, so a bad
+        SL can never cost you the entry. Switch to <b>On open</b> only if your broker requires it.
+      </small>
       <div class="row"><label>SL buffer (price)</label><input type="number" id="slBuffer" value="0" step="0.01" min="0"></div>
       <small class="hint">Optional pad below fvg_swing_low to survive spread/wick noise. 0 = exactly at fvg_swing_low, matching the indicator.</small>
     </fieldset>
@@ -335,6 +392,58 @@ button:active { transform: scale(0.98); }
       <div class="row"><label>Cooldown bars</label><input type="number" id="addOnCooldown" value="3" step="1" min="0"></div>
       <div class="row"><label>Add-on lots</label><input type="number" id="addOnLots" value="0.05" step="0.01" min="0.01"></div>
       <div class="row"><label>Add-on risk (%)</label><input type="number" id="addOnRiskPct" value="0.5" step="0.1" min="0.1"></div>
+    </fieldset>
+
+    <!-- ---------------- Auto trailing ---------------- -->
+    <fieldset>
+      <legend>Auto Trailing</legend>
+      <small class="hint">
+        ON: once a trade is far enough in profit, the stop-loss automatically moves up to lock in
+        gains as price keeps going your way. OFF: the trade keeps its original GPS stop-loss and
+        take-profit only, untouched.
+      </small>
+      <div class="row"><label>Auto trailing</label>
+        <select id="autoTrailingOn">
+          <option value="off" selected>OFF</option>
+          <option value="on">ON</option>
+        </select>
+      </div>
+      <div class="row"><label>Trail after profit ($)</label><input type="number" id="trailAfterProfitDollars" value="0" step="1" min="0"></div>
+      <div class="row"><label>Profit lock distance ($)</label><input type="number" id="profitLockDistanceDollars" value="0" step="1" min="0"></div>
+      <small class="hint">
+        Once a trade is up "Trail after profit" dollars, the stop starts following price, staying
+        "Profit lock distance" dollars behind it. Tune both to your account size and instrument.
+      </small>
+      <div class="row"><label>Breakeven buffer ($)</label><input type="number" id="breakevenBufferDollars" value="0" step="0.5" min="0"></div>
+      <small class="hint">
+        A raw breakeven stop at your exact entry still costs you the spread if it gets hit — a
+        small guaranteed loss, not zero. This adds a cushion on top, so being stopped at
+        breakeven means a tiny win or a true $0. Set it to roughly your spread + commission.
+      </small>
+      <small class="hint">
+        <b>Note:</b> trailing only ever tightens the stop, never loosens it, so it can never move
+        your GPS stop further from price than <code>fvg_swing_low</code> put it.
+      </small>
+    </fieldset>
+
+    <!-- ---------------- Daily circuit breaker ---------------- -->
+    <fieldset>
+      <legend>Daily Circuit Breaker</legend>
+      <small class="hint">
+        Set an amount and forget it — hit either one and the bot stops trading for the day on its
+        own. Counts only <b>this bot's own trades</b> on this instrument (closed today plus what is
+        floating now), not whole-account equity, so a second window on another pair cannot trip it.
+        Re-arms automatically at the next EST day.
+      </small>
+      <div class="row"><label>Daily profit target ($)</label><input type="number" id="dailyProfitTarget" value="0" step="1" min="0"></div>
+      <div class="row"><label>Daily stop loss ($)</label><input type="number" id="dailyMaxLoss" value="0" step="1" min="0"></div>
+      <small class="hint">0 = that limit is off.</small>
+      <div class="row"><label>Close open trades when it trips</label><input type="checkbox" id="closeOnCircuitBreak"></div>
+      <small class="hint">
+        ON also flattens open bot trades when the breaker fires. A close that gets rejected is
+        retried with a backoff until it genuinely succeeds, rather than being logged once and
+        abandoned — which matters most in exactly the "I'm away from the desk" case.
+      </small>
     </fieldset>
 
     <!-- ---------------- Safety ---------------- -->
@@ -489,6 +598,75 @@ function sessionAt(mins) {
 // =====================================================================================
 var currentBarLabel = "";
 
+// Words that get a coloured badge inside a log line. Longer phrases come first so
+// "BUY SIGNAL" is matched before a bare "BUY" can claim the word. The surrounding
+// *** and +++ markers are absorbed into the badge — the colour does that job now.
+// The label keeps the full wording — only the *** and +++ decoration is dropped,
+// because the coloured badge is what those markers were standing in for. Nothing
+// else about a log line changes, so the text still reads the same next to
+// TradingView.
+var LOG_BADGES = [
+  { re: /\*\*\*\s*BUY SIGNAL\s*\*\*\*/,          label: "BUY SIGNAL",      cls: "badge-buy"   },
+  { re: /\+\+\+\s*ADD-ON\s*(\d+\/\d+)\s*\+\+\+/, label: "ADD-ON $1",       cls: "badge-addon" },
+  { re: /\bSWEEP DETECTED\b/,                    label: "SWEEP DETECTED",  cls: "badge-sweep" },
+  { re: /\bSWEEP FORMING\b/,                     label: "SWEEP FORMING",   cls: "badge-sweep" },
+  { re: /\bFIRST FVG FOUND\b/,                   label: "FIRST FVG FOUND", cls: "badge-fvg"   },
+  { re: /\bFVG RETEST\b/,                        label: "FVG RETEST",      cls: "badge-fvg"   },
+  { re: /\bSESSION CLOSE\b/,                     label: "SESSION CLOSE",   cls: "badge-sess"  },
+  { re: /\bSESSION OPEN\b/,                      label: "SESSION OPEN",    cls: "badge-sess"  },
+  { re: /\bBUY\b/,                               label: "BUY",             cls: "badge-buy"   }
+];
+
+//--- One combined matcher, built once. Each alternative keeps its own group count
+//--- out of the way by being tested individually below.
+var LOG_BADGE_RE = new RegExp(
+  LOG_BADGES.map(function (b) { return "(?:" + b.re.source + ")"; }).join("|"), "g");
+
+// Builds the line with DOM nodes rather than innerHTML — log text is bot-generated,
+// but assembling it as text nodes means a stray price or symbol can never be parsed
+// as markup.
+function appendLogText(el, text) {
+  LOG_BADGE_RE.lastIndex = 0;
+  var last = 0, m;
+  var plainBuyUsed = false;   // only the first bare "BUY" in a line gets a badge
+
+  while ((m = LOG_BADGE_RE.exec(text)) !== null) {
+    if (m[0].length === 0) { LOG_BADGE_RE.lastIndex++; continue; }
+
+    //--- work out which badge matched, to get its label and colour
+    var hit = null;
+    for (var i = 0; i < LOG_BADGES.length; i++) {
+      var single = new RegExp("^(?:" + LOG_BADGES[i].re.source + ")$");
+      var sm = single.exec(m[0]);
+      if (sm) {
+        hit = {
+          cls: LOG_BADGES[i].cls,
+          label: LOG_BADGES[i].label.replace("$1", sm[1] || ""),
+          bare: LOG_BADGES[i].label === "BUY"
+        };
+        break;
+      }
+    }
+
+    //--- a second bare BUY on the same line reads as clutter, so leave it as text
+    if (hit && hit.bare) {
+      if (plainBuyUsed) continue;
+      plainBuyUsed = true;
+    }
+
+    if (m.index > last) el.appendChild(document.createTextNode(text.slice(last, m.index)));
+
+    var span = document.createElement("span");
+    span.className = "log-badge " + (hit ? hit.cls : "badge-buy");
+    span.textContent = hit ? hit.label : m[0];
+    el.appendChild(span);
+
+    last = m.index + m[0].length;
+  }
+
+  if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
+}
+
 function log(msg, cls) {
   var el = document.getElementById("log");
   if (!el) return;
@@ -496,7 +674,7 @@ function log(msg, cls) {
   if (cls) line.className = cls;
   var t = new Date();
   var ts = ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2) + ":" + ("0" + t.getSeconds()).slice(-2);
-  line.textContent = "[" + ts + "] " + msg;
+  appendLogText(line, "[" + ts + "] " + msg);
   el.appendChild(line);
   while (el.childNodes.length > 800) el.removeChild(el.firstChild);
   el.scrollTop = el.scrollHeight;
@@ -825,16 +1003,39 @@ function fireAddOn(bar, idx, ny) {
 // =====================================================================================
 //  ORDER PLACEMENT — BUY ONLY
 // =====================================================================================
+// A SendOrder callback that never fires would leave pendingOrder stuck true and silently
+// block every later signal for the rest of the session. This releases the lock so one lost
+// callback cannot kill the bot.
+var pendingOrderTimer = null;
+function setPendingOrder(on) {
+  pendingOrder = on;
+  clearTimeout(pendingOrderTimer);
+  if (!on) return;
+  pendingOrderTimer = setTimeout(function () {
+    if (!pendingOrder) return;
+    pendingOrder = false;
+    log("No response from the platform after 30s — releasing the in-flight order lock so later " +
+        "signals are not blocked. The order may still have gone through; check your positions.", "log-warn");
+  }, 30000);
+}
+
 function submitBuy(signalPrice, slPrice, tpPrice, reason, isAddOn) {
+  // Every path out of this function says WHY, so "a signal fired but no trade appeared" is
+  // always answerable from the log alone.
   if (cfg.tradingMode !== "live") {
-    log("DRY RUN — no order sent (" + reason + ")", "log-info");
+    log("NO ORDER SENT — bot is in DRY RUN. Switch 'Trading mode' to Live Trading to place " +
+        "real orders. (" + reason + ")", "log-warn");
     return;
   }
-  if (pendingOrder) { log("Skipped " + reason + " — previous order still in flight", "log-warn"); return; }
-  if (!dailyCapOk()) { log("Skipped " + reason + " — daily entry cap (" + cfg.maxEntriesPerDay + ") reached", "log-warn"); return; }
+  if (pendingOrder) { log("NO ORDER SENT — a previous order is still in flight (" + reason + ")", "log-warn"); return; }
+  if (!dailyCapOk()) { log("NO ORDER SENT — daily entry cap (" + cfg.maxEntriesPerDay + ") reached (" + reason + ")", "log-warn"); return; }
 
   var lots = computeLotSize(signalPrice, slPrice, isAddOn);
-  if (!lots || lots <= 0) return;
+  if (!lots || lots <= 0) {
+    log("NO ORDER SENT — computed lot size is " + lots + ". Check Fixed lots / Risk % and the " +
+        "instrument's minimum volume. (" + reason + ")", "log-err");
+    return;
+  }
 
   var req = {
     instrumentId: cfg.instrumentId,
@@ -842,20 +1043,29 @@ function submitBuy(signalPrice, slPrice, tpPrice, reason, isAddOn) {
     volume: { lots: lots },
     comment: BOT_TAG
   };
-  if (cfg.attachSl && slPrice) req.sl = slPrice;                  // absolute price
-  if (cfg.attachTp && tpPrice) req.tp = tpPrice;                  // absolute price
+
+  // Absolute-price SL/TP on an OPENING request is not a proven path on this platform — the
+  // working reference bot only ever sends pips there, and uses absolute prices on a modify.
+  // In "after" mode the order goes out plain and OnOrderOpen sets the levels straight away,
+  // so a rejected SL can never cost the entry itself.
+  var attachOnOpen = (cfg.attachMode === "open");
+  if (attachOnOpen) {
+    if (cfg.attachSl && slPrice) req.sl = slPrice;
+    if (cfg.attachTp && tpPrice) req.tp = tpPrice;
+  }
 
   entriesToday++;
-  pendingOrder = true;
+  setPendingOrder(true);
   pendingManagement.push({ lots: lots, slPrice: slPrice, tpPrice: tpPrice });
 
   var settings = cfg.confirmOrders ? { confirm: true } : {};
   log("BUY " + lots + " lots " + cfg.instrumentId + " — " + reason +
-      (req.sl ? " | SL " + fmt(req.sl) : " | NO SL") +
-      (req.tp ? " | TP " + fmt(req.tp) : " | no TP"), "log-buy");
+      (cfg.attachSl && slPrice ? " | SL " + fmt(slPrice) : " | NO SL") +
+      (cfg.attachTp && tpPrice ? " | TP " + fmt(tpPrice) : " | no TP") +
+      (attachOnOpen ? " | levels sent with the order" : " | levels attached right after open"), "log-buy");
 
   Framework.SendOrder(req, function (MsgResult) {
-    pendingOrder = false;
+    setPendingOrder(false);
     if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
       orderCount++;
       refreshStatsDisplay();
@@ -863,11 +1073,46 @@ function submitBuy(signalPrice, slPrice, tpPrice, reason, isAddOn) {
     } else {
       var errText = "unknown error";
       try { errText = Framework.Translation.TranslateError(MsgResult.result); } catch (e) {}
-      log("Order failed / cancelled: " + errText, "log-err");
+      log("ORDER REJECTED by the platform: " + errText +
+          (attachOnOpen ? " — if this mentions the stop or target, switch 'SL/TP attach mode' to " +
+                          "'After open' and try again." : ""), "log-err");
       entriesToday--;
       pendingManagement.pop();
     }
   }, settings);
+}
+
+// Bypasses the strategy completely: a plain market BUY, no SL, no TP, no comment. This is the
+// isolation test — if it works, SendOrder is wired to the account correctly and any problem
+// lies in the signal path or the SL/TP format rather than the connection.
+function testPlaceOrder() {
+  var instrumentId = document.getElementById("instrumentId").value.trim();
+  if (!instrumentId) { log("Enter an instrument first (e.g. XAU/USD) before testing.", "log-warn"); return; }
+
+  var testLots = parseFloat(document.getElementById("testLots").value) || 0.01;
+  var req = {
+    instrumentId: instrumentId,
+    tradingAction: FXB.OrderTypes.BUY,
+    volume: { lots: testLots }
+  };
+
+  log("MANUAL TEST BUY " + testLots + " lots " + instrumentId +
+      " — no SL/TP, strategy logic bypassed entirely", "log-buy");
+
+  // Always force the platform's own confirmation for a manual test, whatever the
+  // "Confirm each order" checkbox says — this is a deliberate click.
+  Framework.SendOrder(req, function (MsgResult) {
+    if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+      log("TEST ORDER OK — SendOrder is correctly linked to this account. The order path works, " +
+          "so any missing trades are coming from the signal path or the SL/TP format.", "log-info");
+      beep();
+    } else {
+      var errText = "unknown error";
+      try { errText = Framework.Translation.TranslateError(MsgResult.result); } catch (e) {}
+      log("TEST ORDER FAILED: " + errText + " — this is the connection or the instrument name, " +
+          "not the strategy. Check the Instrument field matches this broker's symbol exactly.", "log-err");
+    }
+  }, { confirm: true });
 }
 
 // Sizes against the REAL GPS stop distance (entry - fvg_swing_low). Falls back to fixed
@@ -932,6 +1177,223 @@ function dailyCapOk() {
 }
 
 // =====================================================================================
+//  DAILY CIRCUIT BREAKER
+// =====================================================================================
+var dailyBreakerDayKey = "";
+var circuitBreakerTripped = false;
+
+// Force-close queue — a close that gets rejected is retried until it genuinely succeeds
+// rather than being logged once and abandoned. This is retried on bar close AND on every
+// account update, and the latter can fire many times a second, so each order backs off
+// further after each failure. Without that, a persistently-rejected close would flood
+// SendOrder — and pop a confirmation dialog dozens of times a second if confirms are on.
+var forceCloseQueue = {};                  // orderId -> { attempts, nextRetryAt }
+var FORCE_CLOSE_MIN_INTERVAL_MS = 4000;
+
+function attemptForceCloses() {
+  var now = Date.now();
+  Object.keys(forceCloseQueue).forEach(function (orderId) {
+    var entry = forceCloseQueue[orderId];
+    if (entry.nextRetryAt && now < entry.nextRetryAt) return;   // still cooling down
+
+    var order = Framework.Orders.get(orderId);
+    if (!order || order.closeTime) { delete forceCloseQueue[orderId]; return; }  // already gone
+
+    entry.attempts++;
+    entry.nextRetryAt = now + Math.min(FORCE_CLOSE_MIN_INTERVAL_MS * entry.attempts, 30000);
+
+    Framework.SendOrder({
+      instrumentId: order.instrumentId,
+      orderId: orderId,
+      tradingAction: FXB.OrderTypes.CLOSEPOSITION
+    }, function (MsgResult) {
+      if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+        log("Closed order " + orderId + " (circuit breaker)", "log-info");
+        delete forceCloseQueue[orderId];
+      } else {
+        var errText = "unknown error";
+        try { errText = Framework.Translation.TranslateError(MsgResult.result); } catch (e) {}
+        var urgency = entry.attempts >= 3 ? "🔴 STILL OPEN after " + entry.attempts + " attempts" : "retrying";
+        log("Could not close order " + orderId + " (" + urgency + "): " + errText, "log-warn");
+        if (entry.attempts === 3) beep();
+      }
+    });
+  });
+}
+
+// THIS bot's own P/L for today: today's closed trades plus whatever is floating on trades it
+// still holds. Deliberately NOT whole-account equity — a second window trading another pair
+// must not be able to trip this instance's breaker.
+function computeBotDailyPL() {
+  var todayKey = nyParts(Date.now()).dayKey;
+  var pl = 0;
+  tradeLog.forEach(function (t) {
+    if (t.dayKey === todayKey && typeof t.profit === "number") pl += t.profit;
+  });
+  Object.keys(managedOrders).forEach(function (orderId) {
+    var order = Framework.Orders.get(orderId);
+    if (order && !order.closeTime && typeof order.profit === "number") pl += order.profit;
+  });
+  return pl;
+}
+
+function checkDailyCircuitBreaker() {
+  if (!isRunning || circuitBreakerTripped) return;
+  if (!cfg || (cfg.dailyProfitTarget <= 0 && cfg.dailyMaxLoss <= 0)) return;
+
+  var dk = nyParts(Date.now()).dayKey;
+  if (dk !== dailyBreakerDayKey) {          // new EST day — re-arm automatically
+    dailyBreakerDayKey = dk;
+    circuitBreakerTripped = false;
+  }
+
+  var dailyPL = computeBotDailyPL();
+  if (cfg.dailyProfitTarget > 0 && dailyPL >= cfg.dailyProfitTarget) {
+    tripCircuitBreaker("daily profit target reached (+$" + dailyPL.toFixed(2) + ")");
+  } else if (cfg.dailyMaxLoss > 0 && dailyPL <= -cfg.dailyMaxLoss) {
+    tripCircuitBreaker("daily stop loss reached (-$" + Math.abs(dailyPL).toFixed(2) + ")");
+  }
+}
+
+function tripCircuitBreaker(reasonText) {
+  circuitBreakerTripped = true;
+  isRunning = false;
+  stopUiTicker();
+  setInputsDisabled(false);
+  setStatus(false, "Stopped — " + reasonText);
+  log("🛑 Daily circuit breaker: " + reasonText + ". No new trades today.", "log-warn");
+  beep(); beep();
+
+  if (!cfg.closeOnCircuitBreak) return;
+
+  var ids = Object.keys(managedOrders);
+  if (ids.length === 0) { log("No open bot trades to close.", "log-info"); return; }
+  ids.forEach(function (orderId) { forceCloseQueue[orderId] = { attempts: 0 }; });
+  attemptForceCloses();
+}
+
+// =====================================================================================
+//  AUTO TRAILING — dollar-based breakeven then trail, on every managed open trade
+//
+//  BUY ONLY, so "improves" always means a HIGHER stop. Trailing only ever tightens, never
+//  loosens, so it can never push the stop further from price than fvg_swing_low put it.
+// =====================================================================================
+var warnedZeroTrailAfter = false;
+var warnedZeroLockDistance = false;
+
+function manageOpenTrades() {
+  if (!cfg || !cfg.autoTrailingOn) return;
+
+  if (!cfg.trailAfterProfitDollars || cfg.trailAfterProfitDollars <= 0) {
+    if (!warnedZeroTrailAfter) {
+      log("Auto Trailing is ON but 'Trail after profit' is $0 — set it above 0 or trailing can never trigger.", "log-warn");
+      warnedZeroTrailAfter = true;
+    }
+    return;
+  }
+  if (!cfg.profitLockDistanceDollars || cfg.profitLockDistanceDollars <= 0) {
+    if (!warnedZeroLockDistance) {
+      log("⚠️ Auto Trailing is ON but 'Profit lock distance' is $0/blank — trades will move to " +
+          "breakeven but can never actually trail. Set it above 0.", "log-warn");
+      warnedZeroLockDistance = true;
+    }
+  }
+
+  Object.keys(managedOrders).forEach(function (orderId) {
+    var m = managedOrders[orderId];
+    var order = Framework.Orders.get(orderId);
+    if (!order || order.closeTime) { delete managedOrders[orderId]; return; }
+
+    // A rejected SL update must not retry on every real-time tick — cool down first.
+    if (m.mgmtRetryAt && Date.now() < m.mgmtRetryAt) return;
+
+    var price = order.closePrice;                    // current exit price for an open trade
+    var profitDist = price - m.entryPrice;           // long only
+
+    // Prefer the broker's own profit figure over a derived conversion — it is the number you
+    // see in your own P/L, and it also refreshes the $-per-price ratio, which works even for a
+    // trade re-adopted after a reload where the lot size was never captured.
+    var profitDollars;
+    if (typeof order.profit === "number") {
+      profitDollars = order.profit;
+      if (profitDist !== 0) m.dollarPerPriceUnit = order.profit / profitDist;
+    } else {
+      if (!m.dollarPerPriceUnit && m.lots) {
+        var instr = Framework.Instruments.get(cfg.instrumentId);
+        if (instr && instr.tickSize && instr.tickValue) {
+          m.dollarPerPriceUnit = m.lots * instr.tickValue / instr.tickSize;
+        }
+      }
+      if (!m.dollarPerPriceUnit) return;             // can't value it — try again next tick
+      profitDollars = profitDist * m.dollarPerPriceUnit;
+    }
+
+    // ---- Step 1: breakeven once profit reaches half of "Trail after profit" ----
+    var beTrigger = cfg.trailAfterProfitDollars * 0.5;
+    if (!m.breakevenApplied && beTrigger > 0 && profitDollars >= beTrigger) {
+      var buffer = (cfg.breakevenBufferDollars > 0 && m.dollarPerPriceUnit)
+        ? (cfg.breakevenBufferDollars / m.dollarPerPriceUnit) : 0;
+      var bePrice = m.entryPrice + buffer;
+
+      if (!order.sl || bePrice > order.sl) {
+        Framework.SendOrder({
+          instrumentId: order.instrumentId, orderId: orderId,
+          tradingAction: FXB.OrderTypes.CHANGE, sl: bePrice
+        }, function (MsgResult) {
+          if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+            m.breakevenApplied = true;
+            log("Order " + orderId + " moved to breakeven" +
+                (buffer > 0 ? " + $" + cfg.breakevenBufferDollars + " buffer" : "") +
+                " (" + fmt(bePrice) + ")", "log-info");
+          } else {
+            var e = "unknown error";
+            try { e = Framework.Translation.TranslateError(MsgResult.result); } catch (ex) {}
+            log("Order " + orderId + " breakeven update failed: " + e, "log-warn");
+            m.mgmtRetryAt = Date.now() + 4000;
+          }
+        });
+      } else {
+        m.breakevenApplied = true;    // stop is already better than breakeven — nothing to do
+      }
+      return;                         // don't also trail on the same pass as the breakeven move
+    }
+
+    // ---- Step 2: trail behind price, only ever tightening ----
+    if (profitDollars < cfg.trailAfterProfitDollars) return;
+    if (!cfg.profitLockDistanceDollars || cfg.profitLockDistanceDollars <= 0) return;
+    if (!m.dollarPerPriceUnit) return;
+
+    var trailDist = cfg.profitLockDistanceDollars / m.dollarPerPriceUnit;
+    var desiredSl = price - trailDist;
+    if (order.sl && desiredSl <= order.sl) return;   // would loosen the stop — never do that
+
+    Framework.SendOrder({
+      instrumentId: order.instrumentId, orderId: orderId,
+      tradingAction: FXB.OrderTypes.CHANGE, sl: desiredSl
+    }, function (MsgResult) {
+      if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+        m.breakevenApplied = true;
+        log("Order " + orderId + " trailing stop moved to " + fmt(desiredSl) +
+            " (locking ~$" + cfg.profitLockDistanceDollars + ")", "log-info");
+      } else {
+        var e2 = "unknown error";
+        try { e2 = Framework.Translation.TranslateError(MsgResult.result); } catch (ex) {}
+        log("Order " + orderId + " trailing stop update FAILED: " + e2, "log-warn");
+        m.mgmtRetryAt = Date.now() + 4000;
+      }
+    });
+  });
+}
+
+// Fires on every real-time balance/equity change, which is what lets the circuit breaker and
+// Auto Trailing react immediately instead of waiting for the next bar close.
+Framework.OnAccountMetrics = function () {
+  checkDailyCircuitBreaker();
+  if (Object.keys(forceCloseQueue).length > 0) attemptForceCloses();
+  if (isRunning && cfg && cfg.autoTrailingOn) manageOpenTrades();
+};
+
+// =====================================================================================
 //  ORDER EVENTS
 // =====================================================================================
 function isBotInstrument(id) {
@@ -948,7 +1410,11 @@ Framework.OnOrderOpen = function (newOrder) {
     entryPrice: newOrder.openPrice,
     lots: queued ? queued.lots : null,
     slPrice: queued ? queued.slPrice : null,
-    tpPrice: queued ? queued.tpPrice : null
+    tpPrice: queued ? queued.tpPrice : null,
+    // --- auto-trailing bookkeeping ---
+    breakevenApplied: false,
+    dollarPerPriceUnit: null,   // derived from the broker's own profit figure once it moves
+    mgmtRetryAt: 0
   };
 
   // Verify the broker actually attached the levels. Some feeds drop an absolute sl/tp
@@ -980,6 +1446,7 @@ Framework.OnOrderClose = function (closedOrder) {
   delete managedOrders[closedOrder.orderId];
   tradeLog.push({
     time: new Date().toLocaleString(),
+    dayKey: nyParts(Date.now()).dayKey,      // EST day, so the breaker totals the right session
     lots: closedOrder.volume ? closedOrder.volume.lots : "",
     profit: typeof closedOrder.profit === "number" ? closedOrder.profit : null
   });
@@ -990,7 +1457,15 @@ Framework.OnOrderClose = function (closedOrder) {
 //  BAR DISPATCH — feeds every newly closed bar through the engine exactly once
 // =====================================================================================
 function onNewTradingBar() {
+  // Retry stuck force-closes even while stopped — a breaker trip sets isRunning false, and
+  // that is exactly the state where a failed close still needs to keep being retried.
+  if (Object.keys(forceCloseQueue).length > 0) attemptForceCloses();
+
   if (!isRunning) return;
+  checkDailyCircuitBreaker();
+  if (!isRunning) return;                 // may have just tripped
+  if (cfg.autoTrailingOn) manageOpenTrades();
+
   var n = tradingStore.length;
   if (n < 4) return;
 
@@ -1236,13 +1711,42 @@ function exportSignalsCsv() {
 }
 
 // =====================================================================================
+//  ACCOUNT SIZE PRESETS
+//  Starting points only — every field stays editable afterwards.
+// =====================================================================================
+var ACCOUNT_PRESETS = {
+  small:  { riskPct: 0.5,  addOnRiskPct: 0.25, hardMaxLot: 0.10, fixedLots: 0.01, addOnLots: 0.01,
+            dailyMaxLoss: 15,  dailyProfitTarget: 20,
+            trailAfterProfitDollars: 8,   profitLockDistanceDollars: 3,  breakevenBufferDollars: 1 },
+  medium: { riskPct: 0.75, addOnRiskPct: 0.4,  hardMaxLot: 0.50, fixedLots: 0.05, addOnLots: 0.02,
+            dailyMaxLoss: 75,  dailyProfitTarget: 100,
+            trailAfterProfitDollars: 30,  profitLockDistanceDollars: 12, breakevenBufferDollars: 2 },
+  large:  { riskPct: 1.0,  addOnRiskPct: 0.5,  hardMaxLot: 2.00, fixedLots: 0.10, addOnLots: 0.05,
+            dailyMaxLoss: 300, dailyProfitTarget: 400,
+            trailAfterProfitDollars: 150, profitLockDistanceDollars: 60, breakevenBufferDollars: 5 }
+};
+
+function applyAccountSizePreset(size) {
+  var p = ACCOUNT_PRESETS[size];
+  if (!p) return;             // nothing chosen yet — leave the fields alone rather than guess
+  Object.keys(p).forEach(function (id) {
+    var el = document.getElementById(id);
+    if (el) el.value = p[id];
+  });
+  // Trailing is only meaningful once the dollar amounts are populated, so switch it on with them.
+  document.getElementById("autoTrailingOn").value = "on";
+}
+
+// =====================================================================================
 //  CONFIG
 // =====================================================================================
-var FIELD_IDS = ["instrumentId","timeframe","tradingMode","sizingMode","fixedLots","riskPct","hardMaxLot",
+var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","sizingMode","fixedLots","riskPct","hardMaxLot",
+  "autoTrailingOn","trailAfterProfitDollars","profitLockDistanceDollars","breakevenBufferDollars",
+  "dailyProfitTarget","dailyMaxLoss","closeOnCircuitBreak",
   "confirmOrders","sessAsia","sessLondon","sessNyam","sessNylunch",
   "sessAsiaTime","sessLondonTime","sessNyamTime","sessNylunchTime","persistSessions","preSessionFvg","maxCarryBars",
   "requireRetest","strictRetest","requireBullish","requireOpenBelow","minBodyPct","invalidateFvg","volumeFilter","sizeFilter",
-  "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","slBuffer",
+  "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","attachMode","slBuffer","testLots",
   "enableAddOns","maxAddOns","addOnCooldown","addOnLots","addOnRiskPct","maxEntriesPerDay","replayBars"];
 
 function num(id, fallback) {
@@ -1260,6 +1764,16 @@ function readConfig() {
     instrumentId: document.getElementById("instrumentId").value.trim(),
     timeframe: int("timeframe", 300),
     tradingMode: document.getElementById("tradingMode").value,
+    accountSize: document.getElementById("accountSizeSelect").value,
+
+    autoTrailingOn: document.getElementById("autoTrailingOn").value === "on",
+    trailAfterProfitDollars: num("trailAfterProfitDollars", 0),
+    profitLockDistanceDollars: num("profitLockDistanceDollars", 0),
+    breakevenBufferDollars: num("breakevenBufferDollars", 0),
+
+    dailyProfitTarget: num("dailyProfitTarget", 0),
+    dailyMaxLoss: num("dailyMaxLoss", 0),
+    closeOnCircuitBreak: chk("closeOnCircuitBreak"),
     sizingMode: document.getElementById("sizingMode").value,
     fixedLots: num("fixedLots", 0.10),
     riskPct: num("riskPct", 1.0),
@@ -1292,10 +1806,11 @@ function readConfig() {
     sizeFilter: chk("sizeFilter"),
 
     swingLookback: int("swingLookback", 50),
-    pivotWidth: int("pivotWidth", 2),
+    pivotWidth: int("pivotWidth", 1),
     tpAtrSpacing: num("tpAtrSpacing", 0.5),
     attachSl: chk("attachSl"),
     attachTp: chk("attachTp"),
+    attachMode: document.getElementById("attachMode").value,
     slBuffer: num("slBuffer", 0),
 
     enableAddOns: chk("enableAddOns"),
@@ -1317,6 +1832,9 @@ function applyConfigToUI(s) {
     if (!el || s[id] === undefined) return;
     if (el.type === "checkbox") el.checked = !!s[id]; else el.value = s[id];
   });
+  if (s.accountSize !== undefined) document.getElementById("accountSizeSelect").value = s.accountSize;
+  if (s.autoTrailingOn !== undefined) document.getElementById("autoTrailingOn").value = s.autoTrailingOn ? "on" : "off";
+
   // sessions are stored as a nested object, so they need mapping back to their checkboxes
   if (s.sessions) {
     var map = { "ASIA": "sessAsia", "LONDON": "sessLondon", "NY AM": "sessNyam", "NY LUNCH": "sessNylunch" };
@@ -1328,19 +1846,22 @@ function applyConfigToUI(s) {
 
 function setInputsDisabled(disabled) {
   FIELD_IDS.forEach(function (id) {
+    // testLots stays live while running - the order-path test is most useful
+    // precisely when the bot IS running and not placing trades.
+    if (id === "testLots") return;
     var el = document.getElementById(id);
     if (el) el.disabled = disabled;
   });
 }
 
-function setStatus(running) {
+function setStatus(running, stoppedLabel) {
   var el = document.getElementById("status");
   if (running) {
     var dry = cfg.tradingMode !== "live";
     el.textContent = "● " + (dry ? "Dry Run" : "LIVE") + " — " + cfg.instrumentId;
     el.className = dry ? "dryrun" : "running";
   } else {
-    el.textContent = "● Bot Stopped";
+    el.textContent = "● " + (stoppedLabel || "Bot Stopped");
     el.className = "stopped";
   }
   document.getElementById("startBtn").disabled = running;
@@ -1431,6 +1952,11 @@ function startBot() {
   pendingManagement = [];
   entriesToday = 0;
   entriesDayKey = nyParts(Date.now()).dayKey;
+  circuitBreakerTripped = false;
+  dailyBreakerDayKey = nyParts(Date.now()).dayKey;
+  forceCloseQueue = {};
+  warnedZeroTrailAfter = false;
+  warnedZeroLockDistance = false;
 
   tradingStore = new FXB.CandleStore({
     ta: [ new FXB.ta.ATR({ period: 14 }) ],
@@ -1497,6 +2023,12 @@ Framework.OnLoad = function () {
   document.getElementById("stopBtn").addEventListener("click", stopBot);
   document.getElementById("clearLogBtn").addEventListener("click", function () {
     document.getElementById("log").innerHTML = "";
+  });
+  document.getElementById("testBuyBtn").addEventListener("click", testPlaceOrder);
+  document.getElementById("accountSizeSelect").addEventListener("change", function () {
+    if (!this.value) return;
+    applyAccountSizePreset(this.value);
+    log("Account size set to " + this.value + " — risk, lots, daily limits and trailing amounts updated.", "log-info");
   });
   document.getElementById("exportCsvBtn").addEventListener("click", exportSignalsCsv);
   document.getElementById("resetStatsBtn").addEventListener("click", function () {

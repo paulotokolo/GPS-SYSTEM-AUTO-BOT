@@ -28,7 +28,14 @@ elements.log.appendChild = (node) => logLines.push(node.textContent);
 
 const document = {
   getElementById: (id) => elements[id] || el(id),
-  createElement: () => ({ textContent: "", className: "", href: "", download: "", click() {} }),
+  createElement: () => {
+    // The logger now assembles each line from text nodes + badge spans, so the
+    // stub has to accumulate textContent the way a real element would.
+    const n = { textContent: "", className: "", href: "", download: "", click() {} };
+    n.appendChild = (c) => { n.textContent += (c && c.textContent) ? c.textContent : ""; };
+    return n;
+  },
+  createTextNode: (t) => ({ textContent: String(t) }),
   body: { appendChild() {}, removeChild() {}, classList: { toggle: () => false } },
   querySelectorAll: () => []
 };
@@ -128,7 +135,7 @@ sandbox.cfg = {
   requireRetest: true, strictRetest: false, requireBullish: true, requireOpenBelow: true, minBodyPct: 15,
   invalidateFvg: false, volumeFilter: false, sizeFilter: false,
   swingLookback: 50, pivotWidth: 1, tpAtrSpacing: 0.5,
-  attachSl: true, attachTp: true, slBuffer: 0,
+  attachSl: true, attachTp: true, attachMode: "open", slBuffer: 0,
   enableAddOns: true, maxAddOns: 3, addOnCooldown: 3, addOnLots: 0.05, addOnRiskPct: 0.5,
   maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
 };
@@ -189,13 +196,13 @@ const checks = [
     !logLines.some(l => l.includes("00:15") && l.includes("BUY SIGNAL"))],
   ["initial BUY and add-on are on DIFFERENT bars",
     (() => {
-      const buy = logLines.find(l => l.includes("*** BUY SIGNAL ***"));
-      const add = logLines.find(l => l.includes("+++ ADD-ON"));
+      const buy = logLines.find(l => l.includes("BUY SIGNAL"));
+      const add = logLines.find(l => l.includes("ADD-ON"));
       if (!buy || !add) return false;
       return buy.slice(0, 30) !== add.slice(0, 30);
     })()],
   ["add-on respects the 3-bar cooldown from the initial entry",
-    logLines.some(l => l.includes("00:40") && l.includes("+++ ADD-ON"))],
+    logLines.some(l => l.includes("00:40") && l.includes("ADD-ON"))],
   ["exactly 2 orders sent (1 initial + 1 add-on)", sentOrders.length === 2]
 ];
 console.log("\n===== ASSERTIONS =====");
