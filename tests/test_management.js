@@ -176,6 +176,48 @@ function withOpenTrade(cfgOver, order) {
   check("11: an empty choice leaves fields untouched", seen.riskPct.value === 0.75);
 }
 
+// ---------- 12. Floating tracking works with Auto Trailing OFF ----------
+{
+  const sb = withOpenTrade({ autoTrailingOn: false }, { closePrice: 2003, profit: 30, sl: 1995 });
+  sb.trackFloatingOrders();
+  const line = sb.__logLines.find((l) => /floating/.test(l));
+  console.log("");
+  console.log("===== 12: FLOATING TRACKING =====");
+  console.log("  " + line);
+  console.log("  open:", sb.floatingOpenCount, "| total floating:", sb.floatingTotalPL);
+
+  check("12: floating is tracked even with Auto Trailing OFF", !!line);
+  check("12: open trade count is right", sb.floatingOpenCount === 1);
+  check("12: floating total is right", Math.abs(sb.floatingTotalPL - 30) < 1e-9);
+  check("12: the line reports the live SL", !!line && line.indexOf("SL 1995.00") !== -1);
+  check("12: and the entry price", !!line && line.indexOf("entry 2000.00") !== -1);
+}
+
+// ---------- 13. Each order reports at most once per interval ----------
+{
+  const sb = withOpenTrade({ autoTrailingOn: false }, { closePrice: 2003, profit: 30 });
+  sb.trackFloatingOrders();
+  sb.trackFloatingOrders();          // immediately again
+  sb.trackFloatingOrders();
+  const n = sb.__logLines.filter((l) => /floating/.test(l)).length;
+  console.log("");
+  console.log("===== 13: LOG THROTTLE =====");
+  console.log("  floating lines after 3 back-to-back calls:", n);
+  check("13: repeated calls do not flood the log", n === 1, "lines=" + n);
+}
+
+// ---------- 14. A closed order drops out of tracking ----------
+{
+  const sb = withOpenTrade({ autoTrailingOn: false }, { closeTime: 12345, profit: 30 });
+  sb.trackFloatingOrders();
+  console.log("");
+  console.log("===== 14: CLOSED ORDER =====");
+  console.log("  managed orders left:", Object.keys(sb.managedOrders).length);
+  check("14: a closed order is removed from managedOrders",
+    Object.keys(sb.managedOrders).length === 0);
+  check("14: and stops counting toward floating", sb.floatingOpenCount === 0);
+}
+
 console.log("\n===== ASSERTIONS =====");
 let fails = 0;
 results.forEach(([n, ok]) => { if (!ok) fails++; console.log((ok ? "PASS  " : "FAIL  ") + n); });

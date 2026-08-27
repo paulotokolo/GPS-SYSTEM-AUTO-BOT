@@ -181,7 +181,20 @@ button:active { transform: scale(0.98); }
     to Live Trading once the sequence and timestamps match.
   </div>
 
-  <!-- ---------------- Live signal state ---------------- -->
+  <!-- ---------------- Performance ---------------- -->
+  <fieldset>
+    <legend>Performance (this session)</legend>
+    <div class="stats-grid">
+      <div class="stat-box"><span class="stat-label">Signals fired</span><span class="stat-value" id="statSignals">0</span></div>
+      <div class="stat-box"><span class="stat-label">Orders placed</span><span class="stat-value" id="statOrders">0</span></div>
+      <div class="stat-box"><span class="stat-label">Closed trades</span><span class="stat-value" id="statTrades">0</span></div>
+      <div class="stat-box"><span class="stat-label">Net P/L (closed)</span><span class="stat-value" id="statPL">0.00</span></div>
+      <div class="stat-box"><span class="stat-label">Open trades</span><span class="stat-value" id="statOpen">0</span></div>
+      <div class="stat-box"><span class="stat-label">Floating P/L</span><span class="stat-value" id="statFloating">0.00</span></div>
+    </div>
+    <div class="stats-btnrow"><button id="resetStatsBtn">Reset stats</button></div>
+  </fieldset>
+
   <fieldset>
     <legend>Signal State (live)</legend>
     <div class="live-bar">
@@ -219,9 +232,9 @@ button:active { transform: scale(0.98); }
     </small>
   </fieldset>
 
-  <!-- ---------------- Core settings ---------------- -->
+  <!-- ---------------- Market ---------------- -->
   <fieldset>
-    <legend>Core</legend>
+    <legend>Market</legend>
     <div class="row"><label>Instrument</label><input type="text" id="instrumentId" value="XAU/USD" placeholder="e.g. XAU/USD"></div>
     <small class="hint">Must match this broker's exact symbol name. The guide's reference test is XAUUSD on M5.</small>
 
@@ -235,18 +248,28 @@ button:active { transform: scale(0.98); }
         <option value="14400">H4</option>
       </select>
     </div>
+    <small class="hint">The indicator produces no signals above M30, so the bot refuses to start there.</small>
+  </fieldset>
 
+  <!-- ---------------- Mode ---------------- -->
+  <fieldset>
+    <legend>Mode</legend>
     <div class="row"><label>Trading mode</label>
       <select id="tradingMode">
-        <option value="dry" selected>Dry Run — log signals only</option>
-        <option value="live">Live Trading — place real orders</option>
+        <option value="dry" selected>Dry Run &mdash; log signals only</option>
+        <option value="live">Live Trading &mdash; place real orders</option>
       </select>
     </div>
     <small class="hint">Dry Run runs the full engine and logs every BUY with its SL/TP, but never sends an order. Use it for the TradingView side-by-side check.</small>
+    <div class="row"><label>Confirm each order</label><input type="checkbox" id="confirmOrders"></div>
+  </fieldset>
 
+  <!-- ---------------- Account size ---------------- -->
+  <fieldset>
+    <legend>Account Size</legend>
     <div class="row"><label>Account size</label>
       <select id="accountSizeSelect">
-        <option value="" selected>— choose one —</option>
+        <option value="" selected>&mdash; choose one &mdash;</option>
         <option value="small">Small (under $1k)</option>
         <option value="medium">Medium ($1k &ndash; $10k)</option>
         <option value="large">Large ($10k+)</option>
@@ -254,147 +277,39 @@ button:active { transform: scale(0.98); }
     </div>
     <small class="hint">
       Sets risk %, lot size, daily limits and the trailing amounts all at once, to sane starting
-      points for that account size. Everything stays editable afterwards — these are a starting
-      point, not universal numbers.
+      points for that account size. Everything stays editable afterwards &mdash; these are a
+      starting point, not universal numbers.
     </small>
-
-    <div class="row"><label>Position sizing</label>
-      <select id="sizingMode">
-        <option value="fixed" selected>Fixed lots</option>
-        <option value="risk">Risk % of equity</option>
-      </select>
-    </div>
-    <div class="row"><label>Fixed lots</label><input type="number" id="fixedLots" value="0.10" step="0.01" min="0.01"></div>
-    <div class="row"><label>Risk per trade (%)</label><input type="number" id="riskPct" value="1.0" step="0.1" min="0.1"></div>
-    <small class="hint">Risk % sizes against the real GPS stop distance (entry &minus; fvg_swing_low), not an ATR estimate.</small>
-    <div class="row"><label>Hard max lot</label><input type="number" id="hardMaxLot" value="2.0" step="0.01" min="0.01"></div>
-    <div class="row"><label>Confirm each order</label><input type="checkbox" id="confirmOrders"></div>
   </fieldset>
 
-  <div class="btnrow">
-    <button id="startBtn" class="pill-btn">&#9654; Start Bot</button>
-    <button id="stopBtn" disabled>&#9632; Stop Bot</button>
-  </div>
-
-  <!-- ---------------- Order path test ---------------- -->
+  <!-- ---------------- Stop-loss / take-profit ---------------- -->
   <fieldset>
-    <legend>Order Path Test</legend>
+    <legend>Stop-Loss / Take-Profit</legend>
     <small class="hint">
-      If signals appear in the log but no trade opens, click this. It sends a plain market BUY
-      with <b>no SL/TP and no strategy logic</b> — the platform's own confirmation box will
-      appear. If this works, the connection is fine and the problem is in the signal path or the
-      SL/TP format. If it fails, the log will show the broker's exact reason.
+      &#9888;&#65039; Turning the stop-loss off means a trade has no automatic downside exit except
+      your Daily Circuit Breaker or a manual close &mdash; real, uncapped risk on that trade. Leave
+      it ON unless you specifically know why you want it off.
     </small>
-    <div class="row"><label>Test lots</label><input type="number" id="testLots" value="0.01" step="0.01" min="0.01"></div>
-    <button id="testBuyBtn">&#9654; Send test BUY now</button>
-  </fieldset>
-
-  <!-- ---------------- Log ---------------- -->
-  <fieldset>
-    <legend>Signal Log</legend>
-    <div id="log"></div>
-    <div class="stats-btnrow">
-      <button id="clearLogBtn">Clear log</button>
-      <button id="exportCsvBtn">Export signals CSV</button>
-    </div>
-  </fieldset>
-
-  <!-- ---------------- Performance ---------------- -->
-  <fieldset>
-    <legend>Performance (this session)</legend>
-    <div class="stats-grid">
-      <div class="stat-box"><span class="stat-label">Signals fired</span><span class="stat-value" id="statSignals">0</span></div>
-      <div class="stat-box"><span class="stat-label">Orders placed</span><span class="stat-value" id="statOrders">0</span></div>
-      <div class="stat-box"><span class="stat-label">Closed trades</span><span class="stat-value" id="statTrades">0</span></div>
-      <div class="stat-box"><span class="stat-label">Net P/L</span><span class="stat-value" id="statPL">0.00</span></div>
-    </div>
-    <div class="stats-btnrow"><button id="resetStatsBtn">Reset stats</button></div>
-  </fieldset>
-
-  <button id="advancedToggle">&#9656; Show advanced settings</button>
-
-  <div id="advancedSection">
-    <!-- ---------------- Sessions ---------------- -->
-    <fieldset>
-      <legend>Session Windows (EST / America&#47;New_York)</legend>
-      <small class="hint">
-        Confirmed from the user's live indicator. NY Lunch (12:00&ndash;13:00) is DISABLED and is not
-        a signal session. Times auto-adjust for EST/EDT daylight saving.
-      </small>
-      <div class="row"><label>Asia</label><input type="checkbox" id="sessAsia" checked><input type="text" id="sessAsiaTime" value="2000-0000"></div>
-      <div class="row"><label>London</label><input type="checkbox" id="sessLondon" checked><input type="text" id="sessLondonTime" value="0200-0500"></div>
-      <div class="row"><label>NY AM</label><input type="checkbox" id="sessNyam" checked><input type="text" id="sessNyamTime" value="0930-1200"></div>
-      <div class="row"><label>NY Lunch</label><input type="checkbox" id="sessNylunch"><input type="text" id="sessNylunchTime" value="1200-1300"></div>
-      <small class="hint">
-        Format <b>HHMM-HHMM</b>, EST. NY Lunch stays OFF to match the confirmed settings.<br>
-        <b>⚠️ NY AM discrepancy:</b> the implementation guide states <b>0930-1200</b> and that is
-        what is set here, but the Pine source ships <b>0930-1100</b> as its default. If the client
-        never changed that input on their chart, set this to <b>0930-1100</b> or the bot's NY AM
-        reference high/low will not match the indicator.
-      </small>
-    </fieldset>
-
-    <!-- ---------------- Signal engine ---------------- -->
-    <fieldset>
-      <legend>Signal Engine — confirmed indicator settings</legend>
-      <small class="hint">These defaults are the user's confirmed values. Changing them will break parity with TradingView.</small>
-      <div class="row"><label>Persist Through Sessions</label><input type="checkbox" id="persistSessions" checked></div>
-      <small class="hint">ON (confirmed). While ON, a session opening never resets the setup — this is what the Pine <code>else if not sig_persist_session</code> branch means.</small>
-      <div class="row"><label>Pre-Session FVG</label><input type="checkbox" id="preSessionFvg" checked></div>
-      <div class="row"><label>Max carry-over bars</label><input type="number" id="maxCarryBars" value="50" step="1" min="1"></div>
-      <div class="row"><label>Require retest of FVG</label><input type="checkbox" id="requireRetest" checked></div>
-      <div class="row"><label>Retest must be a later bar</label><input type="checkbox" id="strictRetest"></div>
-      <small class="hint">
-        The FVG bar's own low equals the zone top, so a literal reading marks the zone "tested"
-        the instant it forms and the retest requirement stops filtering anything. OFF (default) matches the Pine source exactly. Turning it ON is a stricter reading
-        that will NOT match TradingView.
-      </small>
-      <div class="row"><label>Require bullish candle</label><input type="checkbox" id="requireBullish" checked></div>
-      <div class="row"><label>Open at/below FVG top</label><input type="checkbox" id="requireOpenBelow" checked></div>
-      <div class="row"><label>Min body above FVG (%)</label><input type="number" id="minBodyPct" value="15" step="0.5" min="0"></div>
-      <div class="row"><label>Invalidate FVG if filled</label><input type="checkbox" id="invalidateFvg"></div>
-      <div class="row"><label>Volume filter</label><input type="checkbox" id="volumeFilter"></div>
-      <div class="row"><label>Candle size filter</label><input type="checkbox" id="sizeFilter"></div>
-    </fieldset>
-
-    <!-- ---------------- TP / SL ---------------- -->
-    <fieldset>
-      <legend>TP / SL</legend>
-      <div class="row"><label>Swing high lookback</label><input type="number" id="swingLookback" value="50" step="1" min="5"></div>
-      <div class="row"><label>Swing pivot width</label><input type="number" id="pivotWidth" value="1" step="1" min="1"></div>
-      <small class="hint">Bars either side that a high must exceed. The Pine source uses <b>1</b> — changing it shifts every TP level.</small>
-      <div class="row"><label>Min TP spacing (ATR)</label><input type="number" id="tpAtrSpacing" value="0.5" step="0.1" min="0"></div>
-      <div class="row"><label>Attach stop-loss</label><input type="checkbox" id="attachSl" checked></div>
-      <div class="row"><label>Attach take-profit</label><input type="checkbox" id="attachTp" checked></div>
-      <div class="row"><label>SL/TP attach mode</label>
+    <div class="row"><label>Attach stop-loss</label><input type="checkbox" id="attachSl" checked></div>
+    <div class="row"><label>Attach take-profit</label><input type="checkbox" id="attachTp" checked></div>
+    <small class="hint">The stop is always <code>fvg_swing_low</code> &mdash; the middle candle of the 3-bar FVG. Take-profit off just means no fixed target; the trade then exits via Auto Trailing (if on) or the stop.</small>
+    <div class="row"><label>SL/TP attach mode</label>
         <select id="attachMode">
           <option value="after" selected>After open (safer) — send a plain order, then set levels</option>
           <option value="open">On open — send SL/TP with the order</option>
         </select>
       </div>
-      <small class="hint">
+    <small class="hint">
         <b>Why this exists:</b> the levels here are absolute prices (e.g. SL 2001.80), and absolute
         prices are only proven to work on a <i>modify</i> request. Sending one on the opening order
         is unverified — if the platform rejects it, the whole order fails and no trade opens.
         <b>After open</b> sends a plain order first, then sets the levels immediately, so a bad
         SL can never cost you the entry. Switch to <b>On open</b> only if your broker requires it.
       </small>
-      <div class="row"><label>SL buffer (price)</label><input type="number" id="slBuffer" value="0" step="0.01" min="0"></div>
-      <small class="hint">Optional pad below fvg_swing_low to survive spread/wick noise. 0 = exactly at fvg_swing_low, matching the indicator.</small>
-    </fieldset>
+    <div class="row"><label>SL buffer (price)</label><input type="number" id="slBuffer" value="0" step="0.01" min="0"></div>
+    <small class="hint">Optional pad below fvg_swing_low to survive spread/wick noise. 0 = exactly at fvg_swing_low, matching the indicator.</small>
+  </fieldset>
 
-    <!-- ---------------- Add-ons ---------------- -->
-    <fieldset>
-      <legend>Add-On Entries</legend>
-      <div class="row"><label>Enable add-ons</label><input type="checkbox" id="enableAddOns"></div>
-      <small class="hint"><b>Not part of the indicator.</b> The Pine source has no add-on logic at all — these are extra bot-side entries from the implementation guide. Default OFF so every BUY the bot places corresponds 1:1 with a BUY label on TradingView. Turn ON only once signal parity is confirmed.</small>
-      <div class="row"><label>Max add-ons</label><input type="number" id="maxAddOns" value="3" step="1" min="0"></div>
-      <div class="row"><label>Cooldown bars</label><input type="number" id="addOnCooldown" value="3" step="1" min="0"></div>
-      <div class="row"><label>Add-on lots</label><input type="number" id="addOnLots" value="0.05" step="0.01" min="0.01"></div>
-      <div class="row"><label>Add-on risk (%)</label><input type="number" id="addOnRiskPct" value="0.5" step="0.1" min="0.1"></div>
-    </fieldset>
-
-    <!-- ---------------- Auto trailing ---------------- -->
     <fieldset>
       <legend>Auto Trailing</legend>
       <small class="hint">
@@ -426,7 +341,6 @@ button:active { transform: scale(0.98); }
       </small>
     </fieldset>
 
-    <!-- ---------------- Daily circuit breaker ---------------- -->
     <fieldset>
       <legend>Daily Circuit Breaker</legend>
       <small class="hint">
@@ -446,7 +360,85 @@ button:active { transform: scale(0.98); }
       </small>
     </fieldset>
 
-    <!-- ---------------- Safety ---------------- -->
+  <button id="advancedToggle">&#9656; Show advanced settings</button>
+
+  <div id="advancedSection">
+    <!-- ---------------- Position sizing ---------------- -->
+    <fieldset>
+      <legend>Position Sizing</legend>
+      <div class="row"><label>Position sizing</label>
+        <select id="sizingMode">
+          <option value="fixed" selected>Fixed lots</option>
+          <option value="risk">Risk % of equity</option>
+        </select>
+      </div>
+      <div class="row"><label>Fixed lots</label><input type="number" id="fixedLots" value="0.10" step="0.01" min="0.01"></div>
+      <div class="row"><label>Risk per trade (%)</label><input type="number" id="riskPct" value="1.0" step="0.1" min="0.1"></div>
+      <small class="hint">Risk % sizes against the real GPS stop distance (entry &minus; fvg_swing_low), not an ATR estimate.</small>
+      <div class="row"><label>Hard max lot</label><input type="number" id="hardMaxLot" value="2.0" step="0.01" min="0.01"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Session Windows (EST / America&#47;New_York)</legend>
+      <small class="hint">
+        Confirmed from the user's live indicator. NY Lunch (12:00&ndash;13:00) is DISABLED and is not
+        a signal session. Times auto-adjust for EST/EDT daylight saving.
+      </small>
+      <div class="row"><label>Asia</label><input type="checkbox" id="sessAsia" checked><input type="text" id="sessAsiaTime" value="2000-0000"></div>
+      <div class="row"><label>London</label><input type="checkbox" id="sessLondon" checked><input type="text" id="sessLondonTime" value="0200-0500"></div>
+      <div class="row"><label>NY AM</label><input type="checkbox" id="sessNyam" checked><input type="text" id="sessNyamTime" value="0930-1200"></div>
+      <div class="row"><label>NY Lunch</label><input type="checkbox" id="sessNylunch"><input type="text" id="sessNylunchTime" value="1200-1300"></div>
+      <small class="hint">
+        Format <b>HHMM-HHMM</b>, EST. NY Lunch stays OFF to match the confirmed settings.<br>
+        <b>⚠️ NY AM discrepancy:</b> the implementation guide states <b>0930-1200</b> and that is
+        what is set here, but the Pine source ships <b>0930-1100</b> as its default. If the client
+        never changed that input on their chart, set this to <b>0930-1100</b> or the bot's NY AM
+        reference high/low will not match the indicator.
+      </small>
+    </fieldset>
+
+    <fieldset>
+      <legend>Signal Engine — confirmed indicator settings</legend>
+      <small class="hint">These defaults are the user's confirmed values. Changing them will break parity with TradingView.</small>
+      <div class="row"><label>Persist Through Sessions</label><input type="checkbox" id="persistSessions" checked></div>
+      <small class="hint">ON (confirmed). While ON, a session opening never resets the setup — this is what the Pine <code>else if not sig_persist_session</code> branch means.</small>
+      <div class="row"><label>Pre-Session FVG</label><input type="checkbox" id="preSessionFvg" checked></div>
+      <div class="row"><label>Max carry-over bars</label><input type="number" id="maxCarryBars" value="50" step="1" min="1"></div>
+      <div class="row"><label>Require retest of FVG</label><input type="checkbox" id="requireRetest" checked></div>
+      <div class="row"><label>Retest must be a later bar</label><input type="checkbox" id="strictRetest"></div>
+      <small class="hint">
+        The FVG bar's own low equals the zone top, so a literal reading marks the zone "tested"
+        the instant it forms and the retest requirement stops filtering anything. OFF (default) matches the Pine source exactly. Turning it ON is a stricter reading
+        that will NOT match TradingView.
+      </small>
+      <div class="row"><label>Require bullish candle</label><input type="checkbox" id="requireBullish" checked></div>
+      <div class="row"><label>Open at/below FVG top</label><input type="checkbox" id="requireOpenBelow" checked></div>
+      <div class="row"><label>Min body above FVG (%)</label><input type="number" id="minBodyPct" value="15" step="0.5" min="0"></div>
+      <div class="row"><label>Invalidate FVG if filled</label><input type="checkbox" id="invalidateFvg"></div>
+      <div class="row"><label>Volume filter</label><input type="checkbox" id="volumeFilter"></div>
+      <div class="row"><label>Candle size filter</label><input type="checkbox" id="sizeFilter"></div>
+    </fieldset>
+
+    <!-- ---------------- TP / SL levels ---------------- -->
+    <fieldset>
+      <legend>TP / SL Levels</legend>
+      <small class="hint">How the take-profit levels are found. The stop never comes from here &mdash; it is always <code>fvg_swing_low</code>.</small>
+      <div class="row"><label>Swing high lookback</label><input type="number" id="swingLookback" value="50" step="1" min="5"></div>
+      <div class="row"><label>Swing pivot width</label><input type="number" id="pivotWidth" value="1" step="1" min="1"></div>
+      <small class="hint">Bars either side that a high must exceed. The Pine source uses <b>1</b> — changing it shifts every TP level.</small>
+      <div class="row"><label>Min TP spacing (ATR)</label><input type="number" id="tpAtrSpacing" value="0.5" step="0.1" min="0"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Add-On Entries</legend>
+      <div class="row"><label>Enable add-ons</label><input type="checkbox" id="enableAddOns"></div>
+      <small class="hint"><b>Not part of the indicator.</b> The Pine source has no add-on logic at all — these are extra bot-side entries from the implementation guide. Default OFF so every BUY the bot places corresponds 1:1 with a BUY label on TradingView. Turn ON only once signal parity is confirmed.</small>
+      <div class="row"><label>Max add-ons</label><input type="number" id="maxAddOns" value="3" step="1" min="0"></div>
+      <div class="row"><label>Cooldown bars</label><input type="number" id="addOnCooldown" value="3" step="1" min="0"></div>
+      <div class="row"><label>Add-on lots</label><input type="number" id="addOnLots" value="0.05" step="0.01" min="0.01"></div>
+      <div class="row"><label>Add-on risk (%)</label><input type="number" id="addOnRiskPct" value="0.5" step="0.1" min="0.1"></div>
+    </fieldset>
+
     <fieldset>
       <legend>Safety</legend>
       <div class="row"><label>Max entries per day</label><input type="number" id="maxEntriesPerDay" value="0" step="1" min="0"></div>
@@ -458,6 +450,40 @@ button:active { transform: scale(0.98); }
       </small>
     </fieldset>
   </div>
+
+  <!-- ---------------- Manual test ---------------- -->
+  <fieldset>
+    <legend>Manual Test Trade</legend>
+    <small class="hint">
+      Bypasses the strategy completely. If signals appear in the log but no trade opens, click
+      this: it sends a plain market BUY behind the platform's own confirmation box. Works &rarr;
+      the connection is fine and the problem is the signal path or the SL/TP format. Fails &rarr;
+      the log carries the broker's exact reason.
+    </small>
+    <div class="row"><label>Manual test size (lots)</label><input type="number" id="testLots" value="0.01" step="0.01" min="0.01"></div>
+    <div class="row"><label>Manual test stop-loss (pips)</label><input type="number" id="testSlPips" value="0" step="1" min="0"></div>
+    <small class="hint">
+      0 = send with no stop at all. Above 0 attaches the stop as a <b>pip distance</b>, which is
+      the format the reference bot proves works on an opening order. That makes this a direct
+      test of whether SL-on-open is accepted at all &mdash; if a pip stop works here but the
+      bot's absolute-price stop fails, the format is the culprit.
+    </small>
+  </fieldset>
+
+  <div class="btnrow">
+    <button id="startBtn" class="pill-btn">&#9654; Start Bot</button>
+    <button id="stopBtn" disabled>&#9632; Stop Bot</button>
+    <button id="testBuyBtn">Test Trade &mdash; BUY</button>
+  </div>
+
+  <fieldset>
+    <legend>Signal Log</legend>
+    <div id="log"></div>
+    <div class="stats-btnrow">
+      <button id="clearLogBtn">Clear log</button>
+      <button id="exportCsvBtn">Export signals CSV</button>
+    </div>
+  </fieldset>
 </div>
 
 <script>
@@ -1090,27 +1116,41 @@ function testPlaceOrder() {
   if (!instrumentId) { log("Enter an instrument first (e.g. XAU/USD) before testing.", "log-warn"); return; }
 
   var testLots = parseFloat(document.getElementById("testLots").value) || 0.01;
+  var testSlPips = parseInt(document.getElementById("testSlPips").value, 10) || 0;
+
   var req = {
     instrumentId: instrumentId,
     tradingAction: FXB.OrderTypes.BUY,
     volume: { lots: testLots }
   };
 
+  // A PIP distance, not an absolute price — this is the format the reference bot proves works
+  // on an opening order, which makes this a direct test of whether SL-on-open is accepted.
+  if (testSlPips > 0) req.sl = { pips: testSlPips };
+
   log("MANUAL TEST BUY " + testLots + " lots " + instrumentId +
-      " — no SL/TP, strategy logic bypassed entirely", "log-buy");
+      (testSlPips > 0 ? " | SL " + testSlPips + " pips (sent WITH the order)" : " | no SL") +
+      " — strategy logic bypassed entirely", "log-buy");
 
   // Always force the platform's own confirmation for a manual test, whatever the
   // "Confirm each order" checkbox says — this is a deliberate click.
   Framework.SendOrder(req, function (MsgResult) {
     if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
-      log("TEST ORDER OK — SendOrder is correctly linked to this account. The order path works, " +
-          "so any missing trades are coming from the signal path or the SL/TP format.", "log-info");
+      log("TEST ORDER OK — SendOrder is correctly linked to this account" +
+          (testSlPips > 0
+            ? ", and a stop sent WITH the order was accepted. So SL-on-open works in pip form."
+            : ". The order path works, so any missing trades come from the signal path or the SL/TP format."),
+          "log-info");
       beep();
     } else {
       var errText = "unknown error";
       try { errText = Framework.Translation.TranslateError(MsgResult.result); } catch (e) {}
-      log("TEST ORDER FAILED: " + errText + " — this is the connection or the instrument name, " +
-          "not the strategy. Check the Instrument field matches this broker's symbol exactly.", "log-err");
+      log("TEST ORDER FAILED: " + errText +
+          (testSlPips > 0
+            ? " — try again with 'Manual test stop-loss' set to 0. If it then succeeds, this broker " +
+              "is rejecting the stop, not the order."
+            : " — this is the connection or the instrument name, not the strategy. Check the " +
+              "Instrument field matches this broker's symbol exactly."), "log-err");
     }
   }, { confirm: true });
 }
@@ -1385,12 +1425,69 @@ function manageOpenTrades() {
   });
 }
 
-// Fires on every real-time balance/equity change, which is what lets the circuit breaker and
-// Auto Trailing react immediately instead of waiting for the next bar close.
+// =====================================================================================
+//  FLOATING TRADE TRACKING
+//
+//  Runs whether or not Auto Trailing is on — knowing what is open and what it is worth
+//  matters even when nothing is being moved. Each order reports at most once every few
+//  seconds, because OnAccountMetrics can fire many times per second and would otherwise
+//  bury the signal log.
+// =====================================================================================
+var FLOATING_LOG_INTERVAL_MS = 3000;
+var floatingOpenCount = 0;
+var floatingTotalPL = 0;
+
+function trackFloatingOrders() {
+  var now = Date.now();
+  var count = 0, total = 0;
+
+  Object.keys(managedOrders).forEach(function (orderId) {
+    var m = managedOrders[orderId];
+    var order = Framework.Orders.get(orderId);
+    if (!order || order.closeTime) { delete managedOrders[orderId]; return; }
+
+    count++;
+
+    var profitDollars = null;
+    if (typeof order.profit === "number") {
+      profitDollars = order.profit;
+      var dist = order.closePrice - m.entryPrice;          // long only
+      if (dist !== 0) m.dollarPerPriceUnit = order.profit / dist;
+    } else if (m.dollarPerPriceUnit) {
+      profitDollars = (order.closePrice - m.entryPrice) * m.dollarPerPriceUnit;
+    }
+    if (profitDollars !== null) total += profitDollars;
+
+    if (!m.lastFloatLogTs || now - m.lastFloatLogTs > FLOATING_LOG_INTERVAL_MS) {
+      m.lastFloatLogTs = now;
+      var parts = ["Order " + orderId + " floating: " +
+                   (profitDollars === null ? "n/a" : "$" + profitDollars.toFixed(2))];
+      parts.push("entry " + fmt(m.entryPrice));
+      parts.push("now " + fmt(order.closePrice));
+      parts.push("SL " + (order.sl ? fmt(order.sl) : "none"));
+      parts.push("TP " + (order.tp ? fmt(order.tp) : "none"));
+      if (cfg && cfg.autoTrailingOn && cfg.trailAfterProfitDollars > 0) {
+        parts.push("breakeven at $" + (cfg.trailAfterProfitDollars * 0.5).toFixed(2));
+        parts.push("trail at $" + cfg.trailAfterProfitDollars.toFixed(2));
+        if (m.breakevenApplied) parts.push("breakeven done");
+      }
+      log(parts.join(" | "), "log-info");
+    }
+  });
+
+  floatingOpenCount = count;
+  floatingTotalPL = total;
+  refreshStatsDisplay();
+}
+
+// Fires on every real-time balance/equity change, which is what lets the circuit breaker,
+// floating tracking and Auto Trailing all react immediately instead of waiting for a bar close.
 Framework.OnAccountMetrics = function () {
   checkDailyCircuitBreaker();
   if (Object.keys(forceCloseQueue).length > 0) attemptForceCloses();
-  if (isRunning && cfg && cfg.autoTrailingOn) manageOpenTrades();
+  if (!isRunning || !cfg) return;
+  trackFloatingOrders();
+  if (cfg.autoTrailingOn) manageOpenTrades();
 };
 
 // =====================================================================================
@@ -1464,6 +1561,7 @@ function onNewTradingBar() {
   if (!isRunning) return;
   checkDailyCircuitBreaker();
   if (!isRunning) return;                 // may have just tripped
+  trackFloatingOrders();
   if (cfg.autoTrailingOn) manageOpenTrades();
 
   var n = tradingStore.length;
@@ -1679,6 +1777,13 @@ function refreshStatsDisplay() {
   g("statOrders", orderCount);
   g("statTrades", closed);
   g("statPL", (net >= 0 ? "" : "-") + Math.abs(net).toFixed(2));
+  g("statOpen", floatingOpenCount);
+  g("statFloating", (floatingTotalPL >= 0 ? "" : "-") + Math.abs(floatingTotalPL).toFixed(2));
+
+  // Floating P/L is the number that decides the circuit breaker, so colour it like the
+  // amber "forming" state when it is negative rather than leaving it neutral.
+  var fe = document.getElementById("statFloating");
+  if (fe) fe.style.color = floatingTotalPL < 0 ? "#ff8a80" : (floatingTotalPL > 0 ? "#4dffcf" : "");
 }
 
 function beep() {
@@ -1746,7 +1851,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "confirmOrders","sessAsia","sessLondon","sessNyam","sessNylunch",
   "sessAsiaTime","sessLondonTime","sessNyamTime","sessNylunchTime","persistSessions","preSessionFvg","maxCarryBars",
   "requireRetest","strictRetest","requireBullish","requireOpenBelow","minBodyPct","invalidateFvg","volumeFilter","sizeFilter",
-  "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","attachMode","slBuffer","testLots",
+  "swingLookback","pivotWidth","tpAtrSpacing","attachSl","attachTp","attachMode","slBuffer","testLots","testSlPips",
   "enableAddOns","maxAddOns","addOnCooldown","addOnLots","addOnRiskPct","maxEntriesPerDay","replayBars"];
 
 function num(id, fallback) {
@@ -1848,7 +1953,7 @@ function setInputsDisabled(disabled) {
   FIELD_IDS.forEach(function (id) {
     // testLots stays live while running - the order-path test is most useful
     // precisely when the bot IS running and not placing trades.
-    if (id === "testLots") return;
+    if (id === "testLots" || id === "testSlPips") return;
     var el = document.getElementById(id);
     if (el) el.disabled = disabled;
   });
@@ -1954,6 +2059,8 @@ function startBot() {
   entriesDayKey = nyParts(Date.now()).dayKey;
   circuitBreakerTripped = false;
   dailyBreakerDayKey = nyParts(Date.now()).dayKey;
+  floatingOpenCount = 0;
+  floatingTotalPL = 0;
   forceCloseQueue = {};
   warnedZeroTrailAfter = false;
   warnedZeroLockDistance = false;

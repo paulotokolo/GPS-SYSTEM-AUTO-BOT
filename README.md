@@ -35,7 +35,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (118 assertions). |
+| `tests/` | Automated test suite (126 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -234,13 +234,32 @@ Small / medium / large fill risk %, lot sizes, the hard lot cap, daily limits an
 amounts in one go, and switch trailing on. Starting points, not universal numbers — everything
 stays editable.
 
+### Floating trade tracking
+
+Open trades are tracked whether or not Auto Trailing is on — knowing what is open and what it
+is worth matters even when nothing is being moved. The Performance panel carries live **Open
+trades** and **Floating P/L** tiles, and each order reports to the log at most once every three
+seconds:
+
+```
+Order 1 floating: $30.00 | entry 2000.00 | now 2003.00 | SL 1995.00 | TP none
+```
+
+That throttle matters — the account-metrics callback can fire many times a second and would
+otherwise bury the signal log entirely.
+
 ### Order path test
 
-A **Send test BUY now** button places a plain market order with no SL/TP and no strategy logic,
+A **Test Trade — BUY** button places a plain market order with no strategy logic behind it,
 behind the platform's own confirmation. It stays enabled while the bot is running, because that
 is exactly when it is needed: if signals appear in the log but no trade opens, this splits the
 problem in half. Works &rarr; the connection is fine and the issue is the signal path or the
 SL/TP format. Fails &rarr; the log carries the broker's exact reason.
+
+It also takes an optional **stop-loss in pips**. That is deliberate: a pip distance is the format
+the reference bot proves works on an opening order, so setting it above 0 tests whether SL-on-open
+is accepted at all. If a pip stop works here but the bot's absolute-price stop fails, the format
+is the culprit and the answer is to leave the attach mode on *After open*.
 
 ### SL/TP attach mode
 
@@ -267,9 +286,9 @@ test_replay         9 pass   0 fail
 test_sizing         6 pass   0 fail
 test_pine_parity   17 pass   0 fail
 test_orders        15 pass   0 fail
-test_management    24 pass   0 fail
+test_management    32 pass   0 fail
 ----------------------------------------
-TOTAL: 118 pass, 0 fail
+TOTAL: 126 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
