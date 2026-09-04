@@ -1,5 +1,5 @@
 // Replay must rebuild sig state from history WITHOUT ever sending an order.
-const { buildSandbox, defaultCfg, M5 } = require("./harness");
+const { buildSandbox, defaultCfg, run, eng, st, M5 } = require("./harness");
 
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
@@ -29,7 +29,7 @@ const store = {
 };
 sb.cfg = defaultCfg({ verboseReplay: false });
 sb.tradingStore = store;
-sb.sig = sb.newSig();
+sb.buildEngines();
 sb.activeSession = null; sb.barIndex = 0; sb.lastProcessedTs = null;
 sb.isRunning = true; sb.priceDecimals = 2;
 sb.entriesDayKey = sb.nyParts(Date.now()).dayKey;
@@ -39,13 +39,13 @@ const ok = sb.replayHistory();
 const results = [
   ["replayHistory returned true", ok === true],
   ["replaying flag reset to false", sb.replaying === false],
-  ["state rebuilt: ref locked", sb.sig.ref_name === "ASIA"],
-  ["state rebuilt: FVG found", sb.sig.fvg_found === true],
-  ["state rebuilt: BUY marked fired", sb.sig.fired === true],
-  ["SL rebuilt as fvg_swing_low", Math.abs(sb.sig.fvg_swing_low - 2001.8) < 1e-9],
+  ["state rebuilt: ref locked", st(sb).ref_name === "ASIA"],
+  ["state rebuilt: FVG found", st(sb).zone_found === true],
+  ["state rebuilt: BUY marked fired", st(sb).fired === true],
+  ["SL rebuilt as zone_swing_low", Math.abs(st(sb).zone_swing_low - 2001.8) < 1e-9],
   ["NO orders sent during replay", sb.__orders.length === 0],
   ["historical signal is flagged as history",
-    sb.__logLines.some((l) => l.includes("BUY SIGNAL")) ],
+    sb.__logLines.some((l) => l.includes("GPS BUY —")) ],
   ["lastProcessedTs is the newest closed bar",
     sb.lastProcessedTs === bars[bars.length - 2].ts]
 ];

@@ -65,7 +65,27 @@ function buildSandbox() {
   return sandbox;
 }
 
+// One engine's settings. Defaults are the signed-off Engine 1 (Priority FVG) values,
+// which is what most tests want; pass overrides for the other two shapes.
+function engineCfg(over) {
+  return Object.assign({
+    enabled: true,
+    refMethod: "session", refLookback: 24, zoneMethod: "fvg",
+    persist: true, requireRetest: true, requireBullish: true, openBelowTop: true,
+    minBodyPct: 15, invalidate: false,
+    maxZones: 10, requireResweep: true,
+    useZoneMaxAge: true, maxZoneBars: 27,
+    preSessionZone: true, preSessMaxBars: 15,
+    volFilter: false, volLookback: 10, volMult: 1,
+    sizeFilter: false, sizeLookback: 5, sizeMult: 1.5
+  }, over || {});
+}
+
+// By default only engine 1 runs, so a test that is about the signal sequence is not
+// reading three engines' worth of output. Tests that want the others enable them.
 function defaultCfg(over) {
+  const o = over || {};
+  const engines = o.engines || {};
   return Object.assign({
     instrumentId: "XAU/USD", canonicalInstrumentId: "XAU/USD", timeframe: 300,
     tradingMode: "live", sizingMode: "fixed", fixedLots: 0.1, riskPct: 1, hardMaxLot: 2,
@@ -77,14 +97,33 @@ function defaultCfg(over) {
       "NY AM":    { open: 9 * 60 + 30, close: 12 * 60 },
       "NY LUNCH": { open: 12 * 60,     close: 13 * 60 }
     },
-    persistSessions: true, preSessionFvg: true, maxCarryBars: 50,
-    requireRetest: true, strictRetest: false, requireBullish: true, requireOpenBelow: true,
-    minBodyPct: 15, invalidateFvg: false, volumeFilter: false, sizeFilter: false,
-    swingLookback: 50, pivotWidth: 1, tpAtrSpacing: 0.5,
-    attachSl: true, attachTp: true, attachMode: "open", slBuffer: 0,
-    enableAddOns: true, maxAddOns: 3, addOnCooldown: 3, addOnLots: 0.05, addOnRiskPct: 0.5,
+    attachSl: true, attachTp: true, attachMode: "open",
+    slPips: 100, tp1Pips: 100, tp2Pips: 200, tp3Pips: 300,
+    trendTimeframe: 3600, trendEmaLen: 50, trendFilterOn: false,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
-  }, over || {});
+  }, o, {
+    engines: {
+      e1: engineCfg(engines.e1),
+      e2: engineCfg(Object.assign({ enabled: false, refMethod: "rolling", requireResweep: false,
+                                    maxZoneBars: 30, preSessMaxBars: 30, sizeLookback: 10,
+                                    sizeMult: 1 }, engines.e2)),
+      e3: engineCfg(Object.assign({ enabled: false, zoneMethod: "5candle", minBodyPct: 0,
+                                    invalidate: true, maxZones: 5, maxZoneBars: 39,
+                                    preSessionZone: false, preSessMaxBars: 30,
+                                    sizeLookback: 10, sizeMult: 1 }, engines.e3))
+    }
+  });
+}
+
+// The live engine object for an engine id, or undefined when it is switched off.
+function eng(sandbox, id) {
+  return sandbox.engines.find((e) => e.def.id === (id || 1));
+}
+
+// Shorthand for "engine N's tracking state".
+function st(sandbox, id) {
+  const e = eng(sandbox, id);
+  return e ? e.s : null;
 }
 
 // Feeds a chronological bar array through the engine one live tick at a time.
@@ -97,7 +136,7 @@ function run(sandbox, bars, cfg) {
   };
   sandbox.cfg = cfg;
   sandbox.tradingStore = store;
-  sandbox.sig = sandbox.newSig();
+  sandbox.buildEngines();
   sandbox.activeSession = null;
   sandbox.barIndex = 0;
   sandbox.lastProcessedTs = null;
@@ -105,10 +144,11 @@ function run(sandbox, bars, cfg) {
   sandbox.replaying = false;
   sandbox.priceDecimals = 2;
   sandbox.entriesDayKey = sandbox.nyParts(Date.now()).dayKey;
+  sandbox.sessionPLSince = Date.now();
   for (let n = 1; n <= bars.length; n++) { store.visible = n; sandbox.onNewTradingBar(); }
   return sandbox;
 }
 
 const M5 = 5 * 60 * 1000;
 
-module.exports = { buildSandbox, defaultCfg, run, M5 };
+module.exports = { buildSandbox, defaultCfg, engineCfg, run, eng, st, M5 };

@@ -1,6 +1,6 @@
 // Locks in the behaviours corrected after the real Pine source (GPS SOURCE CODE) arrived.
 // Each assertion below cites the source line it mirrors.
-const { buildSandbox, defaultCfg, run, M5 } = require("./harness");
+const { buildSandbox, defaultCfg, engineCfg, run, eng, st, M5 } = require("./harness");
 
 const results = [];
 const check = (n, ok, extra) => results.push([n + (extra ? "  (" + extra + ")" : ""), ok]);
@@ -32,11 +32,11 @@ function seriesThroughLondonOpen() {
 
 // ---- 1. Persist Through Sessions ON => a session opening never resets (Pine line 968) ----
 {
-  const sb = run(buildSandbox(), seriesThroughLondonOpen(), defaultCfg({ persistSessions: true }));
+  const sb = run(buildSandbox(), seriesThroughLondonOpen(), defaultCfg({ engines: { e1: { persist: true } } }));
   const lines = sb.__logLines;
   console.log("===== 1: SESSION OPEN WITH PERSIST ON =====");
   lines.filter(l => /SESSION|BUY|reset/i.test(l)).forEach(l => console.log(l));
-  check("1: fired setup SURVIVES the London open (no reset)", sb.sig.fired === true);
+  check("1: fired setup SURVIVES the London open (no reset)", st(sb).fired === true);
   check("1: no reset was logged at session open",
     !lines.some(l => /Setup reset/.test(l) && /session open/.test(l)));
 }
@@ -44,42 +44,48 @@ function seriesThroughLondonOpen() {
 // ---- 2. Persist OFF => the else-branch runs and the session open DOES reset ----
 {
   const sb = run(buildSandbox(), seriesThroughLondonOpen(),
-    defaultCfg({ persistSessions: false, preSessionFvg: true }));
+    defaultCfg({ engines: { e1: { persist: false, preSessionZone: true } } }));
   console.log("\n===== 2: SESSION OPEN WITH PERSIST OFF =====");
   sb.__logLines.filter(l => /Setup reset|SESSION OPEN/i.test(l)).forEach(l => console.log(l));
   check("2: setup IS reset at the session open when persist is OFF",
     sb.__logLines.some(l => /Persist Through Sessions is OFF/.test(l)));
-  check("2: fired cleared by that reset", sb.sig.fired === false);
+  check("2: fired cleared by that reset", st(sb).fired === false);
 }
 
 // ---- 3. sig_reset() clears the reference levels (Pine method sig_reset) ----
 {
   const sb = buildSandbox();
   sb.cfg = defaultCfg();
-  sb.sig = sb.newSig();
-  sb.sig.ref_low = 1990; sb.sig.ref_high = 2010; sb.sig.ref_name = "ASIA"; sb.sig.sweep = true;
-  sb.sigReset("test");
+  sb.buildEngines();
+  const e = eng(sb);
+  e.s.ref_low = 1990; e.s.ref_high = 2010; e.s.ref_name = "ASIA"; e.s.sweep = true;
+  sb.engineReset(e, "test");
   console.log("\n===== 3: SIG_RESET =====");
-  console.log("after reset -> ref_low:", sb.sig.ref_low, "ref_name:", JSON.stringify(sb.sig.ref_name), "sweep:", sb.sig.sweep);
-  check("3: ref_low cleared", sb.sig.ref_low === null);
-  check("3: ref_high cleared", sb.sig.ref_high === null);
-  check("3: ref_name cleared", !sb.sig.ref_name);
-  check("3: sweep cleared", sb.sig.sweep === false);
+  console.log("after reset -> ref_low:", e.s.ref_low, "ref_name:", JSON.stringify(e.s.ref_name), "sweep:", e.s.sweep);
+  check("3: ref_low cleared", e.s.ref_low === null);
+  check("3: ref_high cleared", e.s.ref_high === null);
+  check("3: ref_name cleared", !e.s.ref_name);
+  check("3: sweep cleared", e.s.sweep === false);
 }
 
-// ---- 4. Swing highs use a 1-bar fractal (Pine find_swing_highs) ----
+// ---- 4. The zone the SL used to come from is still tracked, but the levels are pips ----
+//
+// The swing-high TP system is gone: TP1/2/3 and the stop are now pip distances from the
+// entry, shared by every engine. zone_swing_low is still recorded because it is what the
+// Pine source anchors the zone on, and the panel and the log both quote it.
 {
-  // A high that clears only its immediate neighbours is a valid swing high at width 1,
-  // but is rejected at width 2. Bar 44 (2008) has 2002-highs on both sides, so it passes both;
-  // bar 34 (2006) is deliberately adjacent to a taller bar to separate the two widths.
-  const sb1 = run(buildSandbox(), seriesThroughLondonOpen(), defaultCfg({ pivotWidth: 1 }));
-  const sb2 = run(buildSandbox(), seriesThroughLondonOpen(), defaultCfg({ pivotWidth: 2 }));
-  console.log("\n===== 4: SWING HIGH FRACTAL WIDTH =====");
-  console.log("width 1 TPs:", sb1.sig.tps.map(x => x.toFixed(2)).join(" / ") || "none");
-  console.log("width 2 TPs:", sb2.sig.tps.map(x => x.toFixed(2)).join(" / ") || "none");
-  check("4: width-1 finds at least one TP", sb1.sig.tps.length >= 1);
-  check("4: TPs are strictly ascending",
-    sb1.sig.tps.every((v, i, a) => i === 0 || v > a[i - 1]));
+  const sb = run(buildSandbox(), seriesThroughLondonOpen(),
+    defaultCfg({ slPips: 50, tp1Pips: 80, tp2Pips: 160, tp3Pips: 240 }));
+  const sig = sb.__signalLog ? sb.__signalLog[0] : sb.signalLog[0];
+  console.log("\n===== 4: PIP-BASED LEVELS =====");
+  console.log("signal:", JSON.stringify(sig));
+  // pipSize for the stubbed XAU/USD instrument is 0.1, so 50 pips == 5.00 of price.
+  check("4: a BUY was recorded", !!sig);
+  check("4: SL sits slPips below the entry",
+    !!sig && Math.abs((sig.entry - sig.sl) - 5.0) < 1e-6, sig ? "entry " + sig.entry + " sl " + sig.sl : "");
+  check("4: TP1/TP2/TP3 are ascending pip targets above entry",
+    !!sig && sig.tp1 > sig.entry && sig.tp2 > sig.tp1 && sig.tp3 > sig.tp2);
+  check("4: zone_swing_low is still tracked", st(sb).zone_swing_low !== null);
 }
 
 // ---- 5. Invalidation clears only the FVG, keeping the sweep (Pine line 1035) ----
@@ -99,14 +105,14 @@ function seriesThroughLondonOpen() {
   bars.push({ ts: t0 + 4 * M5, o: 2003, h: 2003.2, l: 2001.0, c: 2001.5, v: 100 }); // CLOSE below bot
   bars.push(flat(t0 + 5 * M5, 2002));
 
-  const sb = run(buildSandbox(), bars, defaultCfg({ invalidateFvg: true }));
+  const sb = run(buildSandbox(), bars, defaultCfg({ engines: { e1: { invalidate: true, requireResweep: false } } }));
   console.log("\n===== 5: FVG INVALIDATION =====");
   sb.__logLines.filter(l => /INVALIDATED|FVG|SWEEP/i.test(l)).forEach(l => console.log(l));
   check("5: FVG was invalidated on a CLOSE below the zone bottom",
     sb.__logLines.some(l => /FVG INVALIDATED/.test(l)));
-  check("5: fvg_found cleared", sb.sig.fvg_found === false);
-  check("5: sweep SURVIVES invalidation", sb.sig.sweep === true);
-  check("5: swing_low survives invalidation", sb.sig.swing_low !== null);
+  check("5: zone_found cleared", st(sb).zone_found === false);
+  check("5: sweep SURVIVES invalidation", st(sb).sweep === true);
+  check("5: swing_low survives invalidation", st(sb).swing_low !== null);
 }
 
 // ---- 6. Session windows are configurable (NY AM 0930-1100 vs 0930-1200) ----
@@ -129,8 +135,8 @@ function seriesThroughLondonOpen() {
 // ---- 7. body_ok short-circuits at a 0% threshold (Pine line 1057) ----
 {
   const sb = buildSandbox();
-  sb.cfg = defaultCfg({ minBodyPct: 0 });
-  check("7: minBodyPct 0 accepts any body", sb.cfg.minBodyPct <= 0);
+  sb.cfg = defaultCfg({ engines: { e1: { minBodyPct: 0 } } });
+  check("7: minBodyPct 0 accepts any body", sb.cfg.engines.e1.minBodyPct <= 0);
 }
 
 console.log("\n===== ASSERTIONS =====");

@@ -1,11 +1,11 @@
 // Verifies each fire condition gates correctly: body %, bullish, open-at/below-top, retest.
-const { buildSandbox, defaultCfg, run, M5 } = require("./harness");
+const { buildSandbox, defaultCfg, engineCfg, run, eng, st, M5 } = require("./harness");
 
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
 
 // Base series ending just after the FVG + retest, with the final breakout bar supplied by
-// the caller. FVG zone is 2003.00 -> 2003.50, fvg_swing_low (SL) 2001.80.
+// the caller. FVG zone is 2003.00 -> 2003.50, zone_swing_low (SL) 2001.80.
 function series(breakoutBar, retestBar) {
   const bars = [];
   for (let i = 30; i > 0; i--) bars.push(flat(asiaOpen - i * M5, 2004));
@@ -27,18 +27,20 @@ function series(breakoutBar, retestBar) {
   return bars;
 }
 
+// cfgOver is applied to ENGINE 1's settings — every fire condition lives on the engine now.
 function fired(breakoutBar, cfgOver, retestBar) {
-  const sb = run(buildSandbox(), series(breakoutBar, retestBar), defaultCfg(cfgOver));
-  const line = sb.__logLines.find((l) => l.includes("*** BUY SIGNAL ***")) || "";
+  const sb = run(buildSandbox(), series(breakoutBar, retestBar),
+    defaultCfg({ engines: { e1: cfgOver || {} } }));
+  const line = sb.__logLines.find((l) => l.includes("GPS BUY —")) || "";
   const pct = (line.match(/body ([\d.]+)%/) || [])[1];
-  return { fired: sb.sig.fired, pct: pct, orders: sb.__orders.length };
+  return { fired: st(sb).fired, pct: pct, orders: sb.__orders.length };
 }
 
 const results = [];
 const check = (n, ok, extra) => results.push([n + (extra ? "  (" + extra + ")" : ""), ok]);
 
 // ---- body % above the FVG top: user's confirmed threshold is 15%, not the Pine default 10% ----
-// body_pct = (close - fvg_top) / (close - open) * 100
+// body_pct = (close - zone_top) / (close - open) * 100
 const b10 = fired({ o: 1999.0, h: 2004.2, l: 1998.9, c: 2004.0 }); // (0.5 / 5.0)  = 10%
 const b20 = fired({ o: 2001.5, h: 2004.2, l: 2001.4, c: 2004.0 }); // (0.5 / 2.5)  = 20%
 const b14 = fired({ o: 2000.0, h: 2004.2, l: 1999.9, c: 2003.9 }); // (0.4 / 3.9)  ~ 10.3%
@@ -54,35 +56,36 @@ check("that same 10% body FIRES at minBodyPct=10", b10at10.fired === true);
 const bear = fired({ o: 2004.5, h: 2004.6, l: 2002.9, c: 2004.0 }); // close < open
 check("bearish candle is REJECTED", bear.fired === false);
 
-// ---- open_ok: open <= fvg_top (2003.50) ----
+// ---- open_ok: open <= zone_top (2003.50) ----
 const openAbove = fired({ o: 2003.8, h: 2005.0, l: 2003.2, c: 2004.8 });
-check("open ABOVE fvg_top is REJECTED", openAbove.fired === false);
-const openAboveOff = fired({ o: 2003.8, h: 2005.0, l: 2003.2, c: 2004.8 }, { requireOpenBelow: false });
+check("open ABOVE zone_top is REJECTED", openAbove.fired === false);
+const openAboveOff = fired({ o: 2003.8, h: 2005.0, l: 2003.2, c: 2004.8 }, { openBelowTop: false });
 check("...and FIRES once that gate is turned off", openAboveOff.fired === true);
 
-// ---- retest_ok: with open-below disabled, a bar that never taps the zone must not fire ----
-// The preceding bar is swapped for one that stays entirely ABOVE the zone, so the FVG is
-// genuinely never tapped before the breakout candidate arrives.
-const noTap = fired({ o: 2003.9, h: 2005.0, l: 2003.7, c: 2004.7 },
-  { requireOpenBelow: false, strictRetest: true },
+// ---- retest_ok on an FVG zone ----
+// The FVG bar's own low IS the zone top, so the zone is marked tested the instant it forms
+// and the retest gate can never block an FVG setup. That is the Pine source's real
+// behaviour, not an approximation of it — so the same bars must fire either way.
+const retestOn  = fired({ o: 2003.9, h: 2005.0, l: 2003.7, c: 2004.7 },
+  { openBelowTop: false, requireRetest: true },
   { o: 2004.0, h: 2005.0, l: 2003.6, c: 2004.2 });
-check("no-tap breakout is REJECTED while the zone is untested", noTap.fired === false);
-
-// Same bars, but the zone IS tapped first -> it fires. Proves the retest gate is the difference.
-const tapped = fired({ o: 2003.9, h: 2005.0, l: 2003.7, c: 2004.7 },
-  { requireOpenBelow: false, strictRetest: true },
-  { o: 2004.0, h: 2005.0, l: 2003.0, c: 2004.2 });
-check("...and FIRES once the zone has been tapped", tapped.fired === true);
+const retestOff = fired({ o: 2003.9, h: 2005.0, l: 2003.7, c: 2004.7 },
+  { openBelowTop: false, requireRetest: false },
+  { o: 2004.0, h: 2005.0, l: 2003.6, c: 2004.2 });
+check("an FVG zone is tested on its formation bar, so requireRetest ON still fires",
+  retestOn.fired === true);
+check("...and turning requireRetest OFF changes nothing for an FVG zone",
+  retestOff.fired === retestOn.fired);
 
 // ---- above_fvg: close must clear the top ----
 const belowTop = fired({ o: 2003.0, h: 2003.4, l: 2002.9, c: 2003.3 });
-check("close below fvg_top is REJECTED", belowTop.fired === false);
+check("close below zone_top is REJECTED", belowTop.fired === false);
 
 // ---- volume / size filters are OFF: zero-volume bars must still fire ----
 const noVol = run(buildSandbox(),
   series({ o: 2001.5, h: 2004.2, l: 2001.4, c: 2004.0 }).map((b) => Object.assign({}, b, { v: 0 })),
   defaultCfg());
-check("zero-volume bars still fire (volume filter OFF)", noVol.sig.fired === true);
+check("zero-volume bars still fire (volume filter OFF)", st(noVol).fired === true);
 
 console.log("===== ASSERTIONS =====");
 let fails = 0;

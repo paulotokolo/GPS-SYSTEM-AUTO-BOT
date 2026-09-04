@@ -1,5 +1,5 @@
 // Scenario tests for Pre-Session FVG = ON: cross-session carry-over and 50-bar expiry.
-const { buildSandbox, defaultCfg, run, M5 } = require("./harness");
+const { buildSandbox, defaultCfg, engineCfg, run, eng, st, M5 } = require("./harness");
 
 const results = [];
 function check(name, ok) { results.push([name, ok]); }
@@ -48,7 +48,7 @@ function buildCrossSession() {
 // ---------- Scenario A: carry-over across the Asia -> London boundary ----------
 {
   const sb = run(buildSandbox(), buildCrossSession(), defaultCfg());
-  const s = sb.sig, lines = sb.__logLines;
+  const s = st(sb), lines = sb.__logLines;
   const has = (re) => lines.some((l) => re.test(l));
 
   console.log("===== A: CROSS-SESSION CARRY-OVER =====");
@@ -58,8 +58,8 @@ function buildCrossSession() {
   check("A: sweep survived into London", s.sweep === true);
   check("A: carry-over was marked at session open", has(/carried over/));
   check("A: setup was NOT reset at London open", !has(/session open, no active setup/));
-  check("A: FVG formed during London", s.fvg_found === true);
-  check("A: SL is the FVG middle candle (2001.80)", Math.abs(s.fvg_swing_low - 2001.8) < 1e-9);
+  check("A: FVG formed during London", s.zone_found === true);
+  check("A: SL is the FVG middle candle (2001.80)", Math.abs(s.zone_swing_low - 2001.8) < 1e-9);
   check("A: BUY fired across the session boundary", s.fired === true);
   check("A: exactly one initial BUY order", sb.__orders.length >= 1 && sb.__orders[0].tradingAction === "BUY");
 }
@@ -78,16 +78,18 @@ function buildCrossSession() {
   bars.push({ ts: t0, o: 2001, h: 2002, l: 1999.0, c: 2000.0, v: 100 }); // SWEEP
   for (let i = 1; i <= 23; i++) bars.push(flat(t0 + i * M5, 2001));      // quiet to 01:55
   const L = t0 + 24 * M5;                                                // LONDON open 02:00
-  for (let i = 0; i <= 60; i++) bars.push(flat(L + i * M5, 2001));       // 60 quiet bars — must expire
+  for (let i = 0; i <= 30; i++) bars.push(flat(L + i * M5, 2001));       // quiet bars — must expire
 
-  const sb = run(buildSandbox(), bars, defaultCfg());
-  const s = sb.sig, lines = sb.__logLines;
+  // A 20-bar boundary carry-over, and the drift stops before London closes — so the ref
+  // this asserts on is the one the expiry reset cleared, not a later re-lock.
+  const sb = run(buildSandbox(), bars, defaultCfg({ engines: { e1: { preSessMaxBars: 20 } } }));
+  const s = st(sb), lines = sb.__logLines;
 
-  console.log("\n===== B: CARRY-OVER EXPIRY (50 BARS) =====");
+  console.log("\n===== B: CARRY-OVER EXPIRY (20 BARS) =====");
   lines.filter((l) => /SESSION|SWEEP|reset|carr/i.test(l)).forEach((l) => console.log(l));
 
   check("B: carry-over was marked", lines.some((l) => /carried over/.test(l)));
-  check("B: expiry reset fired after 50 bars", lines.some((l) => /carry-over exceeded 50 bars/.test(l)));
+  check("B: expiry reset fired at the carry-over cutoff", lines.some((l) => /carry-over exceeded 20 bars/.test(l)));
   check("B: sweep cleared by the reset", s.sweep === false);
   check("B: no order was placed", sb.__orders.length === 0);
   // Pine's sig_reset() clears ref_high/ref_low/ref_name outright (ref_name := "").

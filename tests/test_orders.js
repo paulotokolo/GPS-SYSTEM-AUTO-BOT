@@ -3,7 +3,7 @@
 // This exists because "a signal fired but no trade opened" was a real reported problem.
 // Absolute-price SL/TP on an OPENING request is unproven on this platform, so the default
 // is now to send a plain order and attach the levels immediately afterwards.
-const { buildSandbox, defaultCfg, run, M5 } = require("./harness");
+const { buildSandbox, defaultCfg, engineCfg, run, eng, st, M5 } = require("./harness");
 
 const results = [];
 const check = (n, ok, extra) => results.push([n + (extra ? "  (" + extra + ")" : ""), ok]);
@@ -38,9 +38,15 @@ function series() {
   const o = sb.__orders[0];
   console.log("===== 1: ATTACH ON OPEN =====");
   console.log("  request:", JSON.stringify(o));
+  // The levels are PIP DISTANCES now, which is the one form this platform is proven to
+  // accept on an opening request — the same shape the manual test trade sends.
   check("1: an order was sent", !!o);
-  check("1: SL rides on the opening request", o && Math.abs(o.sl - 2001.8) < 1e-9, o ? "sl=" + o.sl : "");
-  check("1: TP rides on the opening request", o && o.tp > 2004);
+  check("1: SL rides on the opening request as pips",
+    o && o.sl && o.sl.pips === 100, o ? "sl=" + JSON.stringify(o.sl) : "");
+  check("1: TP rides on the opening request as pips",
+    o && o.tp && o.tp.pips === 100, o ? "tp=" + JSON.stringify(o.tp) : "");
+  check("1: no absolute price is sent on the open",
+    o && typeof o.sl !== "number" && typeof o.tp !== "number");
 }
 
 // ---------- 2. "after open" sends a PLAIN order (the new default) ----------
@@ -54,10 +60,14 @@ function series() {
   check("2: the opening request carries NO tp", o && o.tp === undefined);
   check("2: volume and direction are intact",
     o && o.tradingAction === "BUY" && o.volume && o.volume.lots > 0);
-  // The levels are not lost — they are queued for OnOrderOpen to attach.
+  // The levels are not lost — they are queued for OnOrderOpen to attach, as absolute
+  // prices computed from the pip distances (a modify takes prices, not pips).
+  // Entry 2004.00, 100 pips at a 0.1 pip size = 10.00 of price, so SL is 1994.00.
   const q = sb.pendingManagement[0];
   check("2: SL is queued for attachment after the fill",
-    q && Math.abs(q.slPrice - 2001.8) < 1e-9, q ? "queued sl=" + q.slPrice : "nothing queued");
+    q && Math.abs(q.slPrice - 1994.0) < 1e-9, q ? "queued sl=" + q.slPrice : "nothing queued");
+  check("2: TP is queued too", q && Math.abs(q.tpPrice - 2014.0) < 1e-9,
+    q ? "queued tp=" + q.tpPrice : "nothing queued");
 }
 
 // ---------- 3. Dry run must never send an order ----------

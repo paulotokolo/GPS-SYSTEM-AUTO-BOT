@@ -8,30 +8,26 @@ const check = (n, ok, extra) => results.push([n + (extra ? "  (" + extra + ")" :
 // Entry 2004.00, SL 2001.80 => 2.20 price => $220 per lot.
 // 1% of 10000 = $100 risk => 100/220 = 0.4545 lots => floor to 0.01 step => 0.45
 sb.cfg = defaultCfg({ sizingMode: "risk", riskPct: 1 });
-const lots = sb.computeLotSize(2004.0, 2001.8, false);
+const lots = sb.computeLotSize(2004.0, 2001.8);
 check("risk sizing uses the real SL distance", Math.abs(lots - 0.45) < 1e-9, "lots=" + lots);
-
-// add-on uses its own risk %: 0.5% => $50 => 50/220 = 0.227 => 0.22
-const addLots = sb.computeLotSize(2004.0, 2001.8, true);
-check("add-on sizes off addOnRiskPct", Math.abs(addLots - 0.22) < 1e-9, "lots=" + addLots);
 
 // hard max lot caps the result
 sb.cfg = defaultCfg({ sizingMode: "risk", riskPct: 50, hardMaxLot: 1.5 });
-const capped = sb.computeLotSize(2004.0, 2001.8, false);
+const capped = sb.computeLotSize(2004.0, 2001.8);
 check("hardMaxLot caps the size", Math.abs(capped - 1.5) < 1e-9, "lots=" + capped);
 
 // fixed mode ignores risk entirely
 sb.cfg = defaultCfg({ sizingMode: "fixed", fixedLots: 0.1 });
-check("fixed mode returns fixed lots", sb.computeLotSize(2004.0, 2001.8, false) === 0.1);
+check("fixed mode returns fixed lots", sb.computeLotSize(2004.0, 2001.8) === 0.1);
 
 // inverted/zero stop must never produce a bogus size
 sb.cfg = defaultCfg({ sizingMode: "risk" });
-const bad = sb.computeLotSize(2004.0, 2004.0, false);
+const bad = sb.computeLotSize(2004.0, 2004.0);
 check("zero stop distance falls back to fixed lots", bad === 0.1, "lots=" + bad);
 
 // no float dust in the returned lot size
 sb.cfg = defaultCfg({ sizingMode: "risk", riskPct: 1 });
-const dust = sb.computeLotSize(2004.0, 2001.77, false);
+const dust = sb.computeLotSize(2004.0, 2001.77);
 check("no binary-float dust in lot size", String(dust).length <= 6, "lots=" + dust);
 
 console.log("===== ASSERTIONS =====");
