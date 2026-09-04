@@ -9,84 +9,158 @@
 <script src="https://mytrader.fxbluelabs.com/scripts/widget-js"></script>
 
 <style>
+/* =====================================================================
+   GPS — Great Profit System / Slow Grind Academy house style.
+   Black carbon ground, acid-green accent, every block sitting in its own
+   outlined card the way the reference panel does.
+   ===================================================================== */
+:root {
+  --green:      #a8ff2e;
+  --green-soft: #c9ff7a;
+  --green-deep: #6f9c1f;
+  --green-glow: rgba(168,255,46,0.35);
+  --line:       rgba(168,255,46,0.32);
+  --line-soft:  rgba(168,255,46,0.16);
+  --bg:         #050705;
+  --panel:      #0a0d08;
+  --panel-in:   #070a06;
+  --text:       #e4ebda;
+  --muted:      #8b9880;
+  --amber:      #ffcf6f;
+  --red:        #ff7b6f;
+  /* Woven carbon texture: two crossed hairline gratings over the black. */
+  --carbon:
+    repeating-linear-gradient(45deg,  rgba(255,255,255,0.016) 0 1px, transparent 1px 4px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,0.012) 0 1px, transparent 1px 4px);
+}
+
 html, body {
   margin: 0; padding: 0; height: 100%;
   font-family: var(--font-family, system-ui);
   font-size: var(--font-size-base, 13px);
-  color: #dfe7ff;
-  background: radial-gradient(ellipse at top, #0f1730 0%, #070b16 70%);
+  color: var(--text);
+  background:
+    var(--carbon),
+    radial-gradient(ellipse at 50% -10%, #14200c 0%, #070a06 45%, #030402 100%);
   overflow: hidden;
 }
 body { display: flex; flex-direction: column; }
+
+/* ---------------- Logo banner ---------------- */
 .widget-header {
-  display: flex; align-items: center; justify-content: space-between;
-  padding-block: 12px;
-  padding-inline-start: 16px;
+  position: relative;
+  padding: 12px 12px 10px;
   padding-inline-end: var(--widget-chrome-inset-horizontal, 40px);
-  border-bottom: 1px solid rgba(56,214,255,0.18);
-  font-weight: 700; font-size: 15px; letter-spacing: 0.3px;
-  color: #6fe3ff; text-shadow: 0 0 10px rgba(111,227,255,0.35);
   flex: 0 0 auto;
 }
-#minimizeBtn {
-  background: rgba(111,227,255,0.08); border: 1px solid rgba(111,227,255,0.3);
-  border-radius: 6px; width: 26px; height: 26px; line-height: 1; font-size: 14px;
-  padding: 0; color: #6fe3ff; cursor: pointer;
+.logo-card {
+  background: var(--carbon), linear-gradient(180deg, #0c1108 0%, #050703 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px 12px;
+  box-shadow: 0 0 22px rgba(168,255,46,0.10), inset 0 0 30px rgba(0,0,0,0.7);
+  display: flex; justify-content: center;
 }
-#content { padding: 14px 16px 20px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.gps-logo { width: 100%; max-width: 300px; height: auto; display: block; }
+#minimizeBtn {
+  position: absolute; top: 4px; right: 6px;
+  background: rgba(168,255,46,0.08); border: 1px solid var(--line);
+  border-radius: 6px; width: 24px; height: 24px; line-height: 1; font-size: 13px;
+  padding: 0; color: var(--green); cursor: pointer;
+}
+#minimizeBtn:hover { background: rgba(168,255,46,0.18); }
+
+#content { padding: 0 12px 16px; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
 body.minimized #content { display: none; }
+
+/* ---------------- Brand cards under the logo ---------------- */
+.brand-card, .engine-card {
+  background: var(--carbon), linear-gradient(180deg, #0b0f07 0%, #060803 100%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  box-shadow: inset 0 0 22px rgba(0,0,0,0.65);
+}
+.brand-title {
+  font-size: 15px; font-weight: 800; letter-spacing: 1.2px;
+  color: #ffffff; margin-bottom: 6px;
+}
+.engine-name {
+  display: block;
+  font-size: 14px; font-weight: 800; letter-spacing: 1px;
+  color: var(--green); text-shadow: 0 0 12px var(--green-glow);
+}
+.engine-sub {
+  display: block; margin-top: 3px;
+  font-size: 11.5px; letter-spacing: 1px; color: #cdd6c2; text-transform: uppercase;
+}
+
+/* ---------------- Form furniture ---------------- */
 .row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
-.row label { flex: 0 0 160px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; opacity: 0.75; }
+.row label { flex: 0 0 160px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--muted); }
 .row input[type="text"], .row input[type="number"], .row select {
   flex: 1 1 100px; min-width: 70px;
-  background: #0c1224; color: #eaf2ff;
-  border: 1px solid rgba(111,227,255,0.25);
+  background: var(--panel-in); color: var(--text);
+  border: 1px solid var(--line-soft);
   border-radius: 8px; padding: 9px 10px; font-size: 13px;
 }
-.row input:focus, .row select:focus { outline: none; border-color: #6fe3ff; box-shadow: 0 0 0 2px rgba(111,227,255,0.15); }
-.row input[type="checkbox"] { width: 16px; height: 16px; }
-fieldset {
-  border: 1px solid rgba(111,227,255,0.15); border-radius: 12px; margin-bottom: 14px; padding: 12px 14px;
-  background: rgba(111,227,255,0.02);
+.row input:focus, .row select:focus {
+  outline: none; border-color: var(--green); box-shadow: 0 0 0 2px rgba(168,255,46,0.18);
 }
-legend { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; opacity: 0.8; padding: 0 6px; color: #9fd8ff; }
+.row input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--green); }
+fieldset {
+  border: 1px solid var(--line-soft); border-radius: 12px; margin-bottom: 12px; padding: 12px 14px;
+  background: var(--carbon), linear-gradient(180deg, #0a0d07 0%, #060803 100%);
+  box-shadow: inset 0 0 20px rgba(0,0,0,0.6);
+}
+legend {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 1px; padding: 0 6px;
+  color: var(--green); text-shadow: 0 0 10px var(--green-glow);
+}
 .btnrow { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
 button {
-  cursor: pointer; border-radius: 10px; border: none;
-  padding: 12px 16px; font-weight: 700; font-size: 13px; letter-spacing: 0.3px;
-  background: #131a30; color: #dfe7ff; transition: transform 0.05s ease;
+  cursor: pointer; border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  padding: 12px 16px; font-weight: 700; font-size: 13px; letter-spacing: 0.6px;
+  text-transform: uppercase;
+  background: var(--panel); color: var(--text); transition: transform 0.05s ease, border-color 0.15s ease;
 }
+button:hover { border-color: var(--line); }
 button:active { transform: scale(0.98); }
-.pill-btn { background: linear-gradient(135deg, #2fd4ff, #3b6fff); color: #04101f; box-shadow: 0 4px 14px rgba(59,111,255,0.35); }
-#startBtn:disabled, #stopBtn:disabled { background: #1a2038; color: #5b6788; box-shadow: none; cursor: default; }
+.pill-btn {
+  background: linear-gradient(135deg, #c9ff5e, #7fd317);
+  color: #06170a; border-color: transparent;
+  box-shadow: 0 4px 18px rgba(168,255,46,0.30);
+}
+#startBtn:disabled, #stopBtn:disabled {
+  background: #0c0f09; color: #4b5544; box-shadow: none; cursor: default; border-color: rgba(255,255,255,0.06);
+}
+
+/* ---------------- Status line inside the brand card ---------------- */
 #status {
-  font-weight: 700; padding: 8px 14px; border-radius: 999px; margin-bottom: 14px;
-  text-align: center; font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase;
-  border: 1px solid rgba(255,255,255,0.08);
+  font-weight: 700; padding: 0; border-radius: 0;
+  font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
 }
-#status.stopped { background: rgba(239,83,80,0.12); color: #ff8a80; border-color: rgba(239,83,80,0.3); }
-#status.running { background: rgba(38,214,166,0.14); color: #4dffcf; border-color: rgba(38,214,166,0.35); }
-#status.dryrun  { background: rgba(111,227,255,0.14); color: #6fe3ff; border-color: rgba(111,227,255,0.35); }
-#versionBadge {
-  display: inline-block; margin-bottom: 10px; padding: 4px 10px; border-radius: 999px;
-  background: rgba(111,227,255,0.08); border: 1px solid rgba(111,227,255,0.25);
-  color: #9fd8ff; font-size: 10.5px; letter-spacing: 0.3px;
-}
+#status.stopped { color: var(--red); }
+#status.running { color: var(--green); text-shadow: 0 0 12px var(--green-glow); }
+#status.dryrun  { color: var(--amber); }
+
 #log {
   height: 220px; overflow-y: auto; font-family: monospace; font-size: 11.5px;
-  background: #060a16; border: 1px solid rgba(111,227,255,0.15);
+  background: #030502; border: 1px solid var(--line-soft);
   border-radius: 10px; padding: 8px 10px; white-space: pre-wrap;
 }
-.log-buy { color: #4dffcf; font-weight: 700; }
-.log-sig { color: #ffd479; }
-.log-info { opacity: 0.7; }
-.log-warn { color: #ffcf6f; }
-.log-err  { color: #ff8a80; }
+.log-buy { color: var(--green); font-weight: 700; }
+.log-sig { color: var(--amber); }
+.log-info { color: var(--muted); }
+.log-warn { color: var(--amber); }
+.log-err  { color: var(--red); }
 .log-hist { opacity: 0.55; font-style: italic; }
 
 /* Key words get their own badge inside a log line, so a BUY is findable when
    scanning a long log — including on history lines, where .log-hist would
-   otherwise wash the line's own colour out completely. */
+   otherwise wash the line colour out completely. */
 .log-badge {
   display: inline-block;
   padding: 0 6px;
@@ -95,90 +169,135 @@ button:active { transform: scale(0.98); }
   letter-spacing: 0.6px;
   font-style: normal;
 }
-.badge-buy    { background: #4dffcf; color: #04101f; }
-.badge-addon  { background: #6fe3ff; color: #04101f; }
-.badge-sweep  { background: #ffcf6f; color: #241a04; }
+.badge-buy    { background: var(--green); color: #06170a; }
+.badge-addon  { background: var(--green-soft); color: #06170a; }
+.badge-sweep  { background: var(--amber); color: #241a04; }
 .badge-fvg    { background: #b58cff; color: #10061f; }
-.badge-sess   { background: rgba(111,227,255,0.22); color: #9fd8ff; }
-.warning-box {
-  background: rgba(255,183,77,0.10); border: 1px solid rgba(255,183,77,0.35);
-  border-radius: 10px; padding: 10px 12px; font-size: 11.5px; margin-bottom: 12px;
-}
-.intro-box {
-  background: rgba(111,227,255,0.06); border: 1px solid rgba(111,227,255,0.25);
-  border-radius: 10px; padding: 12px 14px; font-size: 12px; line-height: 1.55; margin-bottom: 14px;
-}
-.hint { display: block; font-size: 11px; opacity: 0.6; margin: -5px 0 10px 0; line-height: 1.4; }
+.badge-sess   { background: rgba(168,255,46,0.22); color: var(--green-soft); }
+.hint { display: block; font-size: 11px; color: var(--muted); margin: -5px 0 10px 0; line-height: 1.4; }
 #advancedToggle {
   width: 100%; text-align: center; margin-bottom: 12px;
-  background: rgba(111,227,255,0.05); border: 1px dashed rgba(111,227,255,0.25); color: #9fd8ff;
+  background: rgba(168,255,46,0.05); border: 1px dashed var(--line); color: var(--green-soft);
 }
 #advancedSection { display: none; }
 #advancedSection.expanded { display: block; }
 
 /* ---- Live signal-state panel: mirrors the sig object bar by bar ---- */
 .state-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
-.state-box { background: #0c1224; border: 1px solid rgba(111,227,255,0.18); border-radius: 10px; padding: 8px 10px; }
-.state-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.55; display: block; margin-bottom: 3px; }
-.state-value { font-size: 13px; font-weight: 700; color: #eaf2ff; word-break: break-all; }
+.state-box { background: var(--panel-in); border: 1px solid var(--line-soft); border-radius: 10px; padding: 8px 10px; }
+.state-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); display: block; margin-bottom: 3px; }
+.state-value { font-size: 13px; font-weight: 700; color: var(--text); word-break: break-all; }
 .step-track { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
 .step {
-  flex: 1 1 0; min-width: 74px; text-align: center; font-size: 9.5px; letter-spacing: 0.3px;
+  flex: 1 1 0; min-width: 74px; text-align: center; font-size: 9.5px; letter-spacing: 0.5px;
   text-transform: uppercase; padding: 7px 4px; border-radius: 8px;
-  background: #0c1224; border: 1px solid rgba(111,227,255,0.15); color: #5b6788;
+  background: var(--panel-in); border: 1px solid var(--line-soft); color: #4b5544;
 }
-.step.done { background: rgba(38,214,166,0.14); border-color: rgba(38,214,166,0.4); color: #4dffcf; }
+.step.done { background: rgba(168,255,46,0.12); border-color: var(--line); color: var(--green); }
 /* Amber = provisionally true on the still-forming bar; confirms only when the bar closes. */
 .step.pending {
-  background: rgba(255,183,77,0.14); border-color: rgba(255,183,77,0.45); color: #ffcf6f;
+  background: rgba(255,183,77,0.12); border-color: rgba(255,183,77,0.45); color: var(--amber);
   animation: pulse 1.4s ease-in-out infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
 .live-bar {
   display: flex; align-items: center; gap: 8px; margin-bottom: 10px;
-  font-size: 11px; letter-spacing: 0.3px; opacity: 0.85;
+  font-size: 11px; letter-spacing: 0.5px; color: var(--muted);
 }
 .live-dot {
-  width: 8px; height: 8px; border-radius: 50%; background: #5b6788; flex: 0 0 auto;
+  width: 8px; height: 8px; border-radius: 50%; background: #3d452f; flex: 0 0 auto;
 }
-.live-dot.on { background: #4dffcf; box-shadow: 0 0 8px rgba(77,255,207,0.8); animation: pulse 1.4s ease-in-out infinite; }
-.state-value.pending { color: #ffcf6f; }
+.live-dot.on { background: var(--green); box-shadow: 0 0 10px var(--green-glow); animation: pulse 1.4s ease-in-out infinite; }
+.state-value.pending { color: var(--amber); }
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
-.stat-box { background: #0c1224; border: 1px solid rgba(111,227,255,0.18); border-radius: 10px; padding: 10px 12px; }
-.stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.3px; opacity: 0.6; display: block; margin-bottom: 4px; }
-.stat-value { font-size: 18px; font-weight: 700; color: #eaf2ff; }
+.stat-box { background: var(--panel-in); border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; }
+.stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); display: block; margin-bottom: 4px; }
+.stat-value { font-size: 18px; font-weight: 700; color: var(--green); text-shadow: 0 0 12px var(--green-glow); }
 .stats-btnrow { display: flex; gap: 8px; margin-top: 4px; }
 .stats-btnrow button { flex: 1; padding: 8px 10px; font-size: 12px; }
 .sess-pill {
   display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 10.5px; font-weight: 700;
-  background: rgba(111,227,255,0.1); border: 1px solid rgba(111,227,255,0.3); color: #9fd8ff; margin-inline-end: 6px;
+  background: rgba(168,255,46,0.08); border: 1px solid var(--line-soft); color: var(--muted); margin-inline-end: 6px;
 }
-.sess-pill.live { background: rgba(38,214,166,0.18); border-color: rgba(38,214,166,0.45); color: #4dffcf; }
+.sess-pill.live { background: rgba(168,255,46,0.18); border-color: var(--line); color: var(--green); }
+
+/* ---------------- Slow Grind Academy footer mark ---------------- */
+.sga-card {
+  background: var(--carbon), linear-gradient(180deg, #0b0f07 0%, #050703 100%);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  margin-top: 4px;
+  display: flex; justify-content: center;
+  box-shadow: inset 0 0 24px rgba(0,0,0,0.7);
+}
+.sga-logo { width: 100%; max-width: 250px; height: auto; display: block; }
+
+/* Scrollbars in house colours rather than the platform default grey. */
+#content::-webkit-scrollbar, #log::-webkit-scrollbar { width: 8px; }
+#content::-webkit-scrollbar-thumb, #log::-webkit-scrollbar-thumb {
+  background: rgba(168,255,46,0.25); border-radius: 8px;
+}
+#content::-webkit-scrollbar-track, #log::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
 
 <body>
+<!-- ---------------- GPS wordmark ---------------- -->
 <div class="widget-header">
-  <span>GPS SYSTEM AUTO BOT</span>
+  <div class="logo-card">
+    <svg class="gps-logo" viewBox="0 0 300 112" xmlns="http://www.w3.org/2000/svg"
+         role="img" aria-label="GPS — Great Profit System">
+      <defs>
+        <linearGradient id="gpsFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#f4ffc6"/>
+          <stop offset="20%"  stop-color="#b6ff3c"/>
+          <stop offset="48%"  stop-color="#7cc218"/>
+          <stop offset="66%"  stop-color="#48790a"/>
+          <stop offset="84%"  stop-color="#a4ea22"/>
+          <stop offset="100%" stop-color="#dcff85"/>
+        </linearGradient>
+        <!-- Speckled noise punched out of the letters gives the distressed
+             finish the printed logo has, without needing a bitmap. -->
+        <filter id="gpsGrunge" x="-12%" y="-25%" width="124%" height="155%">
+          <feTurbulence type="fractalNoise" baseFrequency="0.85" numOctaves="4" seed="11" result="noise"/>
+          <feColorMatrix in="noise" type="matrix"
+                         values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  1.7 0 0 0 -0.68" result="speck"/>
+          <feComposite in="SourceGraphic" in2="speck" operator="out"/>
+        </filter>
+        <filter id="gpsGlow" x="-35%" y="-50%" width="170%" height="220%">
+          <feGaussianBlur stdDeviation="5" result="b"/>
+          <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+
+      <g font-family="Impact, Haettenschweiler, 'Arial Narrow', sans-serif">
+        <text x="150" y="68" text-anchor="middle" font-size="86"
+              textLength="272" lengthAdjust="spacingAndGlyphs"
+              fill="#8dd41a" opacity="0.38" filter="url(#gpsGlow)">GPS</text>
+        <text x="150" y="68" text-anchor="middle" font-size="86"
+              textLength="272" lengthAdjust="spacingAndGlyphs"
+              fill="url(#gpsFill)" stroke="#0a1204" stroke-width="1.3"
+              filter="url(#gpsGrunge)">GPS</text>
+      </g>
+
+      <text x="150" y="99" text-anchor="middle"
+            font-family="system-ui, 'Segoe UI', sans-serif" font-size="13.5"
+            font-weight="700" letter-spacing="3.2" fill="#eef5e4">GREAT PROFIT SYSTEM</text>
+    </svg>
+  </div>
   <button id="minimizeBtn" title="Minimize">&#9601;</button>
 </div>
 
 <div id="content">
-  <span id="versionBadge">GPS Signal Engine v2 &middot; BUY ONLY &middot; Slow Grind Academy</span>
-  <div id="status" class="stopped">&#9679; Bot Stopped</div>
-
-  <div class="intro-box">
-    Replicates the <b>GPS SYSTEM INDICATOR ALGO</b> (Pine v6) signal logic exactly, using the
-    confirmed live settings: Pre-Session FVG <b>ON</b>, Persist Through Sessions <b>ON</b>,
-    Require Retest <b>ON</b>, Min Body Above FVG <b>15%</b>, Volume &amp; Size filters <b>OFF</b>.
-    Sequence per setup: <b>Session Close &rarr; Sweep &rarr; First FVG &rarr; Retest &rarr; BUY</b>.
-    Stop-loss is always <b>fvg_swing_low</b> (middle candle of the 3-bar FVG).
+  <div class="brand-card">
+    <div class="brand-title">GPS SYSTEM AUTO BOT</div>
+    <div id="status" class="stopped">&#9679; Bot Stopped</div>
   </div>
 
-  <div class="warning-box">
-    <b>Verify before going live.</b> Start in <b>Dry Run</b>, load the GPS indicator on TradingView
-    on the same pair/timeframe, and confirm each logged BUY lands on the same candle. Only switch
-    to Live Trading once the sequence and timestamps match.
+  <div class="engine-card">
+    <span id="versionBadge" class="engine-name">GPS SIGNAL ENGINE v2</span>
+    <span class="engine-sub">BUY ONLY &middot; SLOW GRIND ACADEMY</span>
   </div>
 
   <!-- ---------------- Performance ---------------- -->
@@ -484,6 +603,41 @@ button:active { transform: scale(0.98); }
       <button id="exportCsvBtn">Export signals CSV</button>
     </div>
   </fieldset>
+
+  <!-- ---------------- Slow Grind Academy mark ---------------- -->
+  <div class="sga-card">
+    <svg class="sga-logo" viewBox="0 0 260 98" xmlns="http://www.w3.org/2000/svg"
+         role="img" aria-label="Slow Grind Academy — patience runs this game">
+      <defs>
+        <linearGradient id="sgaFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%"   stop-color="#eaffb0"/>
+          <stop offset="35%"  stop-color="#a8ff2e"/>
+          <stop offset="70%"  stop-color="#5f9c14"/>
+          <stop offset="100%" stop-color="#cbff6e"/>
+        </linearGradient>
+      </defs>
+
+      <path d="M8 38 C 40 26, 66 26, 88 34" fill="none" stroke="url(#sgaFill)"
+            stroke-width="2.6" stroke-linecap="round" opacity="0.9"/>
+      <path d="M172 34 C 194 26, 220 26, 252 38" fill="none" stroke="url(#sgaFill)"
+            stroke-width="2.6" stroke-linecap="round" opacity="0.9"/>
+
+      <text x="130" y="45" text-anchor="middle"
+            font-family="Georgia, 'Times New Roman', serif" font-style="italic"
+            font-weight="700" font-size="40" letter-spacing="1"
+            fill="url(#sgaFill)" stroke="#0a1204" stroke-width="0.7">SGA</text>
+
+      <path d="M52 54 C 100 62, 160 62, 208 54" fill="none" stroke="url(#sgaFill)"
+            stroke-width="1.6" stroke-linecap="round" opacity="0.75"/>
+
+      <text x="130" y="76" text-anchor="middle"
+            font-family="system-ui, 'Segoe UI', sans-serif" font-size="12.5"
+            font-weight="700" letter-spacing="3.4" fill="#eef5e4">SLOW GRIND ACADEMY</text>
+      <text x="130" y="91" text-anchor="middle"
+            font-family="system-ui, 'Segoe UI', sans-serif" font-size="7.5"
+            font-weight="600" letter-spacing="2.6" fill="#a8ff2e">PATIENCE RUNS THIS GAME</text>
+    </svg>
+  </div>
 </div>
 
 <script>
