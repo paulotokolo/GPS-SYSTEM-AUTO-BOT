@@ -153,16 +153,61 @@ button:active { transform: scale(0.98); }
 #status.dryrun  { color: var(--amber); }
 
 #log {
-  height: 220px; overflow-y: auto; font-family: monospace; font-size: 11.5px;
+  height: 300px; overflow-y: auto; font-size: 11.5px;
   background: #030502; border: 1px solid var(--line-soft);
-  border-radius: 10px; padding: 8px 10px; white-space: pre-wrap;
+  border-radius: 10px; padding: 8px 6px 10px;
 }
-.log-buy { color: var(--green); font-weight: 700; }
-.log-sig { color: var(--amber); }
-.log-info { color: var(--muted); }
-.log-warn { color: var(--amber); }
-.log-err  { color: var(--red); }
-.log-hist { opacity: 0.55; font-style: italic; }
+
+/* ---- One dated heading per trading day, so a long log stays navigable ---- */
+.log-day {
+  position: sticky; top: -8px; z-index: 1;
+  margin: 12px 0 8px; padding: 5px 8px;
+  background: var(--carbon), linear-gradient(180deg, #101707 0%, #080b04 100%);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font-size: 10.5px; font-weight: 800; letter-spacing: 1.2px; text-transform: uppercase;
+  color: var(--green); text-shadow: 0 0 10px var(--green-glow);
+}
+.log-day:first-child { margin-top: 0; }
+
+/* ---- One padded block per event: times, message, then any levels ---- */
+.log-entry {
+  margin: 0 0 7px;
+  padding: 5px 8px 6px 9px;
+  border-inline-start: 2px solid rgba(255,255,255,0.10);
+  border-radius: 0 6px 6px 0;
+  background: rgba(255,255,255,0.014);
+}
+.log-meta {
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  font-family: monospace; font-size: 10px; letter-spacing: 0.3px;
+  color: #5f6b53; margin-bottom: 3px;
+}
+.log-bar { color: var(--muted); font-weight: 700; }
+.log-msg {
+  font-family: monospace; line-height: 1.5; white-space: pre-wrap; word-break: break-word;
+}
+.log-detail {
+  font-family: monospace; font-size: 11px; line-height: 1.55;
+  margin-top: 3px; padding-inline-start: 10px;
+  border-inline-start: 1px dotted rgba(255,255,255,0.14);
+  color: var(--muted); white-space: pre-wrap; word-break: break-word;
+}
+
+/* The entry's accent stripe and its message colour come from the same class. */
+.log-entry.log-buy  { border-inline-start-color: var(--green); background: rgba(168,255,46,0.05); }
+.log-entry.log-sig  { border-inline-start-color: var(--amber); }
+.log-entry.log-warn { border-inline-start-color: var(--amber); background: rgba(255,183,77,0.05); }
+.log-entry.log-err  { border-inline-start-color: var(--red);   background: rgba(255,123,111,0.06); }
+.log-entry.log-hist { border-inline-start-color: rgba(255,255,255,0.14); }
+
+.log-buy  .log-msg { color: var(--green); font-weight: 700; }
+.log-sig  .log-msg { color: var(--amber); }
+.log-info .log-msg { color: var(--muted); }
+.log-warn .log-msg { color: var(--amber); }
+.log-err  .log-msg { color: var(--red); }
+.log-hist { opacity: 0.6; }
+.log-hist .log-msg { font-style: italic; }
 
 /* Key words get their own badge inside a log line, so a BUY is findable when
    scanning a long log — including on history lines, where .log-hist would
@@ -177,6 +222,7 @@ button:active { transform: scale(0.98); }
 }
 .badge-buy    { background: var(--green); color: #06170a; }
 .badge-addon  { background: var(--green-soft); color: #06170a; }
+.badge-off    { background: rgba(255,255,255,0.16); color: #cfd6c8; }
 .badge-sweep  { background: var(--amber); color: #241a04; }
 .badge-fvg    { background: #b58cff; color: #10061f; }
 .badge-sess   { background: rgba(168,255,46,0.22); color: var(--green-soft); }
@@ -1043,12 +1089,30 @@ function leadingEngine() {
 //  SESSION HANDLING — all times EST via Intl, which handles EST/EDT automatically
 // =====================================================================================
 var NY_FMT = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York", hour12: false,
+  timeZone: "America/New_York", hour12: false, weekday: "long",
   year: "numeric", month: "2-digit", day: "2-digit",
   hour: "2-digit", minute: "2-digit"
 });
 
+var MONTH_NAMES = ["January", "February", "March", "April", "May", "June",
+                   "July", "August", "September", "October", "November", "December"];
+
+// 1st, 2nd, 3rd, 4th … 11th/12th/13th are the exceptions that catch everyone out.
+function ordinal(n) {
+  var v = n % 100;
+  if (v >= 11 && v <= 13) return n + "th";
+  switch (n % 10) {
+    case 1:  return n + "st";
+    case 2:  return n + "nd";
+    case 3:  return n + "rd";
+    default: return n + "th";
+  }
+}
+
 // Converts an epoch-ms bar timestamp into New York wall-clock parts.
+//
+// Dates are spelled out — "9th September 2026" — because a log is read by a person
+// checking a signal against a chart, and 09/09 is ambiguous to half the world.
 function nyParts(ts) {
   var parts = NY_FMT.formatToParts(new Date(ts));
   var o = {};
@@ -1058,11 +1122,21 @@ function nyParts(ts) {
   var hour = parseInt(o.hour, 10);
   if (hour === 24) hour = 0; // some engines render midnight as "24" under hour12:false
   var minute = parseInt(o.minute, 10);
+
+  var dateLabel = ordinal(parseInt(o.day, 10)) + " " +
+                  MONTH_NAMES[parseInt(o.month, 10) - 1] + " " + o.year;
+  var timeLabel = ("0" + hour).slice(-2) + ":" + ("0" + minute).slice(-2) + " EST";
+
   return {
     dayKey: o.year + "-" + o.month + "-" + o.day,
     hour: hour, minute: minute,
     mins: hour * 60 + minute,
-    label: o.month + "/" + o.day + " " + ("0" + hour).slice(-2) + ":" + ("0" + minute).slice(-2) + " EST"
+    weekday:   o.weekday,                              // "Tuesday"
+    dateLabel: dateLabel,                              // "9th September 2026"
+    dayLabel:  o.weekday + " " + dateLabel,            // "Tuesday 9th September 2026"
+    timeLabel: timeLabel,                              // "00:25 EST"
+    fullLabel: dateLabel + "  " + timeLabel,           // "9th September 2026  00:25 EST"
+    label:     timeLabel                               // what the log stamps each line with
   };
 }
 
@@ -1095,6 +1169,7 @@ function sessionAt(mins) {
 //  LOGGING
 // =====================================================================================
 var currentBarLabel = "";
+var currentBarDay   = "";   // the bar date the log is currently heading
 
 // Words that get a coloured badge inside a log line. Longer phrases come first so
 // "BUY SIGNAL" is matched before a bare "BUY" can claim the word. The surrounding
@@ -1103,16 +1178,26 @@ var currentBarLabel = "";
 // because the coloured badge is what those markers were standing in for. Nothing
 // else about a log line changes, so the text still reads the same next to
 // TradingView.
+// The badge shows the matched words verbatim — it only adds colour. Rewriting them to a
+// shorter label would make the panel disagree with the exported log, and with anything
+// anyone greps for.
 var LOG_BADGES = [
-  { re: /\*\*\*\s*BUY SIGNAL\s*\*\*\*/,          label: "BUY SIGNAL",      cls: "badge-buy"   },
-  { re: /\+\+\+\s*ADD-ON\s*(\d+\/\d+)\s*\+\+\+/, label: "ADD-ON $1",       cls: "badge-addon" },
-  { re: /\bSWEEP DETECTED\b/,                    label: "SWEEP DETECTED",  cls: "badge-sweep" },
-  { re: /\bSWEEP FORMING\b/,                     label: "SWEEP FORMING",   cls: "badge-sweep" },
-  { re: /\bFIRST FVG FOUND\b/,                   label: "FIRST FVG FOUND", cls: "badge-fvg"   },
-  { re: /\bFVG RETEST\b/,                        label: "FVG RETEST",      cls: "badge-fvg"   },
-  { re: /\bSESSION CLOSE\b/,                     label: "SESSION CLOSE",   cls: "badge-sess"  },
-  { re: /\bSESSION OPEN\b/,                      label: "SESSION OPEN",    cls: "badge-sess"  },
-  { re: /\bBUY\b/,                               label: "BUY",             cls: "badge-buy"   }
+  { re: /\bNO ORDER SENT\b/,                   cls: "badge-off"   },
+  { re: /\bORDER SENT\b/,                      cls: "badge-buy"   },
+  { re: /\bGPS BUY\b/,                         cls: "badge-buy"   },
+  { re: /\bSWEEP DETECTED\b/,                  cls: "badge-sweep" },
+  { re: /\bSWEEP FORMING\b/,                   cls: "badge-sweep" },
+  { re: /\bFIRST DEMAND ZONE FOUND\b/,         cls: "badge-fvg"   },
+  { re: /\bFIRST FVG FOUND\b/,                 cls: "badge-fvg"   },
+  { re: /\bDEMAND ZONE RETEST\b/,              cls: "badge-fvg"   },
+  { re: /\bFVG RETEST\b/,                      cls: "badge-fvg"   },
+  { re: /\b(?:DEMAND ZONE|FVG) EXPIRED\b/,     cls: "badge-off"   },
+  { re: /\b(?:DEMAND ZONE|FVG) INVALIDATED\b/, cls: "badge-off"   },
+  { re: /\bREF LOCKED\b/,                      cls: "badge-sess"  },
+  { re: /\bREF MOVED\b/,                       cls: "badge-sess"  },
+  { re: /\bSESSION CLOSE\b/,                   cls: "badge-sess"  },
+  { re: /\bSESSION OPEN\b/,                    cls: "badge-sess"  },
+  { re: /\bBUY\b/,                             cls: "badge-buy", bare: true }
 ];
 
 //--- One combined matcher, built once. Each alternative keeps its own group count
@@ -1135,13 +1220,8 @@ function appendLogText(el, text) {
     var hit = null;
     for (var i = 0; i < LOG_BADGES.length; i++) {
       var single = new RegExp("^(?:" + LOG_BADGES[i].re.source + ")$");
-      var sm = single.exec(m[0]);
-      if (sm) {
-        hit = {
-          cls: LOG_BADGES[i].cls,
-          label: LOG_BADGES[i].label.replace("$1", sm[1] || ""),
-          bare: LOG_BADGES[i].label === "BUY"
-        };
+      if (single.test(m[0])) {
+        hit = { cls: LOG_BADGES[i].cls, bare: !!LOG_BADGES[i].bare };
         break;
       }
     }
@@ -1156,7 +1236,7 @@ function appendLogText(el, text) {
 
     var span = document.createElement("span");
     span.className = "log-badge " + (hit ? hit.cls : "badge-buy");
-    span.textContent = hit ? hit.label : m[0];
+    span.textContent = m[0];
     el.appendChild(span);
 
     last = m.index + m[0].length;
@@ -1165,28 +1245,78 @@ function appendLogText(el, text) {
   if (last < text.length) el.appendChild(document.createTextNode(text.slice(last)));
 }
 
-function log(msg, cls) {
+// The log is read while looking at a chart, so it is laid out as dated blocks rather
+// than a wall of one-line entries: a heading each time the day changes, then one padded
+// block per event carrying its own times, its message, and any levels on their own line.
+var lastLoggedDay = null;
+
+function logDayHeading(dayLabel) {
+  if (!dayLabel || dayLabel === lastLoggedDay) return;
   var el = document.getElementById("log");
   if (!el) return;
-  var line = document.createElement("div");
-  if (cls) line.className = cls;
+  lastLoggedDay = dayLabel;
+  var head = document.createElement("div");
+  head.className = "log-day";
+  head.textContent = dayLabel;
+  el.appendChild(head);
+}
+
+// opts: { bar: "00:25 EST", day: "Tuesday 9th September 2026", detail: "SL … · TP1 …" }
+function log(msg, cls, opts) {
+  var el = document.getElementById("log");
+  if (!el) return;
+  opts = opts || {};
+
+  if (opts.day) logDayHeading(opts.day);
+
+  var entry = document.createElement("div");
+  entry.className = "log-entry" + (cls ? " " + cls : "");
+
   var t = new Date();
-  var ts = ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2) + ":" + ("0" + t.getSeconds()).slice(-2);
-  appendLogText(line, "[" + ts + "] " + msg);
-  el.appendChild(line);
+  var clock = ("0" + t.getHours()).slice(-2) + ":" + ("0" + t.getMinutes()).slice(-2) +
+              ":" + ("0" + t.getSeconds()).slice(-2);
+
+  var meta = document.createElement("div");
+  meta.className = "log-meta";
+  var clockEl = document.createElement("span");
+  clockEl.className = "log-clock";
+  clockEl.textContent = clock;
+  meta.appendChild(clockEl);
+  if (opts.bar) {
+    meta.appendChild(document.createTextNode("  "));
+    var barEl = document.createElement("span");
+    barEl.className = "log-bar";
+    barEl.textContent = opts.bar;
+    meta.appendChild(barEl);
+  }
+  entry.appendChild(meta);
+
+  var body = document.createElement("div");
+  body.className = "log-msg";
+  appendLogText(body, msg);
+  entry.appendChild(body);
+
+  if (opts.detail) {
+    var det = document.createElement("div");
+    det.className = "log-detail";
+    appendLogText(det, opts.detail);
+    entry.appendChild(det);
+  }
+
+  el.appendChild(entry);
   while (el.childNodes.length > 800) el.removeChild(el.firstChild);
   el.scrollTop = el.scrollHeight;
 }
 
 // Logs an event stamped with the BAR's New York time (not wall-clock), which is what has
-// to line up with the indicator's label on the TradingView chart.
-function logBar(msg, cls) {
+// to line up with the indicator's label on the chart.
+function logBar(msg, cls, detail) {
   if (replaying && !cfg.verboseReplay) {
     // during replay only the milestone events are worth showing, and they get marked as history
     if (cls !== "log-buy" && cls !== "log-sig") return;
     cls = "log-hist";
   }
-  log(currentBarLabel + "  " + msg, cls);
+  log(msg, cls, { bar: currentBarLabel, day: currentBarDay, detail: detail });
 }
 
 // =====================================================================================
@@ -1201,6 +1331,7 @@ function processBar(idx) {
   barIndex++;
   var ny = nyParts(bar.ts);
   currentBarLabel = ny.label;
+  currentBarDay   = ny.dayLabel;
 
   // The session box is shared: it is a property of the chart, not of an engine, so it is
   // tracked once and the resulting open/close events are handed to every engine.
@@ -1397,7 +1528,7 @@ function runEngineBar(eng, bar, idx, ny, ev) {
     if (s.zone_found && s.zone_bar === barIndex) {
       // Keep a short history of zones, capped at the engine's Max Zones setting — the
       // bot draws nothing, so this is what that setting means here.
-      eng.zones.push({ top: s.zone_top, bot: s.zone_bot, bar: barIndex, time: ny.label });
+      eng.zones.push({ top: s.zone_top, bot: s.zone_bot, bar: barIndex, time: ny.fullLabel });
       while (eng.zones.length > c.maxZones) eng.zones.shift();
 
       logEng(eng, "FIRST " + zoneWord(eng).toUpperCase() + " FOUND — zone " +
@@ -1642,7 +1773,7 @@ function fireBuy(eng, bar, idx, ny, bodyPct) {
   eng.fires++;
   signalCount++;
   signalLog.push({
-    time: ny.label,
+    time: ny.fullLabel,
     engine: "Engine " + eng.def.id + ": " + eng.def.name,
     kind: "BUY",
     entry: entry,
@@ -1654,14 +1785,16 @@ function fireBuy(eng, bar, idx, ny, bodyPct) {
     bodyPct: bodyPct.toFixed(1)
   });
 
-  var levels = "  SL " + (sl !== null ? fmt(sl) + " (" + cfg.slPips + "p)" : "none");
+  // Headline stays short enough to read at a glance; the levels go underneath it.
+  var levels = ["SL   " + (sl !== null ? fmt(sl) + "   (" + cfg.slPips + " pips)" : "none")];
   for (var n = 0; n < 3; n++) {
     var pips = [cfg.tp1Pips, cfg.tp2Pips, cfg.tp3Pips][n];
-    levels += "  TP" + (n + 1) + " " + (tps[n] !== null ? fmt(tps[n]) + " (" + pips + "p)" : "off");
+    levels.push("TP" + (n + 1) + "  " +
+      (tps[n] !== null ? fmt(tps[n]) + "   (" + pips + " pips)" : "off"));
   }
+  levels.push("Body above zone " + bodyPct.toFixed(1) + "%   ·   Reference " + (s.ref_name || "n/a"));
 
-  logBar(engineLabel(eng) + " entry " + fmt(entry) + levels +
-         "  | body " + bodyPct.toFixed(1) + "%  | ref " + (s.ref_name || "n/a"), "log-buy");
+  logBar(engineLabel(eng) + "   entry " + fmt(entry), "log-buy", levels.join("\n"));
 
   refreshStatsDisplay();
   if (replaying) return;      // historical bar — state only, never an order
@@ -1740,10 +1873,16 @@ function submitBuy(eng, signalPrice, slPrice, tpPrice, reason) {
   pendingManagement.push({ lots: lots, slPrice: slPrice, tpPrice: tpPrice });
 
   var settings = cfg.confirmOrders ? { confirm: true } : {};
-  log("BUY " + lots + " lots " + cfg.instrumentId + " — " + reason +
-      (cfg.attachSl && slPrice ? " | SL " + fmt(slPrice) + " (" + cfg.slPips + "p)" : " | NO SL") +
-      (cfg.attachTp && tpPrice ? " | TP " + fmt(tpPrice) + " (" + cfg.tp1Pips + "p)" : " | no TP") +
-      (attachOnOpen ? " | levels sent with the order as pips" : " | levels attached right after open"), "log-buy");
+  log("ORDER SENT — BUY " + lots + " lots " + cfg.instrumentId, "log-buy", {
+    bar: currentBarLabel,
+    day: currentBarDay,
+    detail: [
+      reason,
+      (cfg.attachSl && slPrice ? "SL   " + fmt(slPrice) + "   (" + cfg.slPips + " pips)" : "SL   NONE ATTACHED"),
+      (cfg.attachTp && tpPrice ? "TP1  " + fmt(tpPrice) + "   (" + cfg.tp1Pips + " pips)" : "TP1  none"),
+      (attachOnOpen ? "Levels sent with the order, as pips" : "Levels attached right after the fill")
+    ].join("\n")
+  });
 
   Framework.SendOrder(req, function (MsgResult) {
     setPendingOrder(false);
@@ -2977,6 +3116,7 @@ Framework.OnLoad = function () {
   document.getElementById("stopBtn").addEventListener("click", stopBot);
   document.getElementById("clearLogBtn").addEventListener("click", function () {
     document.getElementById("log").innerHTML = "";
+    lastLoggedDay = null;
   });
   document.getElementById("testBuyBtn").addEventListener("click", testPlaceOrder);
   document.getElementById("accountSizeSelect").addEventListener("change", function () {

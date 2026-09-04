@@ -192,6 +192,15 @@ It now updates **once per second** via a live ticker, showing:
 - **The active session**, tracked from the forming bar
 - **A pulsing live indicator** with the last update time
 
+### Reading the log
+
+The log is laid out as **dated blocks**, because it is read while looking at a chart:
+
+- A **sticky heading each time the trading day changes** — `WEDNESDAY 9TH SEPTEMBER 2026`. Dates are spelled out, never `09/09`, which means something different depending on where you live.
+- One **padded block per event**, carrying the wall-clock time it was written and the **bar's own New York time** (`00:25 EST`) — the second is the one that has to line up with the indicator's label.
+- Levels sit on their **own indented lines** under the headline rather than trailing off the end of it, so a BUY reads as entry, then SL, then each TP with its pip distance.
+- Key phrases are badged in colour. The badge shows the words **verbatim** — it only adds colour, so the panel never disagrees with the exported CSV or with anything you search for.
+
 ### Green vs amber
 
 - **Green** — confirmed on a closed bar. This is real signal state.

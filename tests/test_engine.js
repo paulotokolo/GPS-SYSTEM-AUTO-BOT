@@ -96,9 +96,9 @@ check("order comment tags the engine",
 
 // ---- Pine parity details ----
 check("the zone is marked tested on its FORMATION bar (matches Pine)",
-  lines.some((l) => l.includes("00:15") && l.includes("FVG RETEST")));
+  lines.some((l) => l.includes("00:15 EST") && l.includes("FVG RETEST")));
 check("the fire is still blocked on the formation bar by above_zone",
-  !lines.some((l) => l.includes("00:15") && l.includes("GPS BUY —")));
+  !lines.some((l) => l.includes("00:15 EST") && l.includes("GPS BUY —")));
 
 console.log("\n===== ASSERTIONS =====");
 let fails = 0;
