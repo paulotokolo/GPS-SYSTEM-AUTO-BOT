@@ -99,7 +99,8 @@ function defaultCfg(over) {
     },
     attachSl: true, attachTp: true, attachMode: "open",
     slPips: 100, tp1Pips: 100, tp2Pips: 200, tp3Pips: 300,
-    trendTimeframe: 3600, trendEmaLen: 50, trendFilterOn: false,
+    trendTimeframe: 3600, trendEmaLen: 50, trendFilterOn: false, trendFilterSellOn: false,
+    enableBuys: true, enableSells: true,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
   }, o, {
     engines: {
@@ -110,7 +111,20 @@ function defaultCfg(over) {
       e3: engineCfg(Object.assign({ enabled: false, zoneMethod: "5candle", minBodyPct: 0,
                                     invalidate: true, maxZones: 5, maxZoneBars: 39,
                                     preSessionZone: false, preSessMaxBars: 30,
-                                    sizeLookback: 10, sizeMult: 1 }, engines.e3))
+                                    sizeLookback: 10, sizeMult: 1 }, engines.e3)),
+      // Sell side. Off unless a test asks for them, same as engines 2 and 3.
+      e4: engineCfg(Object.assign({ enabled: false, refMethod: "rolling", refLookback: 50,
+                                    minBodyPct: 0, invalidate: true, maxZones: 5,
+                                    requireResweep: false, maxZoneBars: 50,
+                                    preSessMaxBars: 50, sizeLookback: 10, sizeMult: 1 }, engines.e4)),
+      e5: engineCfg(Object.assign({ enabled: false, refLookback: 40, minBodyPct: 5,
+                                    maxZones: 10, requireResweep: false, maxZoneBars: 50,
+                                    preSessMaxBars: 50, sizeLookback: 10, sizeMult: 1 }, engines.e5)),
+      e6: engineCfg(Object.assign({ enabled: false, refMethod: "rolling", refLookback: 25,
+                                    zoneMethod: "5candle", minBodyPct: 0, maxZones: 5,
+                                    requireResweep: false, useZoneMaxAge: false, maxZoneBars: 50,
+                                    preSessionZone: false, preSessMaxBars: 50,
+                                    sizeLookback: 10, sizeMult: 1 }, engines.e6))
     }
   });
 }

@@ -9,3 +9,7 @@ Thumbs.db
 *.docx
 *.doc
 *.pdf
+
+# Pine source. Client IP, and this repo is public — the README says so explicitly.
+*.pine
+GREAT PROFIT SYSTEM*.txt

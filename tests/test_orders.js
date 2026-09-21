@@ -89,7 +89,9 @@ function series() {
   sb.entriesDayKey = sb.nyParts(Date.now()).dayKey;
   sb.entriesToday = 1;                      // cap already reached
   sb.pendingOrder = false;
-  sb.submitBuy(2004, 2001.8, 2006.5, "test entry", false);
+  sb.engines = [];
+  sb.buildEngines();
+  sb.submitOrder(sb.engines[0], 2004, 2001.8, 2006.5, "test entry");
 
   const refused = sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /daily entry cap/.test(l));
   console.log("\n===== 4: REFUSAL REASONS =====");

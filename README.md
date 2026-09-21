@@ -1,18 +1,29 @@
 # GPS SYSTEM AUTO BOT
 
-A BUY-only trading bot that replicates the **GPS SYSTEM INDICATOR ALGO** (TradingView Pine Script v6) signal logic in HTML/JavaScript, built on the **FXBlue Framework** for **Liquid Charts Pro** as an external widget.
+A **bi-directional** trading bot that replicates the **GPS SYSTEM INDICATOR ALGO** (TradingView Pine Script v6) signal logic in HTML/JavaScript, built on the **FXBlue Framework** for **Liquid Charts Pro** as an external widget.
 
-Every BUY the bot fires is intended to match what the indicator produces on the same pair and timeframe.
+Every signal the bot fires is intended to match what the indicator produces on the same pair and timeframe.
 
-The engine tracks the **updated GPS PRO source**, which generalises the original single setup into a configurable pair of choices — where the sweep reference comes from, and what shape the demand zone is. The client runs **three engines at once** off those choices.
+The engine tracks the **updated GPS PRO source**, which generalises the original single setup into a configurable pair of choices — where the sweep reference comes from, and what shape the zone is. The client runs **six engines at once** off those choices: three on the buy side and their exact mirror on the sell side.
 
 ---
 
-## The three engines
+## The six engines
 
-The updated source lets the reference low come from a **closed killzone session** or from a **rolling lowest-low**, and lets the demand zone be a **3-candle FVG gap** or a **5-candle Red-Green-Green-Green-Red base**. Each combination the client trades is one engine, and all three run simultaneously on the same instrument and timeframe.
+The updated source lets the reference low come from a **closed killzone session** or from a **rolling lowest-low**, and lets the demand zone be a **3-candle FVG gap** or a **5-candle Red-Green-Green-Green-Red base**. Each combination the client trades is one engine, and they run simultaneously on the same instrument and timeframe.
 
-They are fully independent: each keeps its own state, its own sweep, its own zone, and places its own trades. **Three engines firing on the same bar is three separate entries**, and one engine resetting never touches another.
+They are fully independent: each keeps its own state, its own sweep, its own zone, and places its own trades. **Engines firing on the same bar are separate entries**, and one engine resetting never touches another.
+
+### Master direction toggles
+
+Two switches sit above every engine, under **Trade Direction**. With a side off, none of its engines is built at all, whatever that engine's own toggle says.
+
+| Toggle | Default | Effect |
+| :--- | :--- | :--- |
+| Enable BUY signals | **ON** | Engines 1–3 run |
+| Enable SELL signals | **OFF** | Engines 4–6 run |
+
+Sells default off so nothing changes for an existing user until they deliberately switch them on and test them. With both on, the bot takes whichever side sets up, and the Market Trend Filter is what stops it fighting the higher timeframe.
 
 | | **Engine 1 — Priority FVG** | **Engine 2 — Add-On FVG** | **Engine 3 — Demand Zone** |
 | :--- | :--- | :--- | :--- |
@@ -44,37 +55,77 @@ Every order carries the engine in its comment (`GPSBOT-E1`), so a fill can alway
 
 Any drift from the table above is called out loudly in the log at Start — silent drift is what makes a bot stop matching its indicator.
 
+### The sell side — engines 4 to 6
+
+Engines 4–6 are the **exact mirror** of 1–3. The state machine is shared, with one `dir` flag flipping every comparison, so the two sides cannot drift apart in maintenance:
+
+| | **Buy** | **Sell** |
+| :--- | :--- | :--- |
+| Reference swept | the **low** (`low < ref`) | the **high** (`high > ref`) |
+| Zone | demand, below price | supply, above price |
+| FVG condition | `low > high[2]` | `high < low[2]` |
+| 5-candle pattern | R-G-G-G-R | G-R-R-R-G |
+| Retest | `low <= zone top` | `high >= zone bottom` |
+| Fires on | `close > zone top` | `close < zone bottom` |
+| Stop anchor | zone swing **low** | zone swing **high** |
+
+| | **Engine 4 — Priority FVG SELL** | **Engine 5 — Add-On FVG SELL** | **Engine 6 — Supply Zone SELL** |
+| :--- | :--- | :--- | :--- |
+| Sell colour | 🔷 Cyan | 🟠 Orange | 🟣 Purple |
+| Reference high | Rolling Lookback | Killzone Session | Rolling Lookback |
+| Zone method | FVG Gap (3-candle) | FVG Gap (3-candle) | 5-Candle (G-R-R-R-G) |
+| Reference lookback | 50 | 40 | 25 |
+| Persist through sessions | ON | ON | ON |
+| Require retest | ON | ON | ON |
+| Min body below zone | 0% | 5% | 0% |
+| Open at/above zone bottom | ON | ON | ON |
+| Invalidate if filled | **ON** | OFF | OFF |
+| Max zones tracked | 5 | 10 | 5 |
+| Require fresh sweep | OFF | OFF | OFF |
+| Max zone age | ON — 50 bars | ON — 50 bars | **OFF** — 50 bars |
+| Pre-session zone | ON — 50 bars | ON — 50 bars | **OFF** — 50 bars |
+| Volume filter | OFF (10, 1) | OFF (10, 1) | OFF (10, 1) |
+| Candle size filter | OFF (10, 1) | OFF (10, 1) | OFF (10, 1) |
+
+```
+🔷 GPS SELL — [Engine 4: Priority FVG SELL | Rolling sweep]
+🟠 GPS SELL — [Engine 5: Add-On FVG SELL | SESSION sweep]
+🟣 GPS SELL — [Engine 6: Supply Zone SELL | Rolling sweep]
+```
+
+> **Where these defaults came from.** The sell defaults above are the client's **own TradingView settings**, read off the screenshots they sent for each engine. They differ from the prose in the upgrade brief in a few places — the brief has engine 4 on a session reference and engine 5 on rolling (the screenshots have them the other way round), and gives engine 6 fresh-sweep ON, max-age 39 and invalidate ON. Every one of these is a UI setting, so either can be dialled in without a code change; the live config was taken as the more current of the two. **Worth confirming with the client before sign-off.**
+
 ### Rolling Lookback
 
 The reference is the lowest low of the last N bars, tracked continuously, so the engine never waits for a killzone to close. It is **frozen the moment a sweep fires** so the target does not slide while the engine waits for its zone, and it resumes trailing once the cycle resets.
 
 A rolling engine also **re-arms itself** after firing: with no session boundary to reset it, the tracking state is cleared on the next bar so it can hunt a fresh setup. Session engines instead hold `fired` until their next session close.
 
-### The 5-candle demand zone
+### The 5-candle zone
 
-After the sweep, the engine watches for Red, Green, Green, Green, Red. The zone is **the first red candle's own high-to-low range** — a tight, single-candle zone rather than a gap. Only the first match after each sweep is taken.
+After the sweep, a buy engine watches for Red, Green, Green, Green, Red; a sell engine watches for Green, Red, Red, Red, Green. The zone is **the first candle's own high-to-low range** — a tight, single-candle zone rather than a gap. Only the first match after each sweep is taken.
 
 ### Zone lifetime
 
-A zone that ages past its cutoff without a breakout **expires**: the zone is dropped and the engine keeps hunting. Whether the sweep survives that (and survives an invalidation) is what *Require fresh sweep before next zone* controls — ON means price must sweep a new low before another zone can be marked.
+A zone that ages past its cutoff without a breakout **expires**: the zone is dropped and the engine keeps hunting. Whether the sweep survives that (and survives an invalidation) is what *Require fresh sweep before next zone* controls — ON means price must sweep a new extreme — a lower low for a buy engine, a higher high for a sell — before another zone can be marked.
 
 ### Dynamic label names
 
-Every zone-related label follows the method the engine is set to. Choose **FVG Gap** and the labels read *FVG*; choose **5-Candle Pattern** and they read *Demand Zone*. Engine 3 is the demand-zone engine and its labels never change.
+Every zone-related label follows the method **and** the direction the engine is set to. Choose **FVG Gap** and the labels read *FVG*; choose **5-Candle Pattern** and a buy engine reads *Demand Zone* while a sell engine reads *Supply Zone*. Sell engines also flip *above*→*below* and *top*→*bottom* throughout, and ask for a **bearish** breakout candle. Engines 3 and 6 are the named-zone engines and their method never changes.
 
 ---
 
 ## Market trend
 
-The GPS BUY is a with-trend setup, so the bot requests a **second candle feed** at H1 (or H4) purely to answer *what market am I in right now*. The Signal State panel shows **UPTREND ▲ / DOWNTREND ▼ / RANGING ◆**, derived from price against an EMA **and** that EMA's own slope — a market that has merely popped above a still-falling average is not called an uptrend, and the slope has to clear 2 basis points so noise around a flat average does not read as direction.
+The GPS setup is a with-trend one, so the bot requests a **second candle feed** at H1 (or H4) purely to answer *what market am I in right now*. The Signal State panel shows **UPTREND ▲ / DOWNTREND ▼ / RANGING ◆**, derived from price against an EMA **and** that EMA's own slope — a market that has merely popped above a still-falling average is not called an uptrend, and the slope has to clear 2 basis points so noise around a flat average does not read as direction.
 
-It is **information by default**. Turning on *Only take BUYs in an uptrend* makes it a hard gate: the signal is still logged and exported, but the order is refused and the log says the filter is why.
+It is **information by default**. *Only take BUYs in an uptrend* and *Only take SELLs in a downtrend* each turn it into a hard gate for that side. The two are independent on purpose — you can filter buys while leaving sells free, or the reverse. A gated signal is still logged and exported; what the gate stops is the **order**.
 
 ---
 
 ## TP / SL — pip distances
 
-The swing-high TP system is gone. Stops and targets are now **pip distances from the entry price**, shared by all three engines:
+The swing-high TP system is gone. Stops and targets are now **pip distances from the entry price**, shared by all six engines:
 
 | Setting | Default |
 | :--- | :--- |
@@ -83,7 +134,7 @@ The swing-high TP system is gone. Stops and targets are now **pip distances from
 | Take profit 2 | 200 pips |
 | Take profit 3 | 300 pips |
 
-0 switches a level off. One order goes out per signal carrying **TP1**; TP2 and TP3 are logged and exported with the signal as the levels to scale out at — the bot never splits one signal into three orders.
+A buy stops below its entry and targets above it; a sell is the mirror. 0 switches a level off. One order goes out per signal carrying **TP1**; TP2 and TP3 are logged and exported with the signal as the levels to scale out at — the bot never splits one signal into three orders.
 
 Because the levels are pips, they can ride on the **opening request**, which is the one form this platform is proven to accept (it is exactly what the manual test trade sends). That is now the default. *After open* remains available for brokers that refuse them on the open: the order goes out plain and the levels are attached from the fill price immediately afterwards.
 
@@ -115,7 +166,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (183 assertions). |
+| `tests/` | Automated test suite (230 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -245,7 +296,7 @@ All four are editable, to match whatever is set on the client's chart.
 
 ### TP / SL
 
-Pip distances, shared by all three engines — see [TP / SL — pip distances](#tp--sl--pip-distances) above.
+Pip distances, shared by all six engines — see [TP / SL — pip distances](#tp--sl--pip-distances) above.
 
 ---
 
@@ -272,6 +323,19 @@ SESSION CLOSE → SWEEP DETECTED → FIRST FVG FOUND → FVG RETEST → BUY SIGN
 ## Trade management
 
 Beyond producing signals, the bot manages the trades it opens.
+
+### Direction and trade management
+
+Every management feature works on both sides, reversed:
+
+| | **Buy (long)** | **Sell (short)** |
+| :--- | :--- | :--- |
+| In profit when | price rises | price falls |
+| Breakeven stop | entry **+** buffer | entry **−** buffer |
+| Trailing stop | price **−** lock distance | price **+** lock distance |
+| "Only ever tighten" means | the stop may only **rise** | the stop may only **fall** |
+
+The buffer always lands on the profitable side of the entry, so breakeven is a small win rather than a small loss once the spread is paid. The circuit breaker and the performance tiles count both directions together.
 
 ### Auto Trailing
 
@@ -363,13 +427,14 @@ test_pine_parity   19 pass   0 fail
 test_orders        17 pass   0 fail
 test_management    32 pass   0 fail
 test_trend         17 pass   0 fail
+test_sell          47 pass   0 fail
 ----------------------------------------
-TOTAL: 183 pass, 0 fail
+TOTAL: 230 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-Coverage includes: the full signal sequence with each milestone on its own bar; all three engines running independently on one series and firing three separate entries; the Rolling Lookback reference and its self re-arm; the 5-candle demand zone and how it differs from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read and the optional trend gate; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
+Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read and the independent buy and sell trend gates; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
 
 **Not yet tested against live market data.**
 

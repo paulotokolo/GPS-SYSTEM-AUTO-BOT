@@ -109,7 +109,7 @@ function fvgSequence() {
   check("5: the BUY is still logged", sb.__logLines.some((l) => l.includes("GPS BUY —")));
   check("5: but no order was sent", sb.__orders.length === 0);
   check("5: and the log says the filter is why",
-    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /Trend filter/.test(l)));
+    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /trend filter/i.test(l)));
 }
 
 {
