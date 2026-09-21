@@ -2,3 +2,10 @@ node_modules/
 *.log
 .DS_Store
 Thumbs.db
+
+# Client working documents (spec sheets, build checklists, settings screenshots).
+# This repo is public and these are the client's, same reasoning that keeps the Pine
+# source out of it. Drop them in the folder to work from; they stay local.
+*.docx
+*.doc
+*.pdf
