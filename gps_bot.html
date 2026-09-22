@@ -528,6 +528,26 @@ button:active { transform: scale(0.98); }
     <div class="row"><label>Confirm each order</label><input type="checkbox" id="confirmOrders"></div>
   </fieldset>
 
+  <!-- ---------------- Trade continuity ---------------- -->
+  <fieldset>
+    <legend>Trade Continuity</legend>
+    <small class="hint">
+      If Liquid Charts Pro drops its broker connection, the app has to be refreshed and the bot
+      stops &mdash; but the trade is still live on the broker. On Start, and every 15 seconds
+      after that, the bot asks the broker what is actually open on this instrument and takes
+      any of it back under management: trailing, breakeven and circuit-breaker cover resume
+      straight away.
+    </small>
+    <div class="row"><label>Pick up existing trades</label><input type="checkbox" id="adoptExisting" checked></div>
+    <div class="row"><label>Only ones this bot placed</label><input type="checkbox" id="adoptOnlyTagged"></div>
+    <small class="hint">
+      Every order the bot sends is tagged (<code>GPSBOT-E4</code>), so it can tell its own
+      trades from one you opened by hand. <b>OFF</b> (default) adopts anything open on this
+      instrument, which is what you want for hands-free running. Turn it <b>ON</b> if you also
+      trade this symbol manually and do not want the bot moving your own stops.
+    </small>
+  </fieldset>
+
   <!-- ---------------- Master direction toggles ---------------- -->
   <fieldset id="directionFs">
     <legend>Trade Direction</legend>
@@ -633,6 +653,10 @@ button:active { transform: scale(0.98); }
       <div class="row"><label>Daily stop loss ($)</label><input type="number" id="dailyMaxLoss" value="0" step="1" min="0"></div>
       <small class="hint">0 = that limit is off.</small>
       <div class="row"><label>Close open trades when it trips</label><input type="checkbox" id="closeOnCircuitBreak"></div>
+      <small class="hint">
+        A breaker that trips is remembered for the rest of the EST day, so refreshing the app
+        does not quietly re-arm it. Any close it had queued is retried after the restart.
+      </small>
       <small class="hint">
         ON also flattens open bot trades when the breaker fires. A close that gets rejected is
         retried with a backoff until it genuinely succeeds, rather than being logged once and
@@ -2322,6 +2346,10 @@ var forceCloseQueue = {};                  // orderId -> { attempts, nextRetryAt
 var FORCE_CLOSE_MIN_INTERVAL_MS = 4000;
 
 function attemptForceCloses() {
+  // Same rule as trailing: a close is an order, so Dry Run does not send one. The queue is
+  // left intact rather than cleared, so switching to Live and restarting still flattens.
+  if (cfg && cfg.tradingMode !== "live") return;
+
   var now = Date.now();
   Object.keys(forceCloseQueue).forEach(function (orderId) {
     var entry = forceCloseQueue[orderId];
@@ -2376,6 +2404,7 @@ function checkDailyCircuitBreaker() {
   if (dk !== dailyBreakerDayKey) {          // new EST day — re-arm automatically
     dailyBreakerDayKey = dk;
     circuitBreakerTripped = false;
+    persistBreakerState();
   }
 
   var dailyPL = computeBotDailyPL();
@@ -2386,8 +2415,27 @@ function checkDailyCircuitBreaker() {
   }
 }
 
+// The breaker has to outlive a page refresh, or "stop trading for the rest of the day"
+// becomes "stop trading until someone reloads the app". It is written into the same saved
+// settings blob the widget already persists, stamped with the EST day it belongs to, so it
+// lapses by itself at the next day boundary.
+var restoredBreaker = { dayKey: null, tripped: false };
+
+function persistBreakerState() {
+  try {
+    var blob = readConfig();
+    blob.breakerDayKey  = dailyBreakerDayKey;
+    blob.breakerTripped = circuitBreakerTripped;
+    Framework.SaveCategorySettings(blob);
+  } catch (e) {
+    log("Could not save the circuit-breaker state (" + e.message + "). If the app is refreshed " +
+        "the breaker will not be remembered.", "log-warn");
+  }
+}
+
 function tripCircuitBreaker(reasonText) {
   circuitBreakerTripped = true;
+  persistBreakerState();
   isRunning = false;
   stopUiTicker();
   setInputsDisabled(false);
@@ -2413,8 +2461,22 @@ function tripCircuitBreaker(reasonText) {
 var warnedZeroTrailAfter = false;
 var warnedZeroLockDistance = false;
 
+var warnedDryRunManage = false;
 function manageOpenTrades() {
   if (!cfg || !cfg.autoTrailingOn) return;
+
+  // Dry Run never sends an order of any kind, and a stop modification is an order. This
+  // matters now that the bot adopts trades it did not place: without this guard, starting
+  // in Dry Run with a real position open would quietly start moving a real stop.
+  if (cfg.tradingMode !== "live") {
+    if (!warnedDryRunManage && Object.keys(managedOrders).length > 0) {
+      warnedDryRunManage = true;
+      log("Dry Run: " + Object.keys(managedOrders).length + " open trade(s) are being tracked " +
+          "and shown in the panel, but no stop will be moved. Switch to Live Trading for the " +
+          "bot to manage them.", "log-warn");
+    }
+    return;
+  }
 
   if (!cfg.trailAfterProfitDollars || cfg.trailAfterProfitDollars <= 0) {
     if (!warnedZeroTrailAfter) {
@@ -2606,6 +2668,215 @@ function isBotInstrument(id) {
   if (!cfg || !id) return false;
   return id === cfg.instrumentId || id === cfg.canonicalInstrumentId;
 }
+
+// =====================================================================================
+//  TRADE RE-ADOPTION
+//
+//  Liquid Charts Pro can throw "rejected by broker" on a connection glitch while the trade
+//  is actually live on the broker's side. Refreshing the app to reconnect wipes the widget,
+//  so the bot came back with an empty managedOrders and simply stopped managing a position
+//  that was still open — no trailing, no breakeven, no breaker cover on it.
+//
+//  So the bot no longer assumes it placed everything it manages. On Start, and on a repeating
+//  sweep after that, it asks the broker what is actually open on its instrument and adopts
+//  anything it is not already tracking. Adoption is idempotent: a trade already in
+//  managedOrders is left exactly as it is, so a sweep can run as often as it likes.
+// =====================================================================================
+
+// Framework.Orders is a collection, not an array, and the exact surface is not documented
+// in anything shipped with the widget. forEach is what the platform exposes today; the other
+// shapes are cheap insurance so a platform update degrades to "still works" instead of
+// "silently manages nothing". If none of them work the bot says so loudly once, because a
+// silent failure here is the whole bug being fixed.
+var warnedNoOrderEnum = false;
+function enumerateOrders() {
+  var out = [];
+  var src = Framework.Orders;
+  if (!src) return out;
+
+  try {
+    if (typeof src.forEach === "function") {
+      src.forEach(function (o) { if (o) out.push(o); });
+      return out;
+    }
+    if (typeof src.getAll === "function") {
+      var all = src.getAll() || [];
+      for (var i = 0; i < all.length; i++) if (all[i]) out.push(all[i]);
+      return out;
+    }
+    if (typeof src.length === "number") {
+      for (var j = 0; j < src.length; j++) if (src[j]) out.push(src[j]);
+      return out;
+    }
+    // A plain id -> order map.
+    var keys = Object.keys(src);
+    for (var k = 0; k < keys.length; k++) {
+      var v = src[keys[k]];
+      if (v && typeof v === "object" && v.orderId) out.push(v);
+    }
+  } catch (e) {
+    if (!warnedNoOrderEnum) {
+      warnedNoOrderEnum = true;
+      log("Could not read the broker's open order list (" + e.message + "). Trades opened " +
+          "before this session cannot be picked up automatically — tell the developer, this " +
+          "needs the platform's actual Orders API.", "log-err");
+    }
+  }
+  return out;
+}
+
+// An open position on this bot's instrument, either direction. Pending order types and
+// anything already closed are not positions to manage.
+function isAdoptablePosition(o) {
+  if (!o || !o.orderId) return false;
+  if (o.closeTime) return false;
+  if (!isBotInstrument(o.instrumentId)) return false;
+  return o.orderType === FXB.OrderTypes.BUY || o.orderType === FXB.OrderTypes.SELL;
+}
+
+// Trades this bot placed carry their engine in the comment (GPSBOT-E4). That is how an
+// adopted trade can be told apart from one the trader opened by hand on the same symbol.
+function isBotTagged(o) {
+  return !!(o && typeof o.comment === "string" && o.comment.indexOf(BOT_TAG) === 0);
+}
+
+// Scans the broker and adopts anything open on this instrument that is not already managed.
+// Returns the number adopted. `reason` is what the log says triggered the scan.
+function adoptOpenTrades(reason) {
+  if (!cfg || !cfg.adoptExisting) return 0;
+
+  var found = enumerateOrders().filter(isAdoptablePosition);
+  var adopted = 0;
+
+  for (var i = 0; i < found.length; i++) {
+    var o = found[i];
+    if (managedOrders[o.orderId]) continue;              // already ours — leave it alone
+
+    if (cfg.adoptOnlyTagged && !isBotTagged(o)) {
+      log("Skipped order " + o.orderId + " — it is open on " + o.instrumentId + " but was not " +
+          "placed by this bot, and 'Only adopt trades this bot placed' is ON.", "log-info");
+      continue;
+    }
+
+    var sellTrade = o.orderType === FXB.OrderTypes.SELL;
+    managedOrders[o.orderId] = {
+      entryPrice: o.openPrice,
+      dir: sellTrade ? "sell" : "buy",
+      lots: (o.volume && typeof o.volume.lots === "number") ? o.volume.lots : null,
+      // The bot did not place this one, so it has no queued levels to repair against.
+      slPrice: o.sl || null,
+      tpPrice: o.tp || null,
+      // Breakeven starts unmarked on purpose. The management pass re-derives it from the
+      // trade's real state on its very next tick: if the stop is already at or beyond
+      // breakeven it marks it done without touching anything, and if the trade is already
+      // past the trigger it moves the stop straight away. That is what "picks up where it
+      // left off" means — the flag is re-earned from the position, not guessed.
+      breakevenApplied: false,
+      dollarPerPriceUnit: null,
+      mgmtRetryAt: 0,
+      adopted: true
+    };
+    adopted++;
+
+    var pl = (typeof o.profit === "number") ? o.profit : null;
+    log("🔄 RE-ADOPTED — " + (o.instrumentId || cfg.instrumentId) + " open trade detected",
+        "log-buy", {
+      detail: [
+        "Side        " + (sellTrade ? "SELL" : "BUY") +
+          (o.volume && o.volume.lots ? "  " + o.volume.lots + " lots" : ""),
+        "Entry       " + fmt(o.openPrice),
+        "Current P/L " + (pl === null ? "n/a" : (pl >= 0 ? "+" : "") + pl.toFixed(2)),
+        "Stop        " + (o.sl ? fmt(o.sl) : "NONE ATTACHED"),
+        "Target      " + (o.tp ? fmt(o.tp) : "none"),
+        "Picked up   " + reason,
+        (isBotTagged(o) ? "Originally placed by this bot (" + o.comment + ")"
+                        : "Not tagged by this bot — adopted on instrument match"),
+        "Trailing and breakeven management resumed"
+      ].join("\n")
+    });
+
+    if (!o.sl) {
+      log("⚠️ Adopted order " + o.orderId + " has NO stop-loss attached. The bot will trail and " +
+          "move it to breakeven once it is in profit, but until then that trade is uncapped. " +
+          "It will not invent a stop for a trade it did not place — set one manually if you " +
+          "want cover right now.", "log-warn");
+    }
+    beep();
+  }
+
+  if (adopted > 0) {
+    refreshStatsDisplay();
+    // Management normally runs off the account-metrics tick. Running it here means an adopted
+    // trade that is already past its breakeven or trail trigger is handled on this pass rather
+    // than waiting for the next price move, which is what "immediately" has to mean when a
+    // reconnect lands on a quiet market.
+    if (cfg.tradingMode === "live" && cfg.autoTrailingOn) {
+      try { manageOpenTrades(); } catch (e) {}
+    } else if (cfg.tradingMode !== "live") {
+      log("Dry Run: the adopted trade is tracked and shown in the panel, but no stop will be " +
+          "moved — Dry Run never sends an order of any kind. Switch to Live Trading for the " +
+          "bot to actually manage it.", "log-warn");
+    }
+  }
+  return adopted;
+}
+
+// ---- Reconnection cover -------------------------------------------------------------
+//
+// The platform gives no event this widget can rely on for "the broker connection came back",
+// so the bot does not wait for one. It re-scans on a slow repeating sweep instead, which
+// covers a reconnect, a missed OnOrderOpen, and a trade opened from another window, all with
+// one mechanism and no dependency on an API that might not exist.
+//
+// Where the framework DOES expose a connection event, it is hooked below as well, so
+// recovery is instant rather than up to one sweep late.
+var ADOPT_SWEEP_MS = 15000;
+var adoptSweepTimer = null;
+
+function startAdoptSweep() {
+  stopAdoptSweep();
+  adoptSweepTimer = setInterval(function () {
+    if (!isRunning || !cfg) return;
+    try { adoptOpenTrades("periodic reconnection sweep"); } catch (e) {}
+  }, ADOPT_SWEEP_MS);
+}
+function stopAdoptSweep() {
+  if (adoptSweepTimer) { clearInterval(adoptSweepTimer); adoptSweepTimer = null; }
+}
+
+// Hook whichever connection callback this build of the framework happens to provide. Each is
+// wrapped so it cannot break an existing handler, and none of them is required for the sweep
+// above to do its job.
+["OnConnectionChange", "OnConnectionStatus", "OnReconnect", "OnConnect"].forEach(function (name) {
+  var prior = Framework[name];
+  Framework[name] = function () {
+    try { if (typeof prior === "function") prior.apply(Framework, arguments); } catch (e) {}
+    if (!isRunning || !cfg) return;
+    log("Broker connection event (" + name + ") — re-checking open trades.", "log-info");
+    try { adoptOpenTrades("connection restored"); } catch (e) {}
+    try { rebuildForceCloseQueue(); } catch (e) {}
+  };
+});
+
+// If the breaker had already tripped and closes were queued when the app went down, those
+// closes must not be forgotten just because the widget was reloaded. Any managed trade still
+// open while the breaker is tripped goes back on the queue and the attempt continues.
+function rebuildForceCloseQueue() {
+  if (!cfg || !circuitBreakerTripped || !cfg.closeOnCircuitBreak) return 0;
+  var queued = 0;
+  Object.keys(managedOrders).forEach(function (orderId) {
+    if (forceCloseQueue[orderId]) return;
+    forceCloseQueue[orderId] = { attempts: 0 };
+    queued++;
+  });
+  if (queued > 0) {
+    log("Circuit breaker is tripped and " + queued + " adopted trade(s) are still open — " +
+        "re-queued for closing.", "log-warn");
+    attemptForceCloses();
+  }
+  return queued;
+}
+
 
 Framework.OnOrderOpen = function (newOrder) {
   if (!isRunning || !newOrder || !isBotInstrument(newOrder.instrumentId)) return;
@@ -3069,7 +3340,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "attachSl","attachTp","attachMode","testLots","testSlPips",
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "trendTimeframe","trendEmaLen","trendFilterOn","trendFilterSellOn",
-  "enableBuys","enableSells",
+  "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "maxEntriesPerDay","replayBars"]
   // ...plus every per-engine field, which are generated rather than listed by hand.
   .concat((function () {
@@ -3161,6 +3432,9 @@ function readConfig() {
 
     // Master direction gates. These sit above the per-engine toggles: with a side off,
     // none of its engines is built at all, whatever their own toggles say.
+    adoptExisting:  chk("adoptExisting"),
+    adoptOnlyTagged: chk("adoptOnlyTagged"),
+
     enableBuys:  chk("enableBuys"),
     enableSells: chk("enableSells"),
 
@@ -3402,6 +3676,8 @@ function startBot() {
   warnedZeroTrailAfter = false;
   warnedZeroLockDistance = false;
   warnedNoVolume = false;
+  warnedDryRunManage = false;
+  warnedNoOrderEnum = false;
   replaying = false;
   setPendingOrder(false);
   liveSweepAlertTs = {};
@@ -3427,6 +3703,7 @@ function startBot() {
   setInputsDisabled(true);
   setStatus(true);
   startUiTicker();
+  startAdoptSweep();
   var sides = [];
   if (cfg.enableBuys)  sides.push("BUYS");
   if (cfg.enableSells) sides.push("SELLS");
@@ -3444,6 +3721,31 @@ function startBot() {
         "/" + cfg.tp3Pips + "p"
     ].join("\n")
   });
+
+  // ---- Pick up anything the broker already has open on this instrument ----
+  //
+  // This runs before the candle replay on purpose. A trade that survived an app refresh is
+  // live money sitting unmanaged right now, and it should not wait on a few thousand bars of
+  // history to be adopted. The scan is repeated on the sweep, so a broker that is still
+  // reconnecting at this moment is picked up shortly afterwards rather than missed.
+  var adoptedNow = adoptOpenTrades("bot start");
+  if (adoptedNow === 0 && cfg.adoptExisting) {
+    log("No open trades on " + cfg.instrumentId + " to pick up. Watching for any that appear.",
+        "log-info");
+  }
+
+  // A breaker that tripped earlier today is still in force after a refresh. Re-tripping here
+  // stops the bot again and puts any adopted trade back on the close queue, so a flatten that
+  // was interrupted by the app going down actually finishes.
+  if (restoredBreaker.tripped && restoredBreaker.dayKey === dailyBreakerDayKey) {
+    log("The daily circuit breaker had already tripped today, before the restart.", "log-warn");
+    tripCircuitBreaker("carried over from before the restart");
+    log("It clears by itself at the next EST day. To trade again today, set the daily profit " +
+        "target and daily stop loss to 0 and press Start.", "log-info");
+    Framework.SaveCategorySettings(cfg);
+    return;
+  }
+  rebuildForceCloseQueue();
 
   // Candles arrive asynchronously; replay once there's actually history to replay.
   var tries = 0;
@@ -3468,9 +3770,11 @@ function stopBot() {
   isRunning = false;
   replaying = false;
   stopUiTicker();
+  stopAdoptSweep();
   setInputsDisabled(false);
   setStatus(false);
-  log("Stopped. Open trades are NOT closed automatically — manage them manually.", "log-warn");
+  log("Stopped. Open trades are NOT closed automatically, and the bot is no longer trailing " +
+      "them — manage them manually, or press Start to pick them back up.", "log-warn");
 }
 
 // =====================================================================================
@@ -3487,6 +3791,9 @@ Framework.OnLoad = function () {
     if (!settings.instrumentId && Framework.Account && Framework.Account.defaultInstrumentId) {
       settings.instrumentId = Framework.Account.defaultInstrumentId;
     }
+    // Remembered from before a refresh; startBot decides whether it still applies today.
+    restoredBreaker.dayKey  = settings.breakerDayKey || null;
+    restoredBreaker.tripped = !!settings.breakerTripped;
     applyConfigToUI(settings);
     setStatus(false);
     refreshStatsDisplay();

@@ -166,7 +166,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (230 assertions). |
+| `tests/` | Automated test suite (271 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -324,6 +324,42 @@ SESSION CLOSE → SWEEP DETECTED → FIRST FVG FOUND → FVG RETEST → BUY SIGN
 
 Beyond producing signals, the bot manages the trades it opens.
 
+### Trade continuity across a reconnect
+
+Liquid Charts Pro can throw a **rejected by broker** error on a connection glitch while the trade is actually live on the broker. Refreshing the app to reconnect wipes the widget, and the bot used to come back with an empty managed-orders list — so a position that was still open got no trailing, no breakeven and no circuit-breaker cover.
+
+The bot no longer assumes it placed everything it manages. It asks the broker what is actually open:
+
+- **On Start**, before the candle replay. A trade that survived a refresh is live money sitting unmanaged right now; it should not wait on a few thousand bars of history.
+- **Every 15 seconds** after that. This is deliberately a sweep rather than a connection event — the platform exposes no reconnect callback this widget can rely on, and one sweep covers a reconnect, a missed `OnOrderOpen`, and a trade opened from another window with no dependency on an API that might not exist. Where the framework *does* expose a connection callback it is hooked as well, so recovery is instant rather than up to one sweep late.
+
+Adoption is **idempotent** — a trade already tracked is left exactly as it is, so the sweep can run as often as it likes.
+
+```
+🔄 RE-ADOPTED — XAU/USD open trade detected
+     Side        SELL  0.10 lots
+     Entry       2004.00
+     Current P/L +42.50
+     Stop        2014.00
+     Trailing and breakeven management resumed
+```
+
+**Breakeven state is re-earned, not guessed.** An adopted trade starts with `breakevenApplied` unset, and the next management pass derives it from the position itself: if the stop is already at or beyond breakeven it is marked done without touching anything; if the trade is already past the trigger the stop moves straight away. Management runs once on the adoption pass itself, so a reconnect that lands on a quiet market does not wait for the next price tick.
+
+| Setting | Default | |
+| :--- | :--- | :--- |
+| Pick up existing trades | **ON** | Master switch for the whole feature |
+| Only ones this bot placed | **OFF** | Every order is tagged (`GPSBOT-E4`), so the bot can tell its own trades from a manual one. OFF adopts anything open on the instrument, which is what hands-free running needs. ON if you also trade the symbol by hand. |
+
+Two deliberate refusals:
+
+- An adopted trade **with no stop** is flagged loudly, but the bot will **not invent one** — it does not know what that trade was meant to risk. Trailing and breakeven still take over once it is in profit.
+- **Dry Run sends nothing**, including stop modifications. Adopted trades are tracked and shown in the panel, and the log says plainly that nothing will be moved. A stop modification is an order, and Dry Run's contract is that it never sends one.
+
+### The circuit breaker survives a refresh
+
+A tripped breaker is written to the saved settings stamped with the EST day it belongs to, so *stop trading for the rest of the day* no longer means *stop trading until someone reloads the app*. On Start the bot re-trips if the stored day is still today, puts any adopted trade back on the close queue, and continues a flatten that the app going down had interrupted. It lapses by itself at the next EST day.
+
 ### Direction and trade management
 
 Every management feature works on both sides, reversed:
@@ -428,8 +464,9 @@ test_orders        17 pass   0 fail
 test_management    32 pass   0 fail
 test_trend         17 pass   0 fail
 test_sell          47 pass   0 fail
+test_adopt         41 pass   0 fail
 ----------------------------------------
-TOTAL: 230 pass, 0 fail
+TOTAL: 271 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

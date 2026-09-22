@@ -101,6 +101,7 @@ function defaultCfg(over) {
     slPips: 100, tp1Pips: 100, tp2Pips: 200, tp3Pips: 300,
     trendTimeframe: 3600, trendEmaLen: 50, trendFilterOn: false, trendFilterSellOn: false,
     enableBuys: true, enableSells: true,
+    adoptExisting: true, adoptOnlyTagged: false,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
   }, o, {
     engines: {
