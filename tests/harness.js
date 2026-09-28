@@ -102,6 +102,8 @@ function defaultCfg(over) {
     trendTimeframe: 3600, trendEmaLen: 50, trendFilterOn: false, trendFilterSellOn: false,
     enableBuys: true, enableSells: true,
     adoptExisting: true, adoptOnlyTagged: false,
+    sessionWindowOn: false, sessionWindowStart: "08:00", sessionWindowStop: "11:00",
+    sessionWindowTz: "America/New_York", sessionWindowFlatten: false,
     maxEntriesPerDay: 0, replayBars: 1500, verboseReplay: true
   }, o, {
     engines: {

@@ -166,7 +166,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (271 assertions). |
+| `tests/` | Automated test suite (304 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -324,6 +324,32 @@ SESSION CLOSE → SWEEP DETECTED → FIRST FVG FOUND → FVG RETEST → BUY SIGN
 
 Beyond producing signals, the bot manages the trades it opens.
 
+## Trading session window
+
+A plain clock gate on **new** orders, sitting on top of everything else. Default **OFF**, in which case the bot trades any time exactly as before.
+
+| Setting | Default |
+| :--- | :--- |
+| Enable session window | **OFF** |
+| Start trading at | 08:00 AM |
+| Stop trading at | 11:00 AM |
+| Your timezone | Eastern / Central / Mountain / Pacific |
+| Flatten open trades at window end | **OFF** |
+
+It changes **none** of the GPS logic. Every engine still tracks its sessions, locks its references, detects its sweeps and logs its signals. A signal blocked by the window is still written to the log and the CSV — what the window stops is the **order**.
+
+Management is untouched too. Anything already open keeps being trailed, moved to breakeven and covered by the daily circuit breaker, because a trade that is running still needs its stop moved whatever the clock says. *Flatten at window end* is the opt-in that closes the book instead.
+
+Three details worth knowing:
+
+- **It is not the same thing as the killzone Session Windows** further down the panel. Those decide where a reference level comes from and are part of the strategy. This decides when an order is allowed out, and is not.
+- **A window whose end is before its start runs overnight** — 10:00 PM to 2:00 AM is read as one window crossing midnight, not an empty one.
+- **A window it cannot read fails open.** Unparseable times or an unknown timezone mean the window is ignored and trading continues, with a warning. The alternative — failing closed — would silently block every trade for a day.
+
+The edge is checked on a one-second clock rather than on price, so a window that closes into a dead market still closes, and still flattens if asked.
+
+---
+
 ### Trade continuity across a reconnect
 
 Liquid Charts Pro can throw a **rejected by broker** error on a connection glitch while the trade is actually live on the broker. Refreshing the app to reconnect wipes the widget, and the bot used to come back with an empty managed-orders list — so a position that was still open got no trailing, no breakeven and no circuit-breaker cover.
@@ -465,8 +491,9 @@ test_management    32 pass   0 fail
 test_trend         17 pass   0 fail
 test_sell          47 pass   0 fail
 test_adopt         41 pass   0 fail
+test_window        33 pass   0 fail
 ----------------------------------------
-TOTAL: 271 pass, 0 fail
+TOTAL: 304 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

@@ -566,6 +566,44 @@ button:active { transform: scale(0.98); }
     </small>
   </fieldset>
 
+  <!-- ---------------- Trading session window ---------------- -->
+  <fieldset>
+    <legend>Trading Session Window</legend>
+    <small class="hint">
+      Only let the bot open <b>new</b> trades during a specific window each day (e.g. London
+      session only). Pick your own timezone below; times are entered as regular AM/PM.
+      When <b>OFF</b>, the bot trades any time, exactly as it does today.
+      When <b>ON</b> and outside the window, the bot simply will not open new trades &mdash; it
+      still manages, trails and protects anything already open, unless you turn on
+      <i>Flatten open trades at window end</i>.
+    </small>
+    <div class="row"><label>Enable session window</label><input type="checkbox" id="sessWindowOn"></div>
+    <div class="row"><label>Start trading at</label><input type="time" id="sessWindowStart" value="08:00"></div>
+    <div class="row"><label>Stop trading at</label><input type="time" id="sessWindowStop" value="11:00"></div>
+    <div class="row"><label>Your timezone</label>
+      <select id="sessWindowTz">
+        <option value="America/New_York" selected>Eastern Time</option>
+        <option value="America/Chicago">Central Time</option>
+        <option value="America/Denver">Mountain Time</option>
+        <option value="America/Los_Angeles">Pacific Time</option>
+      </select>
+    </div>
+    <div class="row"><label>Flatten open trades at window end</label><input type="checkbox" id="sessWindowFlatten"></div>
+    <small class="hint">
+      Leave <i>Flatten at window end</i> <b>OFF</b> and a trade that is still open when the
+      window closes is left to run on its own stop and target, with trailing, breakeven and the
+      daily circuit breaker all still working &mdash; the window only controls when <b>new</b>
+      trades can start. Turn it <b>ON</b> if you want the book flat at the end of every session.
+    </small>
+    <small class="hint">
+      This sits <b>on top of</b> the GPS logic and changes none of it. Every engine still tracks
+      its sessions, locks its references, detects its sweeps and logs its signals exactly as
+      before. A signal blocked by the window is still written to the log and the CSV &mdash;
+      what the window stops is the <b>order</b>. A window that ends before it starts
+      (e.g. 10:00 PM to 2:00 AM) is treated as running overnight.
+    </small>
+  </fieldset>
+
   <!-- ---------------- Account size ---------------- -->
   <fieldset>
     <legend>Account Size</legend>
@@ -1415,6 +1453,167 @@ function sessionAt(mins) {
 }
 
 // =====================================================================================
+//  TRADING SESSION WINDOW
+//
+//  A plain clock gate on top of everything else: outside the window the bot opens no NEW
+//  trades. It deliberately touches nothing about the GPS logic — every engine still tracks
+//  its sessions, locks its references, detects its sweeps and logs its signals. Management
+//  of anything already open carries on as well, because a trade that is running still needs
+//  its stop moved whatever the clock says.
+//
+//  Separate from the killzone Session Windows further down the panel. Those decide where a
+//  reference level comes from and are part of the strategy. This decides when an order is
+//  allowed out, and is not.
+// =====================================================================================
+
+var TZ_LABELS = {
+  "America/New_York":    "Eastern Time",
+  "America/Chicago":     "Central Time",
+  "America/Denver":      "Mountain Time",
+  "America/Los_Angeles": "Pacific Time"
+};
+
+// One formatter per zone, built once — formatToParts is not cheap enough to redo every tick.
+var tzFmtCache = {};
+function tzMinutes(ts, zone) {
+  var f = tzFmtCache[zone];
+  if (!f) {
+    try {
+      f = tzFmtCache[zone] = new Intl.DateTimeFormat("en-US", {
+        timeZone: zone, hour12: false, hour: "2-digit", minute: "2-digit"
+      });
+    } catch (e) {
+      return null;                                  // unknown zone — caller falls back
+    }
+  }
+  var parts = f.formatToParts(new Date(ts));
+  var h = null, m = null;
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i].type === "hour")   h = parseInt(parts[i].value, 10);
+    if (parts[i].type === "minute") m = parseInt(parts[i].value, 10);
+  }
+  if (h === null || m === null) return null;
+  if (h === 24) h = 0;                              // some engines render midnight as 24
+  return h * 60 + m;
+}
+
+// "HH:MM" from an <input type="time"> — always 24h in the value, whatever the field shows.
+function parseClock(v) {
+  var m = /^\s*(\d{1,2}):(\d{2})\s*$/.exec(v || "");
+  if (!m) return null;
+  var h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+  if (h > 23 || mi > 59) return null;
+  return h * 60 + mi;
+}
+
+// 14:05 -> "2:05 PM", to match how the times are entered rather than how they are stored.
+function clockLabel(mins) {
+  if (mins === null || mins === undefined) return "—";
+  var h = Math.floor(mins / 60), m = mins % 60;
+  var ap = h >= 12 ? "PM" : "AM";
+  var h12 = h % 12; if (h12 === 0) h12 = 12;
+  return h12 + ":" + ("0" + m).slice(-2) + " " + ap;
+}
+
+// A window whose end is before its start runs overnight, which is the only sane reading of
+// e.g. 10:00 PM to 2:00 AM.
+function insideWindow(nowMins, start, stop) {
+  if (start === stop) return true;                  // zero length reads as "no restriction"
+  if (start < stop)   return nowMins >= start && nowMins < stop;
+  return nowMins >= start || nowMins < stop;
+}
+
+// { on, inside, start, stop, zone, nowMins, valid }. `on` false means the feature is off and
+// nothing anywhere should consult `inside`.
+function tradingWindowState(ts) {
+  var st = { on: false, inside: true, start: null, stop: null, zone: null, nowMins: null, valid: true };
+  if (!cfg || !cfg.sessionWindowOn) return st;
+
+  st.on    = true;
+  st.zone  = cfg.sessionWindowTz;
+  st.start = parseClock(cfg.sessionWindowStart);
+  st.stop  = parseClock(cfg.sessionWindowStop);
+  st.nowMins = tzMinutes(ts || Date.now(), st.zone);
+
+  // A window the bot cannot read must not silently block every trade for the rest of the day.
+  if (st.start === null || st.stop === null || st.nowMins === null) {
+    st.valid  = false;
+    st.inside = true;
+    return st;
+  }
+  st.inside = insideWindow(st.nowMins, st.start, st.stop);
+  return st;
+}
+
+function windowLabel() {
+  var st = tradingWindowState();
+  if (!st.on) return "off";
+  if (!st.valid) return "misconfigured";
+  return clockLabel(st.start) + " – " + clockLabel(st.stop) + " " +
+         (TZ_LABELS[st.zone] || st.zone);
+}
+
+// Watches for the moment the window opens or closes, so "flatten at window end" fires once
+// on the edge rather than every second while the window happens to be shut.
+var wasInsideWindow = null;
+var warnedBadWindow = false;
+
+function checkTradingWindowEdge() {
+  if (!cfg || !cfg.sessionWindowOn) { wasInsideWindow = null; return; }
+
+  var st = tradingWindowState();
+  if (!st.valid) {
+    if (!warnedBadWindow) {
+      warnedBadWindow = true;
+      log("Trading session window is ON but the start/stop times or timezone could not be " +
+          "read. The window is being ignored and the bot will trade normally — fix the times " +
+          "and restart if you meant to limit trading hours.", "log-warn");
+    }
+    return;
+  }
+
+  if (wasInsideWindow === null) {                   // first look after Start
+    wasInsideWindow = st.inside;
+    log("Trading session window " + (st.inside ? "is OPEN" : "is CLOSED") + " — " +
+        windowLabel() + ". Local time there is now " + clockLabel(st.nowMins) + ".", "log-info");
+    return;
+  }
+  if (st.inside === wasInsideWindow) return;
+  wasInsideWindow = st.inside;
+
+  if (st.inside) {
+    log("🟢 Trading session window OPEN — new trades allowed until " + clockLabel(st.stop) +
+        " " + (TZ_LABELS[st.zone] || st.zone) + ".", "log-info");
+    return;
+  }
+
+  log("🔴 Trading session window CLOSED at " + clockLabel(st.stop) + " " +
+      (TZ_LABELS[st.zone] || st.zone) + " — no new trades until " + clockLabel(st.start) + ".",
+      "log-warn");
+
+  if (!cfg.sessionWindowFlatten) {
+    var open = Object.keys(managedOrders).length;
+    if (open > 0) {
+      log(open + " open trade(s) left running on their own stop and target. Trailing, " +
+          "breakeven and the circuit breaker all keep working — 'Flatten at window end' is OFF.",
+          "log-info");
+    }
+    return;
+  }
+
+  var ids = Object.keys(managedOrders);
+  if (ids.length === 0) {
+    log("Flatten at window end is ON, but there is nothing open to close.", "log-info");
+    return;
+  }
+  ids.forEach(function (orderId) {
+    if (!forceCloseQueue[orderId]) forceCloseQueue[orderId] = { attempts: 0 };
+  });
+  log("Flatten at window end is ON — closing " + ids.length + " open trade(s).", "log-warn");
+  attemptForceCloses();
+}
+
+// =====================================================================================
 //  LOGGING
 // =====================================================================================
 var currentBarLabel = "";
@@ -2162,6 +2361,16 @@ function submitOrder(eng, signalPrice, slPrice, tpPrice, reason) {
   if (pendingOrder) { log("NO ORDER SENT — a previous order is still in flight (" + reason + ")", "log-warn"); return; }
   if (!dailyCapOk()) { log("NO ORDER SENT — daily entry cap (" + cfg.maxEntriesPerDay + ") reached (" + reason + ")", "log-warn"); return; }
 
+  // The trading session window gates NEW trades only. Anything already open is still managed
+  // and trailed; this is purely about whether another one is allowed to start.
+  var win = tradingWindowState();
+  if (win.on && win.valid && !win.inside) {
+    log("NO ORDER SENT — outside the trading session window (" + windowLabel() + "). It is " +
+        clockLabel(win.nowMins) + " there now; new trades resume at " + clockLabel(win.start) +
+        ". (" + reason + ")", "log-warn");
+    return;
+  }
+
   var lots = computeLotSize(signalPrice, slPrice);
   if (!lots || lots <= 0) {
     log("NO ORDER SENT — computed lot size is " + lots + ". Check Fixed lots / Risk % and the " +
@@ -2655,6 +2864,7 @@ function trackFloatingOrders() {
 // floating tracking and Auto Trailing all react immediately instead of waiting for a bar close.
 Framework.OnAccountMetrics = function () {
   checkDailyCircuitBreaker();
+  if (isRunning) { try { checkTradingWindowEdge(); } catch (e) {} }
   if (Object.keys(forceCloseQueue).length > 0) attemptForceCloses();
   if (!isRunning || !cfg) return;
   trackFloatingOrders();
@@ -3232,9 +3442,17 @@ function refreshStatePanel(ny) {
   if (dot) dot.className = isRunning ? "live-dot on" : "live-dot";
   if (txt) {
     var on = engines.length;
+    // A closed trading window is the one state where the bot is working perfectly and still
+    // doing nothing, so it gets said out loud rather than left to look like a stall.
+    var win = tradingWindowState();
+    var winNote = (win.on && win.valid)
+      ? (win.inside ? "  ·  window OPEN until " + clockLabel(win.stop)
+                    : "  ·  window CLOSED, opens " + clockLabel(win.start))
+      : "";
     txt.textContent = !isRunning ? "Stopped"
-      : (bar ? on + " engine" + (on === 1 ? "" : "s") + " live — updated " + new Date().toLocaleTimeString()
-             : "Live — waiting for candles…");
+      : (bar ? on + " engine" + (on === 1 ? "" : "s") + " live — updated " +
+               new Date().toLocaleTimeString() + winNote
+             : "Live — waiting for candles…" + winNote);
   }
 }
 
@@ -3249,6 +3467,10 @@ function startUiTicker() {
   stopUiTicker();
   uiTicker = setInterval(function () {
     if (!isRunning) return;
+    // The window edge is time-driven, not price-driven, so it has to be checked on a clock
+    // rather than waiting for the next tick from the broker. A dead market at 11:00 AM must
+    // still close the window and, if asked, flatten the book.
+    try { checkTradingWindowEdge(); } catch (e) {}
     try { refreshStatePanel(null); } catch (e) {}
   }, 1000);
 }
@@ -3341,6 +3563,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "trendTimeframe","trendEmaLen","trendFilterOn","trendFilterSellOn",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
+  "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
   // ...plus every per-engine field, which are generated rather than listed by hand.
   .concat((function () {
@@ -3432,6 +3655,12 @@ function readConfig() {
 
     // Master direction gates. These sit above the per-engine toggles: with a side off,
     // none of its engines is built at all, whatever their own toggles say.
+    sessionWindowOn:      chk("sessWindowOn"),
+    sessionWindowStart:   document.getElementById("sessWindowStart").value,
+    sessionWindowStop:    document.getElementById("sessWindowStop").value,
+    sessionWindowTz:      document.getElementById("sessWindowTz").value,
+    sessionWindowFlatten: chk("sessWindowFlatten"),
+
     adoptExisting:  chk("adoptExisting"),
     adoptOnlyTagged: chk("adoptOnlyTagged"),
 
@@ -3678,6 +3907,8 @@ function startBot() {
   warnedNoVolume = false;
   warnedDryRunManage = false;
   warnedNoOrderEnum = false;
+  wasInsideWindow = null;
+  warnedBadWindow = false;
   replaying = false;
   setPendingOrder(false);
   liveSweepAlertTs = {};
@@ -3718,9 +3949,15 @@ function startBot() {
         "  ·  buy gate " + (cfg.trendFilterOn ? "ON" : "off") +
         ", sell gate " + (cfg.trendFilterSellOn ? "ON" : "off"),
       "Levels      SL " + cfg.slPips + "p  ·  TP " + cfg.tp1Pips + "/" + cfg.tp2Pips +
-        "/" + cfg.tp3Pips + "p"
+        "/" + cfg.tp3Pips + "p",
+      "Window      " + windowLabel() +
+        (cfg.sessionWindowOn && cfg.sessionWindowFlatten ? "  ·  flatten at window end" : "")
     ].join("\n")
   });
+
+  // Says openly whether the clock allows trading right now, so a bot that is running but
+  // deliberately quiet never looks broken.
+  checkTradingWindowEdge();
 
   // ---- Pick up anything the broker already has open on this instrument ----
   //
