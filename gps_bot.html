@@ -535,8 +535,10 @@ button:active { transform: scale(0.98); }
       If Liquid Charts Pro drops its broker connection, the app has to be refreshed and the bot
       stops &mdash; but the trade is still live on the broker. On Start, and every 15 seconds
       after that, the bot asks the broker what is actually open on this instrument and takes
-      any of it back under management: trailing, breakeven and circuit-breaker cover resume
-      straight away.
+      any of it back under management &mdash; including trades you opened by hand before
+      starting the bot. A missing stop-loss / take-profit is attached from your SL/TP pip
+      settings (measured from that trade's entry), and floating logs, trailing, breakeven
+      and circuit-breaker cover start straight away.
     </small>
     <div class="row"><label>Pick up existing trades</label><input type="checkbox" id="adoptExisting" checked></div>
     <div class="row"><label>Only ones this bot placed</label><input type="checkbox" id="adoptOnlyTagged"></div>
@@ -2874,9 +2876,22 @@ Framework.OnAccountMetrics = function () {
 // =====================================================================================
 //  ORDER EVENTS
 // =====================================================================================
+function normInstrumentId(id) {
+  return String(id || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
 function isBotInstrument(id) {
   if (!cfg || !id) return false;
-  return id === cfg.instrumentId || id === cfg.canonicalInstrumentId;
+  if (id === cfg.instrumentId || id === cfg.canonicalInstrumentId) return true;
+  // A trade opened by hand from the chart can carry the platform's own spelling of the
+  // symbol rather than what was typed into the Instrument box. Compare loosely, and via the
+  // platform's canonical id, so a manual trade on the same market is never missed.
+  var n = normInstrumentId(id);
+  if (n && (n === normInstrumentId(cfg.instrumentId) || n === normInstrumentId(cfg.canonicalInstrumentId))) return true;
+  try {
+    var instr = Framework.Instruments.get(id);
+    if (instr && instr.instrumentId && instr.instrumentId === cfg.canonicalInstrumentId) return true;
+  } catch (e) {}
+  return false;
 }
 
 // =====================================================================================
@@ -2906,7 +2921,12 @@ function enumerateOrders() {
 
   try {
     if (typeof src.forEach === "function") {
-      src.forEach(function (o) { if (o) out.push(o); });
+      // Some collections call back with (order), others with (id, order). Take whichever
+      // argument is actually an order, so a mismatch can't silently yield an empty list.
+      src.forEach(function (a, b) {
+        var o = (a && typeof a === "object") ? a : ((b && typeof b === "object") ? b : null);
+        if (o) out.push(o);
+      });
       return out;
     }
     if (typeof src.getAll === "function") {
@@ -2950,85 +2970,179 @@ function isBotTagged(o) {
   return !!(o && typeof o.comment === "string" && o.comment.indexOf(BOT_TAG) === 0);
 }
 
+// Gives a trade the bot did not place the same stop and target a bot entry would get,
+// measured from that trade's own entry using the Stop loss / Take profit (pips) settings.
+// Only a level that is MISSING is added — a stop or target the trader already set by hand is
+// never overwritten. A level that price has already passed would be rejected by the broker
+// (or close the trade instantly), so that one is reported and skipped instead.
+var LEVEL_ATTACH_MAX_TRIES = 3;
+function ensureProtectiveLevels(orderId) {
+  var m = managedOrders[orderId];
+  var order = Framework.Orders.get(orderId);
+  if (!m || !order || order.closeTime || m.levelsDone || m.levelsInFlight) return;
+  if (m.levelsRetryAt && Date.now() < m.levelsRetryAt) return;
+
+  var sellTrade = m.dir === "sell";
+  var wantSl = !order.sl ? slPriceFor(m.entryPrice, m.dir) : null;
+  var wantTp = !order.tp ? tpPricesFor(m.entryPrice, m.dir)[0] : null;
+  var px = order.closePrice;
+
+  if (wantSl !== null && typeof px === "number" && (sellTrade ? wantSl <= px : wantSl >= px)) {
+    log("⚠️ Order " + orderId + " is already past its " + cfg.slPips + "-pip stop (" + fmt(wantSl) +
+        ", price now " + fmt(px) + ") — a stop there would be rejected. No stop attached; " +
+        "manage this trade manually.", "log-warn");
+    wantSl = null;
+  }
+  if (wantTp !== null && typeof px === "number" && (sellTrade ? wantTp >= px : wantTp <= px)) {
+    log("Order " + orderId + " is already past its " + cfg.tp1Pips + "-pip target (" + fmt(wantTp) +
+        ") — no take-profit attached.", "log-warn");
+    wantTp = null;
+  }
+  if (wantSl === null && wantTp === null) { m.levelsDone = true; return; }
+
+  var what = (wantSl !== null ? "SL " + fmt(wantSl) + " (" + cfg.slPips + "p)" : "") +
+             (wantSl !== null && wantTp !== null ? " / " : "") +
+             (wantTp !== null ? "TP " + fmt(wantTp) + " (" + cfg.tp1Pips + "p)" : "");
+
+  // Dry Run never sends an order of any kind, and attaching a level is an order.
+  if (cfg.tradingMode !== "live") {
+    m.levelsDone = true;
+    log("Dry Run: order " + orderId + " would get " + what + " from your SL/TP settings. " +
+        "Nothing sent — switch to Live Trading for the bot to attach it.", "log-warn");
+    return;
+  }
+
+  var fix = { instrumentId: order.instrumentId, orderId: orderId, tradingAction: FXB.OrderTypes.CHANGE };
+  if (wantSl !== null) fix.sl = wantSl;
+  if (wantTp !== null) fix.tp = wantTp;
+  m.levelsInFlight = true;
+  m.levelsTries = (m.levelsTries || 0) + 1;
+  log("Order " + orderId + " has no " + (wantSl !== null ? "SL" : "") +
+      (wantSl !== null && wantTp !== null ? "/" : "") + (wantTp !== null ? "TP" : "") +
+      " — attaching " + what + " from your settings.", "log-info");
+  Framework.SendOrder(fix, function (MsgResult) {
+    m.levelsInFlight = false;
+    if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
+      m.levelsDone = true;
+      if (wantSl !== null) m.slPrice = wantSl;
+      if (wantTp !== null) m.tpPrice = wantTp;
+      log("Order " + orderId + " SL/TP attached: " + what + ".", "log-info");
+    } else {
+      var e = "unknown error";
+      try { e = Framework.Translation.TranslateError(MsgResult.result); } catch (ex) {}
+      if (m.levelsTries >= LEVEL_ATTACH_MAX_TRIES) {
+        m.levelsDone = true;
+        log("Order " + orderId + " SL/TP attach FAILED " + m.levelsTries + " times (" + e + ") — " +
+            "giving up. This trade may be unprotected; set its levels manually.", "log-err");
+      } else {
+        m.levelsRetryAt = Date.now() + 4000;
+        log("Order " + orderId + " SL/TP attach failed: " + e + " — retrying shortly.", "log-warn");
+      }
+    }
+  });
+}
+
+// Takes one open position under management: attaches missing SL/TP from settings, logs it,
+// and starts floating/trailing on it straight away. Returns true if it was adopted.
+// It does not matter what opened the trade — the bot, the trader, or another window.
+function adoptOrder(o, reason) {
+  if (!o || managedOrders[o.orderId]) return false;      // already managed — leave it alone
+
+  if (cfg.adoptOnlyTagged && !isBotTagged(o)) {
+    log("Skipped order " + o.orderId + " — it is open on " + o.instrumentId + " but was not " +
+        "placed by this bot, and 'Only adopt trades this bot placed' is ON.", "log-info");
+    return false;
+  }
+
+  var sellTrade = o.orderType === FXB.OrderTypes.SELL;
+  managedOrders[o.orderId] = {
+    entryPrice: o.openPrice,
+    dir: sellTrade ? "sell" : "buy",
+    lots: (o.volume && typeof o.volume.lots === "number") ? o.volume.lots : null,
+    slPrice: o.sl || null,
+    tpPrice: o.tp || null,
+    // Breakeven starts unmarked on purpose. The management pass re-derives it from the
+    // trade's real state on its very next tick: if the stop is already at or beyond
+    // breakeven it marks it done without touching anything, and if the trade is already
+    // past the trigger it moves the stop straight away. That is what "picks up where it
+    // left off" means — the flag is re-earned from the position, not guessed.
+    breakevenApplied: false,
+    dollarPerPriceUnit: null,
+    mgmtRetryAt: 0,
+    adopted: true
+  };
+
+  var pl = (typeof o.profit === "number") ? o.profit : null;
+  var tagged = isBotTagged(o);
+  log("🔄 " + (tagged ? "RE-ADOPTED" : "MANAGING MANUAL TRADE") + " — " +
+      (o.instrumentId || cfg.instrumentId) + " open trade detected", "log-buy", {
+    detail: [
+      "Side        " + (sellTrade ? "SELL" : "BUY") +
+        (o.volume && o.volume.lots ? "  " + o.volume.lots + " lots" : ""),
+      "Entry       " + fmt(o.openPrice),
+      "Current P/L " + (pl === null ? "n/a" : (pl >= 0 ? "+" : "") + pl.toFixed(2)),
+      "Stop        " + (o.sl ? fmt(o.sl) : (cfg.attachSl && cfg.slPips > 0
+                         ? "none — attaching " + cfg.slPips + "p from settings" : "NONE ATTACHED")),
+      "Target      " + (o.tp ? fmt(o.tp) : (cfg.attachTp && cfg.tp1Pips > 0
+                         ? "none — attaching " + cfg.tp1Pips + "p from settings" : "none")),
+      "Picked up   " + reason,
+      (tagged ? "Originally placed by this bot (" + o.comment + ")"
+              : "Not placed by this bot — managed on instrument match"),
+      "Floating, trailing and breakeven management active"
+    ].join("\n")
+  });
+  beep();
+
+  ensureProtectiveLevels(o.orderId);
+  if (!o.sl && !(cfg.attachSl && cfg.slPips > 0)) {
+    log("⚠️ Order " + o.orderId + " has NO stop-loss, and 'Attach stop-loss' is off or set to " +
+        "0 pips. It stays uncapped until Auto Trailing moves it to breakeven.", "log-warn");
+  }
+  return true;
+}
+
 // Scans the broker and adopts anything open on this instrument that is not already managed.
 // Returns the number adopted. `reason` is what the log says triggered the scan.
+var warnedOtherInstrument = {};
 function adoptOpenTrades(reason) {
   if (!cfg || !cfg.adoptExisting) return 0;
 
-  var found = enumerateOrders().filter(isAdoptablePosition);
+  var all = enumerateOrders();
   var adopted = 0;
 
-  for (var i = 0; i < found.length; i++) {
-    var o = found[i];
-    if (managedOrders[o.orderId]) continue;              // already ours — leave it alone
-
-    if (cfg.adoptOnlyTagged && !isBotTagged(o)) {
-      log("Skipped order " + o.orderId + " — it is open on " + o.instrumentId + " but was not " +
-          "placed by this bot, and 'Only adopt trades this bot placed' is ON.", "log-info");
+  for (var i = 0; i < all.length; i++) {
+    var o = all[i];
+    if (!isAdoptablePosition(o)) {
+      // An open position the bot is ignoring only because the symbol differs is easy to
+      // mistake for "the bot didn't see my trade" — say so once per order.
+      if (o && o.orderId && !o.closeTime && !isBotInstrument(o.instrumentId) &&
+          (o.orderType === FXB.OrderTypes.BUY || o.orderType === FXB.OrderTypes.SELL) &&
+          !warnedOtherInstrument[o.orderId]) {
+        warnedOtherInstrument[o.orderId] = true;
+        log("Open trade " + o.orderId + " on " + o.instrumentId + " is not on the bot's instrument (" +
+            cfg.instrumentId + "), so it is not being managed.", "log-info");
+      }
       continue;
     }
-
-    var sellTrade = o.orderType === FXB.OrderTypes.SELL;
-    managedOrders[o.orderId] = {
-      entryPrice: o.openPrice,
-      dir: sellTrade ? "sell" : "buy",
-      lots: (o.volume && typeof o.volume.lots === "number") ? o.volume.lots : null,
-      // The bot did not place this one, so it has no queued levels to repair against.
-      slPrice: o.sl || null,
-      tpPrice: o.tp || null,
-      // Breakeven starts unmarked on purpose. The management pass re-derives it from the
-      // trade's real state on its very next tick: if the stop is already at or beyond
-      // breakeven it marks it done without touching anything, and if the trade is already
-      // past the trigger it moves the stop straight away. That is what "picks up where it
-      // left off" means — the flag is re-earned from the position, not guessed.
-      breakevenApplied: false,
-      dollarPerPriceUnit: null,
-      mgmtRetryAt: 0,
-      adopted: true
-    };
-    adopted++;
-
-    var pl = (typeof o.profit === "number") ? o.profit : null;
-    log("🔄 RE-ADOPTED — " + (o.instrumentId || cfg.instrumentId) + " open trade detected",
-        "log-buy", {
-      detail: [
-        "Side        " + (sellTrade ? "SELL" : "BUY") +
-          (o.volume && o.volume.lots ? "  " + o.volume.lots + " lots" : ""),
-        "Entry       " + fmt(o.openPrice),
-        "Current P/L " + (pl === null ? "n/a" : (pl >= 0 ? "+" : "") + pl.toFixed(2)),
-        "Stop        " + (o.sl ? fmt(o.sl) : "NONE ATTACHED"),
-        "Target      " + (o.tp ? fmt(o.tp) : "none"),
-        "Picked up   " + reason,
-        (isBotTagged(o) ? "Originally placed by this bot (" + o.comment + ")"
-                        : "Not tagged by this bot — adopted on instrument match"),
-        "Trailing and breakeven management resumed"
-      ].join("\n")
-    });
-
-    if (!o.sl) {
-      log("⚠️ Adopted order " + o.orderId + " has NO stop-loss attached. The bot will trail and " +
-          "move it to breakeven once it is in profit, but until then that trade is uncapped. " +
-          "It will not invent a stop for a trade it did not place — set one manually if you " +
-          "want cover right now.", "log-warn");
-    }
-    beep();
+    if (adoptOrder(o, reason)) adopted++;
   }
 
-  if (adopted > 0) {
-    refreshStatsDisplay();
-    // Management normally runs off the account-metrics tick. Running it here means an adopted
-    // trade that is already past its breakeven or trail trigger is handled on this pass rather
-    // than waiting for the next price move, which is what "immediately" has to mean when a
-    // reconnect lands on a quiet market.
-    if (cfg.tradingMode === "live" && cfg.autoTrailingOn) {
-      try { manageOpenTrades(); } catch (e) {}
-    } else if (cfg.tradingMode !== "live") {
-      log("Dry Run: the adopted trade is tracked and shown in the panel, but no stop will be " +
-          "moved — Dry Run never sends an order of any kind. Switch to Live Trading for the " +
-          "bot to actually manage it.", "log-warn");
-    }
-  }
+  if (adopted > 0) afterAdoption();
   return adopted;
+}
+
+// Management and floating logs normally run off the account-metrics tick. Running them here
+// means an adopted trade shows up in the log and is handled on this pass rather than waiting
+// for the next price move, which is what "immediately" has to mean on a quiet market.
+function afterAdoption() {
+  try { trackFloatingOrders(); } catch (e) {}
+  if (cfg.tradingMode === "live" && cfg.autoTrailingOn) {
+    try { manageOpenTrades(); } catch (e) {}
+  } else if (cfg.tradingMode !== "live") {
+    log("Dry Run: the adopted trade is tracked and its floating P/L logged, but no stop will be " +
+        "moved — Dry Run never sends an order of any kind. Switch to Live Trading for the " +
+        "bot to actually manage it.", "log-warn");
+  }
 }
 
 // ---- Reconnection cover -------------------------------------------------------------
@@ -3048,6 +3162,9 @@ function startAdoptSweep() {
   adoptSweepTimer = setInterval(function () {
     if (!isRunning || !cfg) return;
     try { adoptOpenTrades("periodic reconnection sweep"); } catch (e) {}
+    Object.keys(managedOrders).forEach(function (id) {
+      if (managedOrders[id].adopted) { try { ensureProtectiveLevels(id); } catch (e) {} }
+    });
   }, ADOPT_SWEEP_MS);
 }
 function stopAdoptSweep() {
@@ -3094,6 +3211,17 @@ Framework.OnOrderOpen = function (newOrder) {
   // instrument (a pending order type, say) still is not.
   var isSellOrder = newOrder.orderType === FXB.OrderTypes.SELL;
   if (newOrder.orderType !== FXB.OrderTypes.BUY && !isSellOrder) return;
+  if (managedOrders[newOrder.orderId]) return;   // a sweep already picked it up
+
+  // A trade opened by hand while the bot is running carries no GPSBOT tag. It must not take
+  // a queued bot entry's levels — that would hand the bot's own fill the wrong repair — so
+  // it goes through the same path as any other trade the bot finds open.
+  // No queued bot entry at all also means it cannot be one of ours.
+  var untagged = typeof newOrder.comment === "string" && !isBotTagged(newOrder);
+  if (untagged || pendingManagement.length === 0) {
+    if (adoptOrder(newOrder, "opened while the bot was running")) afterAdoption();
+    return;
+  }
 
   var queued = pendingManagement.shift() || null;
   managedOrders[newOrder.orderId] = {
@@ -3472,6 +3600,9 @@ function startUiTicker() {
     // still close the window and, if asked, flatten the book.
     try { checkTradingWindowEdge(); } catch (e) {}
     try { refreshStatePanel(null); } catch (e) {}
+    // Floating logs are throttled per order, so running this every second only guarantees
+    // they appear even if the platform is slow to raise OnAccountMetrics.
+    try { trackFloatingOrders(); } catch (e) {}
   }, 1000);
 }
 function stopUiTicker() {
@@ -3907,6 +4038,7 @@ function startBot() {
   warnedNoVolume = false;
   warnedDryRunManage = false;
   warnedNoOrderEnum = false;
+  warnedOtherInstrument = {};
   wasInsideWindow = null;
   warnedBadWindow = false;
   replaying = false;
