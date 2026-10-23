@@ -121,6 +121,8 @@ The **4H identifies** the trend, the **1H confirms** it, the **5M only triggers*
 
 Both filters are independent toggles under **Trend Settings**. With both on, both must agree.
 
+> **Upgrading from an earlier version:** the 50 EMA filter now defaults **ON** (4H) and replaces the old *Only take BUYs in an uptrend / SELLs in a downtrend* switches. Buys are held while price is below the 4H 50 EMA, so signals that used to place trades may now log `NO ORDER SENT — EMA filter`. Untick *Enable 50 EMA filter* to trade as before. The bot says this in the log on load and at the first Start for anyone with settings saved by an older version.
+
 | Setting | Default | |
 | :--- | :--- | :--- |
 | Enable 50 EMA filter | **ON** | Buys only above the EMA, sells only below it |
@@ -515,9 +517,9 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           64 pass   0 fail
+test_icc           67 pass   0 fail
 ----------------------------------------
-TOTAL: 382 pass, 0 fail
+TOTAL: 385 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

@@ -342,6 +342,28 @@ function fvgSequence() {
     n === 1 && sb.__logLines.some((l) => /ICC \(4H\) read on start: bias BULLISH/.test(l)), "lines " + n);
 }
 
+// ---------------------------------------------------------------- 10: upgrade notice
+function loadWith(saved) {
+  const sb = buildSandbox();
+  sb.Framework.LoadCategorySettings = (id, cb) => cb(saved);
+  sb.Framework.OnLoad();
+  return sb;
+}
+{
+  const sb = loadWith({ instrumentId: "XAU/USD", slPips: 100, engines: { e1: { enabled: true } } });
+  check("10: an existing user (old saved settings) is told the 50 EMA now defaults ON",
+    sb.__logLines.some((l) => /50 EMA trend filter is new and now defaults ON/.test(l)));
+}
+{
+  const sb = loadWith(null);
+  check("10: a brand-new user is not", !sb.__logLines.some((l) => /now defaults ON/.test(l)));
+}
+{
+  const sb = loadWith({ instrumentId: "XAU/USD", engines: { e1: { enabled: true } }, emaFilterOn: true });
+  check("10: nor is a user whose saved settings already include the EMA choice",
+    !sb.__logLines.some((l) => /now defaults ON/.test(l)));
+}
+
 console.log("\n===== ASSERTIONS =====");
 let fails = 0;
 results.forEach(([n, ok]) => { if (!ok) fails++; console.log((ok ? "PASS  " : "FAIL  ") + n); });

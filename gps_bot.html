@@ -4591,6 +4591,13 @@ function startBot() {
     ].join("\n")
   });
 
+  // Repeated once at the first Start after the upgrade. Start saves the settings, so the
+  // saved blob then carries the user's own choice and the notice does not come back.
+  if (emaDefaultNotice) {
+    if (cfg.emaFilterOn) log(emaDefaultNoticeText(), "log-warn");
+    emaDefaultNotice = false;
+  }
+
   // Says openly whether the clock allows trading right now, so a bot that is running but
   // deliberately quiet never looks broken.
   checkTradingWindowEdge();
@@ -4658,9 +4665,22 @@ Framework.OnGetState = function () {
   return { mustRemain: true };
 };
 
+// Saved settings from before the 50 EMA filter existed. The filter now defaults ON, so an
+// existing user would otherwise just see trades that used to go through stop firing.
+var emaDefaultNotice = false;
+function emaDefaultNoticeText() {
+  return "⚠️ UPDATE: the 50 EMA trend filter is new and now defaults ON (4H). Buys are held while " +
+         "price is below the 4H 50 EMA and sells while it is above — signals that used to place " +
+         "trades may now log \"NO ORDER SENT — EMA filter\" instead. To trade as before, untick " +
+         "\"Enable 50 EMA filter\" under Trend Settings. (The old \"Only take BUYs/SELLs in a trend\" " +
+         "switches are replaced by it.)";
+}
+
 Framework.OnLoad = function () {
   Framework.LoadCategorySettings(SETTINGS_ID, function (settings) {
     settings = settings || {};
+    // `engines` is only ever in a blob this bot saved, so a brand-new user never sees this.
+    emaDefaultNotice = !!settings.engines && settings.emaFilterOn === undefined;
     if (!settings.instrumentId && Framework.Account && Framework.Account.defaultInstrumentId) {
       settings.instrumentId = Framework.Account.defaultInstrumentId;
     }
@@ -4671,6 +4691,7 @@ Framework.OnLoad = function () {
     setStatus(false);
     refreshStatsDisplay();
     log("Ready. Confirmed GPS settings loaded. Start in Dry Run and verify against TradingView first.", "log-info");
+    if (emaDefaultNotice) log(emaDefaultNoticeText(), "log-warn");
   });
 
   document.getElementById("startBtn").addEventListener("click", startBot);
