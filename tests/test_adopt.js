@@ -140,12 +140,71 @@ const openSell = (over) => Object.assign({
 
 // ---------------------------------------------------------------- 7: no stop attached
 {
-  const sb = withBroker([openBuy({ sl: null })]);
+  // A manual trade with no levels gets the bot's own SL/TP pips, measured from its entry.
+  // slPips 100 / tp1Pips 100 at a 0.1 pip size = 10.00 either side of 2000.
+  const sb = withBroker([openBuy({ sl: null, tp: null, comment: "" })]);
   sb.adoptOpenTrades("bot start");
-  check("7: an adopted trade with no stop is called out loudly",
+  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE");
+  console.log("\n===== 7: MISSING LEVELS ATTACHED =====");
+  console.log(JSON.stringify(chg));
+  check("7: a missing stop is attached from the SL setting", !!chg && Math.abs(chg.sl - 1990) < 1e-9,
+    chg ? "sl " + chg.sl : "no CHANGE sent");
+  check("7: and a missing target from the TP1 setting", !!chg && Math.abs(chg.tp - 2010) < 1e-9);
+  check("7: the log says it was attached", sb.__logLines.some((l) => /SL\/TP attached/.test(l)));
+}
+{
+  const sb = withBroker([openSell({ sl: null, tp: null, comment: "" })]);
+  sb.adoptOpenTrades("bot start");
+  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE");
+  check("7: a sell gets its stop ABOVE entry and target below",
+    !!chg && Math.abs(chg.sl - 2010) < 1e-9 && Math.abs(chg.tp - 1990) < 1e-9);
+}
+{
+  // A level the trader set by hand is never overwritten.
+  const sb = withBroker([openBuy({ sl: 1995, tp: null })]);
+  sb.adoptOpenTrades("bot start");
+  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE");
+  check("7: an existing stop is left alone, only the missing TP is added",
+    !!chg && chg.sl === undefined && Math.abs(chg.tp - 2010) < 1e-9);
+}
+{
+  // Price already past where the stop would go: nothing that would be rejected is sent.
+  const sb = withBroker([openBuy({ sl: null, tp: 2050, closePrice: 1985, profit: -150 })]);
+  sb.adoptOpenTrades("bot start");
+  check("7: a stop price has already passed is not sent",
+    !sb.__orders.some((o) => o.tradingAction === "CHANGE" && o.sl !== undefined));
+  check("7: and the log says so", sb.__logLines.some((l) => /already past its 100-pip stop/.test(l)));
+}
+{
+  // With attach SL off the bot does not invent one, and says so loudly.
+  const sb = withBroker([openBuy({ sl: null, tp: 2050 })], { attachSl: false });
+  sb.adoptOpenTrades("bot start");
+  check("7: with Attach stop-loss off, an adopted trade with no stop is called out loudly",
     sb.__logLines.some((l) => /NO stop-loss attached/.test(l)));
   check("7: and the bot does not invent one",
-    !sb.__orders.some((o) => o.tradingAction === "CHANGE"));
+    !sb.__orders.some((o) => o.tradingAction === "CHANGE" && o.sl !== undefined));
+}
+{
+  // Dry Run: says what it would attach, sends nothing.
+  const sb = withBroker([openBuy({ sl: null, tp: null })], { tradingMode: "dry" });
+  sb.adoptOpenTrades("bot start");
+  check("7: Dry Run sends no SL/TP", sb.__orders.length === 0);
+  check("7: but logs what it would attach",
+    sb.__logLines.some((l) => /Dry Run: order B1 would get SL 1990\.00/.test(l)));
+}
+{
+  // A manual trade opened while the bot runs must not take a queued bot entry's levels.
+  const sb = withBroker([]);
+  sb.pendingManagement = [{ lots: 0.5, slPrice: 1900, tpPrice: 2100, dir: "buy" }];
+  sb.Framework.Orders.get = (id) => (id === "M1" ? manual : null);
+  const manual = openBuy({ orderId: "M1", comment: "", sl: null, tp: null });
+  sb.Framework.OnOrderOpen(manual);
+  check("7: a manual fill while running is managed", !!sb.managedOrders["M1"]);
+  check("7: and the bot's queued entry is still waiting for its own fill",
+    sb.pendingManagement.length === 1);
+  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE");
+  check("7: the manual trade gets the SETTINGS levels, not the queued ones",
+    !!chg && Math.abs(chg.sl - 1990) < 1e-9);
 }
 
 // ---------------------------------------------------------------- 8: management resumes now
@@ -160,7 +219,7 @@ const openSell = (over) => Object.assign({
 
   console.log("\n===== 8: MANAGEMENT RESUMES IMMEDIATELY =====");
   console.log(JSON.stringify(sb.__orders, null, 2));
-  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE");
+  const chg = sb.__orders.find((o) => o.tradingAction === "CHANGE" && o.sl !== undefined);
   check("8: a stop update went out on the adoption pass", !!chg);
   check("8: it moved the stop up to breakeven", !!chg && chg.sl > 1990,
     chg ? "sl " + chg.sl : "");

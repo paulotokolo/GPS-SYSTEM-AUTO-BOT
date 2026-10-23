@@ -327,6 +327,14 @@ button:active { transform: scale(0.98); }
 }
 .live-dot.on { background: var(--green); box-shadow: 0 0 10px var(--green-glow); animation: pulse 1.4s ease-in-out infinite; }
 .state-value.pending { color: var(--amber); }
+.state-value.up   { color: var(--green); }
+.state-value.down { color: var(--red); }
+.state-value.muted { color: var(--muted); }
+.trend-fs { --eng: var(--green-soft); --eng-line: var(--line); }
+.trend-sub {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--green-soft);
+  margin: 10px 0 4px; padding-bottom: 3px; border-bottom: 1px solid var(--line-soft);
+}
 .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
 .stat-box { background: var(--panel-in); border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; }
 .stat-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); display: block; margin-bottom: 4px; }
@@ -474,6 +482,14 @@ button:active { transform: scale(0.98); }
         The GPS setup works best with the higher timeframe behind it. Waiting for the trend read.
       </span>
     </div>
+    <div class="state-grid" style="margin-bottom:10px;">
+      <div class="state-box"><span class="state-label">4H EMA</span><span class="state-value" id="stEma4h">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">1H EMA</span><span class="state-value" id="stEma1h">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">ICC bias (4H)</span><span class="state-value" id="stIccBias">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="stIccPhase">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">4H NTZ (high / low)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">1H structure</span><span class="state-value" id="stH1Struct">&mdash;</span></div>
+    </div>
     <div class="state-grid">
       <div class="state-box"><span class="state-label">Ref (from)</span><span class="state-value" id="stRefName">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Ref Low / High</span><span class="state-value" id="stRefLevels">&mdash;</span></div>
@@ -562,9 +578,55 @@ button:active { transform: scale(0.98); }
     <small class="hint">
       <b>Buys</b> run engines 1&ndash;3 off session and swing <b>lows</b>. <b>Sells</b> run
       engines 4&ndash;6 off the <b>highs</b>, as the exact mirror. With both on the bot takes
-      whichever side sets up, and the Market Trend Filter is what stops it fighting the higher
+      whichever side sets up, and the Trend Settings below are what stop it fighting the higher
       timeframe. Sells default <b>off</b> so nothing changes until you deliberately switch
       them on and test them.
+    </small>
+  </fieldset>
+
+  <!-- ---------------- Trend settings: 50 EMA + ICC (1H / 4H only) ---------------- -->
+  <fieldset class="trend-fs" id="trendFs">
+    <legend>Trend Settings</legend>
+    <small class="hint">
+      The <b>4H</b> identifies the trend, the <b>1H</b> confirms it, the <b>5M</b> only triggers
+      the entry. Both filters below read the 1H and 4H only &mdash; the 5M is never used for
+      direction. With both on, both must agree. A held signal still shows in the log and the
+      CSV; what a filter stops is the <b>order</b>.
+    </small>
+    <div class="trend-sub">50 EMA</div>
+    <div class="row"><label>Enable 50 EMA filter</label><input type="checkbox" id="emaFilterOn" checked></div>
+    <div class="row"><label>EMA timeframe</label>
+      <select id="emaTimeframe">
+        <option value="4h" selected>4H</option>
+        <option value="1h">1H</option>
+        <option value="both">Both (must agree)</option>
+      </select>
+    </div>
+    <div class="row"><label>EMA period</label><input type="number" id="trendEmaLen" value="50" step="1" min="5"></div>
+    <small class="hint">
+      ON: buys only while price is <b>above</b> the EMA on the selected timeframe, sells only
+      while it is <b>below</b>. OFF: the EMA is still calculated and shown in the panel but gates
+      nothing.
+    </small>
+
+    <div class="trend-sub">ICC &mdash; Indication, Correction, Continuation</div>
+    <div class="row"><label>Enable ICC filter</label><input type="checkbox" id="iccOn"></div>
+    <button class="eng-more" id="iccMore" type="button">&#9656; ICC settings</button>
+    <div class="eng-body" id="iccBody">
+      <div class="row"><label>NTZ lookback bars (4H)</label><input type="number" id="iccNtzLookback" value="20" step="1" min="3"></div>
+      <div class="row"><label>Require 1H continuation</label><input type="checkbox" id="iccRequireH1" checked></div>
+      <div class="row"><label>1H swing point lookback</label><input type="number" id="iccH1Swings" value="3" step="1" min="2"></div>
+      <div class="row"><label>Correction zone threshold (% of NTZ)</label><input type="number" id="iccCorrectionPct" value="50" step="1" min="0" max="100"></div>
+      <div class="row"><label>Pause GPS on opposite bias</label><input type="checkbox" id="iccPauseOpposite" checked></div>
+      <div class="row"><label>Auto close on ICC invalidation</label><input type="checkbox" id="iccAutoClose"></div>
+    </div>
+    <small class="hint">
+      <b>Indication:</b> the 4H No Trade Zone is the latest 4H swing high and the swing low that
+      created it &mdash; nothing fires until a 4H candle <b>closes</b> outside it.
+      <b>Correction:</b> after the break the bias holds while price pulls back; engines wait.
+      <b>Continuation:</b> the 1H prints higher highs and lows above the broken level (buys) or
+      lower highs and lows below it (sells) &mdash; engines are armed. Auto close only acts on a
+      4H break against an open trade, in Live mode.
     </small>
   </fieldset>
 
@@ -1023,35 +1085,6 @@ button:active { transform: scale(0.98); }
         One order goes out per signal and it carries <b>TP1</b>. TP2 and TP3 are logged and exported
         with the signal as the levels to scale out at, and are used by nothing else — the bot never
         splits a single signal into three orders.
-      </small>
-    </fieldset>
-
-    <fieldset>
-      <legend>Market Trend Filter</legend>
-      <small class="hint">
-        The GPS setup performs best with the higher timeframe behind it — buys in an uptrend,
-        sells in a downtrend. The bot reads the trend off a second candle feed and shows it in
-        the Signal State panel.
-      </small>
-      <div class="row"><label>Trend timeframe</label>
-        <select id="trendTimeframe">
-          <option value="3600" selected>H1 — 1 hour</option>
-          <option value="14400">H4 — 4 hours</option>
-        </select>
-      </div>
-      <div class="row"><label>Trend EMA length</label><input type="number" id="trendEmaLen" value="50" step="1" min="5"></div>
-      <div class="row"><label>Only take BUYs in an uptrend</label><input type="checkbox" id="trendFilterOn"></div>
-      <div class="row"><label>Only take SELLs in a downtrend</label><input type="checkbox" id="trendFilterSellOn"></div>
-      <small class="hint">
-        OFF (default) means the trend is <b>information only</b> — every engine still fires and the
-        panel simply tells you what market you are in. ON blocks any BUY while the higher timeframe
-        is not in a confirmed uptrend, or any SELL while it is not in a confirmed downtrend, and
-        says so in the log.
-      </small>
-      <small class="hint">
-        The two gates are independent on purpose — you can filter buys to an uptrend while
-        leaving sells to fire freely, or the other way round. A signal that is filtered still
-        appears in the log and the CSV; what the gate stops is the <b>order</b>.
       </small>
     </fieldset>
 
@@ -2243,6 +2276,432 @@ function reportTrendChange() {
 }
 
 // =====================================================================================
+//  TREND FILTER SYSTEM — 50 EMA + ICC, on the 1H and 4H ONLY
+//
+//  The 4H identifies the trend, the 1H confirms it, the 5M only triggers the entry. Nothing
+//  in here ever reads the 5M chart for direction — the 5M price is used only as "where is
+//  price right now" when it is compared against the 1H/4H values.
+//
+//  ICC = Indication, Correction, Continuation:
+//    INDICATION   — the 4H No Trade Zone: the most recent 4H swing high and the swing low
+//                   that created it. Before price has closed out of it, nothing fires.
+//    CORRECTION   — a 4H close beyond the NTZ sets the bias. Price pulling back toward the
+//                   broken level is the correction; engines hold until the 1H confirms.
+//    CONTINUATION — the 1H prints higher highs and higher lows above the broken level (buys)
+//                   or lower highs and lower lows below it (sells). Engines are armed.
+//
+//  Once the 4H has broken, the bias holds through the correction and only changes on a 4H
+//  close through the other side of the current structure. Without that, every pullback
+//  would put price back inside a fresh NTZ and the correction phase could never exist.
+//
+//  Everything here is recomputed from the candle stores rather than accumulated tick by
+//  tick, so the state after a restart or a reconnect is exactly what it would have been had
+//  the bot been running all along. Transitions are what get logged.
+// =====================================================================================
+var H1_SECONDS = 3600, H4_SECONDS = 14400;
+var h1Store = null, h4Store = null;
+
+function newIccState() {
+  return {
+    ntz_high: null, ntz_low: null,
+    bias: "NEUTRAL",              // BULLISH / BEARISH / NTZ / NEUTRAL (no structure yet)
+    correction_active: false,
+    h1_confirmed: false,
+    ema_4h: null, ema_1h: null,
+    ema_bullish: false, ema_bearish: false,
+    gps_buy_unlocked: false, gps_sell_unlocked: false,
+    // Working state behind the fields above.
+    break_level: null,            // the 4H level broken to set the current bias
+    break_ts: null,               // close time of the 4H bar that set the current bias
+    last_break_ts: null,          // newest 4H break in the bias direction (continuation breaks too)
+    h1_state: "WAITING",          // WAITING / CONFIRMED / BROKEN — for the panel
+    phase: "—"
+  };
+}
+var icc = newIccState();
+var iccPrev = null;               // last evaluated snapshot, for logging transitions
+var emaSideLogged = {};           // "4h"/"1h" -> "above"/"below", for cross logs
+var emaBothLogged = null;
+var trendStoreLens = "";
+
+// Closed bars, oldest first. Index 0 of a store is the still-forming bar and is never used.
+function closedBars(store) {
+  var out = [];
+  if (!store || !store.length) return out;
+  for (var i = store.length - 1; i >= 1; i--) {
+    var c = store.GetCandle(i);
+    if (c) out.push(c);
+  }
+  return out;
+}
+
+function emaOfBars(bars, len) {
+  if (!(len > 0) || bars.length < len) return null;
+  var e = emaSeries(bars.map(function (b) { return b.c; }), len);
+  return e[e.length - 1];
+}
+
+function isSwingHigh(bars, i) {
+  return i >= 1 && i < bars.length - 1 && bars[i].h > bars[i - 1].h && bars[i].h > bars[i + 1].h;
+}
+function isSwingLow(bars, i) {
+  return i >= 1 && i < bars.length - 1 && bars[i].l < bars[i - 1].l && bars[i].l < bars[i + 1].l;
+}
+
+// The NTZ as of closed bar k: the most recent swing high within the last `lookback` bars,
+// and the most recent swing low before it — the low that created that high. A swing point
+// needs the bar after it closed, so bar k itself can never be one.
+function findNtz(bars, k, lookback) {
+  var from = Math.max(1, k - lookback + 1);
+  for (var i = k - 1; i >= from; i--) {
+    if (!isSwingHigh(bars, i)) continue;     // reads bar i+1 <= k: closed by then
+    for (var j = i - 1; j >= 1; j--) {
+      if (isSwingLow(bars, j) && bars[j].l < bars[i].h) {
+        return { high: bars[i].h, low: bars[j].l, hiTs: bars[i].ts, loTs: bars[j].ts };
+      }
+    }
+    return null;      // newest swing high has no origin low in the loaded history
+  }
+  return null;
+}
+
+// Walks the closed 4H bars oldest to newest. Bias only ever changes on a confirmed close.
+function compute4hStructure(bars, lookback) {
+  var st = { bias: "NEUTRAL", ntz: null, breakLevel: null, breakTs: null, breakRange: null,
+             lastBreakTs: null, brokenKey: null };
+  var tfMs = H4_SECONDS * 1000;
+  for (var k = 2; k < bars.length; k++) {
+    var z = findNtz(bars, k, lookback);
+    if (z) st.ntz = z;                       // no new swing in range: keep the last one
+    if (!st.ntz) continue;
+
+    var c = bars[k].c, closeTs = bars[k].ts + tfMs;
+    var up = c > st.ntz.high, dn = c < st.ntz.low;
+    if (up || dn) {
+      var bias = up ? "BULLISH" : "BEARISH";
+      // The same structure staying broken is not a new break; a new NTZ breaking is.
+      var key = bias + (up ? st.ntz.hiTs : st.ntz.loTs);
+      if (bias !== st.bias) {
+        st.bias = bias;
+        st.breakLevel = up ? st.ntz.high : st.ntz.low;
+        st.breakTs = closeTs;
+        st.breakRange = st.ntz.high - st.ntz.low;
+      }
+      if (key !== st.brokenKey) { st.brokenKey = key; st.lastBreakTs = closeTs; }
+    } else if (st.bias === "NEUTRAL" || st.bias === "NTZ") {
+      st.bias = "NTZ";
+    }
+  }
+  return st;
+}
+
+// Correction: price has retraced at least `pct`% of the broken NTZ's range back toward the
+// broken level, measured from the furthest point reached since the break.
+function correctionActive(bars, st, pct) {
+  if (!(st.breakRange > 0) || st.breakTs === null) return false;
+  var bull = st.bias === "BULLISH";
+  var since = st.breakTs - H4_SECONDS * 1000;        // include the break bar itself
+  var extreme = null, back = null;
+  for (var i = 0; i < bars.length; i++) {
+    var b = bars[i];
+    if (b.ts < since) continue;
+    if (extreme === null || (bull ? b.h > extreme : b.l < extreme)) {
+      extreme = bull ? b.h : b.l;
+      back = null;                                     // new extreme — pullback restarts
+    } else {
+      var p = bull ? b.l : b.h;
+      if (back === null || (bull ? p < back : p > back)) back = p;
+    }
+  }
+  if (extreme === null || back === null) return false;
+  return Math.abs(extreme - back) >= st.breakRange * pct / 100;
+}
+
+// 1H continuation: the last N swing highs and N swing lows since the 4H break each beyond
+// the one before (higher for buys, lower for sells), all on the right side of the broken
+// level. A lower low on a buy (or higher high on a sell) breaks the sequence by itself.
+function h1Continuation(bars, bias, level, sinceTs, n) {
+  if (bias !== "BULLISH" && bias !== "BEARISH") return false;
+  var bull = bias === "BULLISH";
+  var highs = [], lows = [];
+  for (var i = 1; i < bars.length - 1; i++) {
+    if (bars[i].ts < sinceTs) continue;
+    if (isSwingHigh(bars, i)) highs.push(bars[i].h);
+    if (isSwingLow(bars, i))  lows.push(bars[i].l);
+  }
+  if (highs.length < n || lows.length < n) return false;
+  var H = highs.slice(-n), L = lows.slice(-n);
+  for (var k = 1; k < n; k++) {
+    if (bull ? !(H[k] > H[k - 1] && L[k] > L[k - 1]) : !(H[k] < H[k - 1] && L[k] < L[k - 1])) return false;
+  }
+  for (var m = 0; m < n; m++) {
+    if (bull ? !(L[m] > level && H[m] > level) : !(H[m] < level && L[m] < level)) return false;
+  }
+  return true;
+}
+
+function evaluateIcc() {
+  var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
+  var st = compute4hStructure(b4, Math.max(3, cfg.iccNtzLookback));
+
+  icc.bias = st.bias;
+  icc.ntz_high = st.ntz ? st.ntz.high : null;
+  icc.ntz_low  = st.ntz ? st.ntz.low : null;
+  icc.break_level = st.breakLevel;
+  icc.break_ts = st.breakTs;
+  icc.last_break_ts = st.lastBreakTs;
+
+  var directional = st.bias === "BULLISH" || st.bias === "BEARISH";
+  icc.correction_active = directional &&
+    correctionActive(b1.length ? b1 : b4, st, cfg.iccCorrectionPct);
+  icc.h1_confirmed = directional &&
+    h1Continuation(b1, st.bias, st.breakLevel, st.breakTs, Math.max(2, cfg.iccH1Swings));
+
+  // BROKEN = it was confirmed on this same 4H break and has since been lost. It stays
+  // BROKEN, not WAITING, until the 1H re-establishes or the 4H bias changes.
+  var sameBreak = iccPrev && iccPrev.break_ts === icc.break_ts;
+  if (!directional) icc.h1_state = "WAITING";
+  else if (icc.h1_confirmed) icc.h1_state = "CONFIRMED";
+  else if (sameBreak && (iccPrev.h1_confirmed || iccPrev.h1_state === "BROKEN")) icc.h1_state = "BROKEN";
+  else icc.h1_state = "WAITING";
+}
+
+function livePrice() {
+  try {
+    var f = tradingStore && tradingStore.length ? tradingStore.GetCandle(0) : null;
+    if (f && typeof f.c === "number") return f.c;
+  } catch (e) {}
+  var b1 = closedBars(h1Store);
+  return b1.length ? b1[b1.length - 1].c : null;
+}
+
+function emaGateTimeframes() {
+  return cfg.emaTimeframe === "1h" ? ["1h"] : cfg.emaTimeframe === "both" ? ["4h", "1h"] : ["4h"];
+}
+function emaFor(tf) { return tf === "4h" ? icc.ema_4h : icc.ema_1h; }
+
+// Gates 1-3 from the brief, in order. Null means every enabled gate passes; otherwise the
+// reason the signal is held, with the values that decided it.
+function trendGateReason(sell, price) {
+  if (!cfg) return null;
+  var side = sell ? "sell" : "buy";
+  if (cfg.emaFilterOn) {
+    var tfs = emaGateTimeframes();
+    for (var i = 0; i < tfs.length; i++) {
+      var tf = tfs[i].toUpperCase(), v = emaFor(tfs[i]);
+      if (v === null) {
+        return "EMA filter: GPS signal held — the " + tf + " EMA" + cfg.trendEmaLen +
+               " is not ready yet (needs " + cfg.trendEmaLen + " closed " + tf + " bars).";
+      }
+      if (price === null || (sell ? !(price < v) : !(price > v))) {
+        return "EMA filter: GPS signal held — price " + (price === null ? "n/a" : fmt(price)) +
+               " is on wrong side of " + tf + " EMA " + fmt(v) + " for " + side + ".";
+      }
+    }
+  }
+  if (cfg.iccOn) {
+    var want = sell ? "BEARISH" : "BULLISH";
+    if (icc.bias === "NTZ" || icc.bias === "NEUTRAL") {
+      return "GPS signal held — ICC bias is " + icc.bias + ". No confirmed 4H structural break yet.";
+    }
+    if (icc.bias !== want) {
+      if (cfg.iccPauseOpposite) {
+        return "GPS signal held — ICC 4H bias is " + icc.bias + ", against this " + side +
+               " (Pause GPS on Opposite Bias is ON).";
+      }
+    } else if (cfg.iccRequireH1 && !icc.h1_confirmed) {
+      return "GPS signal held — ICC 4H confirmed " + want.toLowerCase() +
+             " but 1H continuation not yet confirmed. Waiting.";
+    }
+  }
+  return null;
+}
+
+// The master gates and the panel phase, against the price right now.
+function refreshTrendGates(price) {
+  if (!cfg) return;
+  var tfs = emaGateTimeframes(), above = true, below = true;
+  tfs.forEach(function (tf) {
+    var v = emaFor(tf);
+    if (v === null || price === null) { above = below = false; return; }
+    if (!(price > v)) above = false;
+    if (!(price < v)) below = false;
+  });
+  icc.ema_bullish = above;
+  icc.ema_bearish = below;
+  icc.gps_buy_unlocked  = trendGateReason(false, price) === null;
+  icc.gps_sell_unlocked = trendGateReason(true, price) === null;
+
+  if (!cfg.iccOn) { icc.phase = "OFF"; return; }
+  if (icc.bias === "NEUTRAL") { icc.phase = "—"; return; }
+  if (icc.bias === "NTZ") { icc.phase = "INDICATION"; return; }
+  var armed = icc.bias === "BULLISH" ? icc.gps_buy_unlocked : icc.gps_sell_unlocked;
+  icc.phase = armed ? "GPS ARMED" : icc.h1_confirmed ? "CONTINUATION" : "CORRECTION";
+}
+
+function iccSnapshot() {
+  return { bias: icc.bias, ntz_high: icc.ntz_high, ntz_low: icc.ntz_low,
+           break_ts: icc.break_ts, break_level: icc.break_level, last_break_ts: icc.last_break_ts,
+           correction_active: icc.correction_active, h1_confirmed: icc.h1_confirmed,
+           h1_state: icc.h1_state };
+}
+
+// One log line per ICC state change, worded as in the brief.
+function reportIccChanges(prev) {
+  var now = icc;
+  var ntzText = fmt(now.ntz_low) + " to " + fmt(now.ntz_high);
+
+  if (!prev) {
+    if (now.bias === "NEUTRAL") {
+      log("ICC: no 4H structure identified yet — waiting for 4H candles. All GPS orders held.", "log-info");
+    } else {
+      log("ICC (4H) read on start: bias " + now.bias + " · NTZ " + ntzText +
+          (now.break_level !== null ? " · broken level " + fmt(now.break_level) : "") +
+          " · 1H " + now.h1_state, "log-info");
+    }
+    return;
+  }
+
+  if (now.bias !== prev.bias) {
+    if (now.bias === "BULLISH") {
+      log("ICC BULLISH BREAK — 4H candle closed above NTZ high " + fmt(now.break_level) +
+          ". Buyers in control. Correction phase. Watching for 1H continuation above " +
+          fmt(now.break_level) + ".", "log-buy");
+    } else if (now.bias === "BEARISH") {
+      log("ICC BEARISH BREAK — 4H candle closed below NTZ low " + fmt(now.break_level) +
+          ". Sellers in control. Correction phase. Watching for 1H continuation below " +
+          fmt(now.break_level) + ".", "log-sell");
+    } else if (now.bias === "NTZ") {
+      log("ICC NTZ — price inside No Trade Zone " + ntzText +
+          ". All GPS engines paused until confirmed break.", "log-warn");
+    }
+    if ((prev.bias === "BULLISH" || prev.bias === "BEARISH") &&
+        (now.bias === "BULLISH" || now.bias === "BEARISH")) {
+      handleIccInvalidation(now.bias);
+    }
+  } else if (now.last_break_ts !== prev.last_break_ts &&
+             (now.bias === "BULLISH" || now.bias === "BEARISH")) {
+    log("ICC " + now.bias + " BREAK — 4H closed " + (now.bias === "BULLISH" ? "above" : "below") +
+        " the next structure level. Continuation of the existing " + now.bias.toLowerCase() +
+        " structure; 1H still measured from " + fmt(now.break_level) + ".", "log-info");
+  }
+
+  if ((now.ntz_high !== prev.ntz_high || now.ntz_low !== prev.ntz_low) && now.ntz_high !== null &&
+      (now.bias === "NTZ" || now.bias === "NEUTRAL")) {
+    log("ICC INDICATION — 4H No Trade Zone identified. NTZ range: " + ntzText +
+        ". Watching for confirmed break.", "log-info");
+  }
+
+  if (now.bias === prev.bias && now.correction_active && !prev.correction_active) {
+    log("ICC CORRECTION — price returned toward broken level " + fmt(now.break_level) +
+        ". Watching for 1H " + (now.bias === "BULLISH" ? "higher highs and lows." : "lower highs and lows."),
+        "log-info");
+  }
+
+  if (now.h1_confirmed && !prev.h1_confirmed) {
+    log("ICC 1H CONFIRMED — " + (now.bias === "BULLISH" ? "higher highs and higher lows" : "lower highs and lower lows") +
+        " confirmed on 1H " + (now.bias === "BULLISH" ? "above " : "below ") + fmt(now.break_level) +
+        ". GPS engines fully armed.", now.bias === "BULLISH" ? "log-buy" : "log-sell");
+  } else if (!now.h1_confirmed && prev.h1_confirmed && now.bias === prev.bias) {
+    log("ICC 1H BROKEN — 1H continuation structure lost. h1_confirmed reset. GPS engines paused. " +
+        "Waiting for 1H to re-establish.", "log-warn");
+  }
+}
+
+// A 4H break against an open position. Always a warning; a close only if asked for.
+function handleIccInvalidation(newBias) {
+  var against = newBias === "BULLISH" ? "sell" : "buy";
+  var ids = Object.keys(managedOrders).filter(function (id) { return managedOrders[id].dir === against; });
+  if (!ids.length) return;
+  log("ICC INVALIDATION WARNING — 4H candle closed " + (newBias === "BULLISH" ? "above " : "below ") +
+      fmt(icc.break_level) + " against open " + against + " position" + (ids.length > 1 ? "s" : "") +
+      " (" + ids.join(", ") + "). Review trade immediately.", "log-warn");
+  beep();
+  if (!cfg.iccAutoClose) return;
+  if (cfg.tradingMode !== "live") {
+    log("Dry Run: Auto Close on ICC Invalidation would close " + ids.join(", ") + " — nothing sent.", "log-warn");
+    return;
+  }
+  ids.forEach(function (id) {
+    if (!forceCloseQueue[id]) forceCloseQueue[id] = { attempts: 0, reason: "ICC invalidation" };
+  });
+  log("Auto Close on ICC Invalidation is ON — closing " + ids.join(", ") + ".", "log-warn");
+  attemptForceCloses();
+}
+
+// Recomputes everything from the 1H and 4H stores. Called on their new candles, and from
+// the ticker whenever either store has changed, so a store that finishes loading after
+// Start is picked up without waiting four hours for its next candle.
+function updateTrendFilters() {
+  if (!cfg) return;
+  var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
+  icc.ema_4h = emaOfBars(b4, cfg.trendEmaLen);
+  icc.ema_1h = emaOfBars(b1, cfg.trendEmaLen);
+  if (cfg.iccOn) {
+    evaluateIcc();
+    if (b4.length >= 3) {
+      if (isRunning) reportIccChanges(iccPrev);
+      iccPrev = iccSnapshot();
+    }
+  }
+  refreshTrendGates(livePrice());
+}
+
+function pollTrendStores() {
+  var key = [h4Store ? h4Store.length : 0, h1Store ? h1Store.length : 0].join("/");
+  var b4 = h4Store && h4Store.length > 1 ? h4Store.GetCandle(1) : null;
+  var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
+  key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
+  if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
+  trendStoreLens = key;
+  updateTrendFilters();
+}
+
+// 50 EMA cross logs, judged on each closed 5M bar's close against the 1H/4H EMA.
+function reportEmaPosition(price) {
+  if (!cfg || !cfg.emaFilterOn || price === null || replaying) return;
+  [["4h", "4H"], ["1h", "1H"]].forEach(function (p) {
+    var v = emaFor(p[0]);
+    if (v === null || price === v) return;
+    var side = price > v ? "above" : "below";
+    var was = emaSideLogged[p[0]];
+    emaSideLogged[p[0]] = side;
+    if (was === side) return;
+    var gating = emaGateTimeframes().indexOf(p[0]) >= 0;
+    if (was === undefined) {
+      log(p[1] + " EMA" + cfg.trendEmaLen + " " + fmt(v) + " — price is " + side.toUpperCase() +
+          (gating ? "." : " (shown for reference; not the gate)."), "log-info");
+    } else if (p[0] === "4h") {
+      log("4H EMA: price crossed " + side.toUpperCase() + " EMA " + fmt(v) + " on 4H — " +
+          (side === "above" ? "bullish trend confirmed. GPS buy engines active."
+                            : "bearish trend confirmed. GPS sell engines active."),
+          side === "above" ? "log-buy" : "log-sell");
+    } else {
+      log("1H EMA: price crossed " + side.toUpperCase() + " EMA " + fmt(v) + " on 1H — 1H " +
+          (side === "above" ? "bullish" : "bearish") + " confirmation added.",
+          side === "above" ? "log-buy" : "log-sell");
+    }
+  });
+  if (cfg.emaTimeframe === "both") {
+    var a = emaSideLogged["4h"], b = emaSideLogged["1h"];
+    var agree = a && a === b ? (a === "above" ? "bullish" : "bearish") : null;
+    if (agree && agree !== emaBothLogged) {
+      log("EMA filter BOTH: 1H and 4H agree — " + agree + ". GPS engines unlocked" +
+          (cfg.iccOn ? " pending ICC." : "."), "log-info");
+    }
+    emaBothLogged = agree;
+  }
+}
+
+function resetTrendFilters() {
+  icc = newIccState();
+  iccPrev = null;
+  emaSideLogged = {};
+  emaBothLogged = null;
+  trendStoreLens = "";
+}
+
+// =====================================================================================
 //  SESSION P/L
 // =====================================================================================
 //  Net dollars for the session currently in progress: this bot's trades closed since the
@@ -2311,20 +2770,13 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
   if (replaying) return;      // historical bar — state only, never an order
   beep();
 
-  // The trend gate sits here rather than inside the engine on purpose: the signal is
-  // still a real signal and still belongs in the log and the CSV. What the filter stops
-  // is the order.
-  //
-  // Each direction has its own gate, because a trader can reasonably want buys filtered
-  // to an uptrend while leaving sells to fire freely, or the other way round.
-  var gateOn   = sell ? cfg.trendFilterSellOn : cfg.trendFilterOn;
-  var wantDir  = sell ? "down" : "up";
-  if (gateOn && trendState.dir !== wantDir) {
-    log("NO ORDER SENT — the " + (sell ? "sell" : "buy") + " trend filter is ON and the " +
-        tfName(cfg.trendTimeframe) + " trend is " +
-        (trendState.dir === "unknown" ? "not established yet" : trendState.label) +
-        ", not " + (sell ? "a downtrend" : "an uptrend") +
-        ". (" + engTag(eng) + (sell ? "SELL" : "BUY") + ")", "log-warn");
+  // The trend gates (50 EMA, ICC 4H bias, ICC 1H continuation) sit here rather than inside
+  // the engine on purpose: the engine's own state has to keep running exactly as the
+  // indicator's does, or later signals stop matching TradingView. The signal is still a
+  // real signal and still belongs in the log and the CSV. What the filters stop is the order.
+  var held = trendGateReason(sell, entry);
+  if (held) {
+    log("NO ORDER SENT — " + held + " (" + engTag(eng) + (sell ? "SELL" : "BUY") + ")", "log-warn");
     return;
   }
 
@@ -2578,7 +3030,7 @@ function attemptForceCloses() {
       tradingAction: FXB.OrderTypes.CLOSEPOSITION
     }, function (MsgResult) {
       if (MsgResult && MsgResult.result && MsgResult.result.isOkay) {
-        log("Closed order " + orderId + " (circuit breaker)", "log-info");
+        log("Closed order " + orderId + " (" + (entry.reason || "circuit breaker") + ")", "log-info");
         delete forceCloseQueue[orderId];
       } else {
         var errText = "unknown error";
@@ -2883,15 +3335,10 @@ function isBotInstrument(id) {
   if (!cfg || !id) return false;
   if (id === cfg.instrumentId || id === cfg.canonicalInstrumentId) return true;
   // A trade opened by hand from the chart can carry the platform's own spelling of the
-  // symbol rather than what was typed into the Instrument box. Compare loosely, and via the
-  // platform's canonical id, so a manual trade on the same market is never missed.
+  // symbol rather than what was typed into the Instrument box ("XAUUSD" vs "XAU/USD").
+  // Compare ignoring case and punctuation, so a manual trade on the same market is not missed.
   var n = normInstrumentId(id);
-  if (n && (n === normInstrumentId(cfg.instrumentId) || n === normInstrumentId(cfg.canonicalInstrumentId))) return true;
-  try {
-    var instr = Framework.Instruments.get(id);
-    if (instr && instr.instrumentId && instr.instrumentId === cfg.canonicalInstrumentId) return true;
-  } catch (e) {}
-  return false;
+  return !!n && (n === normInstrumentId(cfg.instrumentId) || n === normInstrumentId(cfg.canonicalInstrumentId));
 }
 
 // =====================================================================================
@@ -3087,16 +3534,17 @@ function adoptOrder(o, reason) {
                          ? "none — attaching " + cfg.tp1Pips + "p from settings" : "none")),
       "Picked up   " + reason,
       (tagged ? "Originally placed by this bot (" + o.comment + ")"
-              : "Not placed by this bot — managed on instrument match"),
-      "Floating, trailing and breakeven management active"
+              : "Not placed by this bot — adopted on instrument match"),
+      "Trailing and breakeven management resumed"
     ].join("\n")
   });
   beep();
 
   ensureProtectiveLevels(o.orderId);
   if (!o.sl && !(cfg.attachSl && cfg.slPips > 0)) {
-    log("⚠️ Order " + o.orderId + " has NO stop-loss, and 'Attach stop-loss' is off or set to " +
-        "0 pips. It stays uncapped until Auto Trailing moves it to breakeven.", "log-warn");
+    log("⚠️ Order " + o.orderId + " has NO stop-loss attached, and 'Attach stop-loss' is off or " +
+        "set to 0 pips, so the bot will not add one. It stays uncapped until Auto Trailing moves " +
+        "it to breakeven — set one manually if you want cover right now.", "log-warn");
   }
   return true;
 }
@@ -3309,6 +3757,8 @@ function onNewTradingBar() {
     var done = tradingStore.GetCandle(todo[k]);
     if (done) lastProcessedTs = done.ts;
   }
+  var newest = tradingStore.GetCandle(1);
+  if (newest) { try { reportEmaPosition(newest.c); } catch (e) {} }
 }
 
 // Rebuilds engine state from history at Start, so the bot knows the current session refs
@@ -3552,6 +4002,37 @@ function refreshStatePanel(ny) {
     : "The GPS setup works best with the higher timeframe behind it. Waiting for the trend read.";
   }
 
+  // ---- Trend filters: 50 EMA (1H/4H) and ICC ----
+  if (isRunning && cfg) {
+    var px = bar ? bar.c : livePrice();
+    var emaTab = function (id, v, tf) {
+      if (v === null) { t(id, "waiting for " + tf + " candles", "muted"); return; }
+      var gating = cfg.emaFilterOn && emaGateTimeframes().indexOf(tf.toLowerCase()) >= 0;
+      if (px === null || px === v) { t(id, "EMA " + fmt(v), gating ? "" : "muted"); return; }
+      t(id, "EMA " + fmt(v) + " — " + (px > v ? "ABOVE" : "BELOW") + (gating ? "" : " (info)"),
+        px > v ? "up" : "down");
+    };
+    emaTab("stEma4h", icc.ema_4h, "4H");
+    emaTab("stEma1h", icc.ema_1h, "1H");
+
+    if (!cfg.iccOn) {
+      ["stIccBias", "stIccPhase", "stIccNtz", "stH1Struct"].forEach(function (id) { t(id, "ICC off", "muted"); });
+    } else {
+      t("stIccBias", icc.bias,
+        icc.bias === "BULLISH" ? "up" : icc.bias === "BEARISH" ? "down" : icc.bias === "NTZ" ? "pending" : "muted");
+      t("stIccPhase", icc.phase === "GPS ARMED"
+          ? "GPS ARMED — " + (icc.bias === "BULLISH" ? "BUY" : "SELL") : icc.phase,
+        icc.phase === "GPS ARMED" ? (icc.bias === "BULLISH" ? "up" : "down")
+        : icc.phase === "—" ? "muted" : "pending");
+      t("stIccNtz", icc.ntz_high !== null ? "NTZ " + fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low) : "—",
+        icc.ntz_high !== null ? "" : "muted");
+      if (icc.bias !== "BULLISH" && icc.bias !== "BEARISH") t("stH1Struct", "—", "muted");
+      else if (!cfg.iccRequireH1) t("stH1Struct", "NOT REQUIRED", "muted");
+      else t("stH1Struct", icc.h1_state,
+             icc.h1_state === "CONFIRMED" ? "up" : icc.h1_state === "BROKEN" ? "down" : "pending");
+    }
+  }
+
   // Session pills reflect the session the forming bar is in, not just the last closed one.
   var liveSession = activeSession ? activeSession.name : null;
   if (bar && cfg) {
@@ -3599,6 +4080,7 @@ function startUiTicker() {
     // rather than waiting for the next tick from the broker. A dead market at 11:00 AM must
     // still close the window and, if asked, flatten the book.
     try { checkTradingWindowEdge(); } catch (e) {}
+    try { pollTrendStores(); } catch (e) {}
     try { refreshStatePanel(null); } catch (e) {}
     // Floating logs are throttled per order, so running this every second only guarantees
     // they appear even if the platform is slow to raise OnAccountMetrics.
@@ -3692,7 +4174,8 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "sessAsiaTime","sessLondonTime","sessNyamTime","sessNylunchTime",
   "attachSl","attachTp","attachMode","testLots","testSlPips",
   "slPips","tp1Pips","tp2Pips","tp3Pips",
-  "trendTimeframe","trendEmaLen","trendFilterOn","trendFilterSellOn",
+  "emaFilterOn","emaTimeframe","trendEmaLen",
+  "iccOn","iccNtzLookback","iccRequireH1","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
@@ -3817,10 +4300,19 @@ function readConfig() {
     tp2Pips: int("tp2Pips", 200),
     tp3Pips: int("tp3Pips", 300),
 
-    trendTimeframe: int("trendTimeframe", 3600),
-    trendEmaLen: int("trendEmaLen", 50),
-    trendFilterOn: chk("trendFilterOn"),
-    trendFilterSellOn: chk("trendFilterSellOn"),
+    // Trend Settings. The EMA and ICC only ever read the 1H and 4H — never the 5M.
+    emaFilterOn: chk("emaFilterOn"),
+    emaTimeframe: document.getElementById("emaTimeframe").value || "4h",
+    trendEmaLen: Math.max(5, int("trendEmaLen", 50)),
+    // The market-trend read-out follows the EMA timeframe: 4H unless it is set to 1H only.
+    trendTimeframe: document.getElementById("emaTimeframe").value === "1h" ? 3600 : 14400,
+    iccOn: chk("iccOn"),
+    iccNtzLookback: Math.max(3, int("iccNtzLookback", 20)),
+    iccRequireH1: chk("iccRequireH1"),
+    iccH1Swings: Math.max(2, int("iccH1Swings", 3)),
+    iccCorrectionPct: Math.min(100, Math.max(0, num("iccCorrectionPct", 50))),
+    iccPauseOpposite: chk("iccPauseOpposite"),
+    iccAutoClose: chk("iccAutoClose"),
 
     maxEntriesPerDay: int("maxEntriesPerDay", 0),
     replayBars: int("replayBars", 1500),
@@ -4046,6 +4538,7 @@ function startBot() {
   liveSweepAlertTs = {};
   lastTrendDir = null;
   trendState = { dir: "unknown", label: "—", detail: "", close: null, ema: null };
+  resetTrendFilters();
   sessionPLKey = null;
   sessionPLSince = Date.now();
 
@@ -4055,12 +4548,18 @@ function startBot() {
   });
   Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: cfg.timeframe }, tradingStore);
 
-  // A second feed at the trend timeframe. It never drives the engines — it only answers
-  // "what market am I in", and optionally gates orders when the Trend Filter is on.
-  trendStore = new FXB.CandleStore({ OnNewCandle: function () {
+  // The 1H and 4H feeds. Neither ever drives the GPS engines — they only update the trend
+  // filter state (50 EMA + ICC) and the market-trend read-out. The read-out follows the
+  // EMA timeframe, so it is the 4H store unless the EMA is set to 1H only.
+  var onTrendCandle = function () {
+    try { updateTrendFilters(); } catch (e) {}
     try { computeTrend(); reportTrendChange(); } catch (e) {}
-  } });
-  Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: cfg.trendTimeframe }, trendStore);
+  };
+  h4Store = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
+  h1Store = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
+  Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: H4_SECONDS }, h4Store);
+  Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: H1_SECONDS }, h1Store);
+  trendStore = cfg.trendTimeframe === H1_SECONDS ? h1Store : h4Store;
 
   isRunning = true;
   setInputsDisabled(true);
@@ -4077,9 +4576,14 @@ function startBot() {
       "Engines     " + engines.map(function (e) {
         return "E" + e.def.id + " " + e.def.name;
       }).join("\n            "),
-      "Trend feed  " + tfName(cfg.trendTimeframe) + "  ·  EMA " + cfg.trendEmaLen +
-        "  ·  buy gate " + (cfg.trendFilterOn ? "ON" : "off") +
-        ", sell gate " + (cfg.trendFilterSellOn ? "ON" : "off"),
+      "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
+        cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
+      "ICC         " + (cfg.iccOn
+        ? "ON  ·  NTZ lookback " + cfg.iccNtzLookback + " (4H)  ·  1H continuation " +
+          (cfg.iccRequireH1 ? "required (" + cfg.iccH1Swings + " swings)" : "not required") +
+          "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
+          "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
+        : "off"),
       "Levels      SL " + cfg.slPips + "p  ·  TP " + cfg.tp1Pips + "/" + cfg.tp2Pips +
         "/" + cfg.tp3Pips + "p",
       "Window      " + windowLabel() +
@@ -4210,6 +4714,10 @@ Framework.OnLoad = function () {
     if (zm) zm.addEventListener("change", syncZoneLabels);
   });
   syncZoneLabels();
+  document.getElementById("iccMore").addEventListener("click", function () {
+    var open = document.getElementById("iccBody").classList.toggle("expanded");
+    this.textContent = (open ? "▾ Hide" : "▸") + " ICC settings";
+  });
 };
 
 // =====================================================================================

@@ -23,7 +23,7 @@ Two switches sit above every engine, under **Trade Direction**. With a side off,
 | Enable BUY signals | **ON** | Engines 1–3 run |
 | Enable SELL signals | **OFF** | Engines 4–6 run |
 
-Sells default off so nothing changes for an existing user until they deliberately switch them on and test them. With both on, the bot takes whichever side sets up, and the Market Trend Filter is what stops it fighting the higher timeframe.
+Sells default off so nothing changes for an existing user until they deliberately switch them on and test them. With both on, the bot takes whichever side sets up, and the Trend Settings (50 EMA + ICC) are what stop it fighting the higher timeframe.
 
 | | **Engine 1 — Priority FVG** | **Engine 2 — Add-On FVG** | **Engine 3 — Demand Zone** |
 | :--- | :--- | :--- | :--- |
@@ -115,13 +115,36 @@ Every zone-related label follows the method **and** the direction the engine is 
 
 ---
 
-## Market trend
+## Trend filters — 50 EMA + ICC
 
-The GPS setup is a with-trend one, so the bot requests a **second candle feed** at H1 (or H4) purely to answer *what market am I in right now*. The Signal State panel shows **UPTREND ▲ / DOWNTREND ▼ / RANGING ◆**, derived from price against an EMA **and** that EMA's own slope — a market that has merely popped above a still-falling average is not called an uptrend, and the slope has to clear 2 basis points so noise around a flat average does not read as direction.
+The **4H identifies** the trend, the **1H confirms** it, the **5M only triggers** the entry. The bot requests a 1H and a 4H candle feed alongside the 5M; neither ever drives a GPS engine, they only update the trend state. Nothing reads the 5M for direction — the 5M price is used only as "where is price right now" against the 1H/4H values.
 
-It is **information by default**. *Only take BUYs in an uptrend* and *Only take SELLs in a downtrend* each turn it into a hard gate for that side. The two are independent on purpose — you can filter buys while leaving sells free, or the reverse. A gated signal is still logged and exported; what the gate stops is the **order**.
+Both filters are independent toggles under **Trend Settings**. With both on, both must agree.
 
----
+| Setting | Default | |
+| :--- | :--- | :--- |
+| Enable 50 EMA filter | **ON** | Buys only above the EMA, sells only below it |
+| EMA timeframe | **4H** | 1H / 4H / Both (both must agree) |
+| EMA period | 50 | Computed from closed 1H/4H bars |
+| Enable ICC filter | **OFF** | |
+| NTZ lookback bars (4H) | 20 | |
+| Require 1H continuation | **ON** | OFF unlocks on the 4H break alone |
+| 1H swing point lookback | 3 | Swing highs *and* swing lows checked |
+| Correction zone threshold | 50% | Of the NTZ range, toward the broken level |
+| Pause GPS on opposite bias | **ON** | 4H bullish pauses sells; bearish pauses buys |
+| Auto close on ICC invalidation | **OFF** | Live only; closes trades a 4H break goes against |
+
+**ICC — Indication, Correction, Continuation.**
+
+- **Indication.** The 4H No Trade Zone is the most recent 4H swing high (high above the bar either side, within the lookback) and the most recent swing low before it — the low that created it. Until a 4H candle **closes** outside it, the bias is `NTZ` and nothing fires. `NEUTRAL` means no structure has been found yet.
+- **Correction.** A 4H close above the NTZ high sets `BULLISH` (below the low: `BEARISH`). The bias then **holds through the pullback** and only changes on a 4H close through the other side of the current structure — otherwise every pullback would put price back inside a fresh NTZ and the correction phase could never exist. `correction_active` marks a retrace of at least the threshold toward the broken level.
+- **Continuation.** The last N 1H swing highs and N swing lows since the break must each be higher than the one before (lower for sells), all on the right side of the broken level. A lower low on a buy (higher high on a sell) resets `h1_confirmed` and pauses the engines; the 4H bias does not reset.
+
+The state is recomputed from the stores rather than accumulated, so after a restart or reconnect it is exactly what it would have been with the bot running all along. Each change is logged as the brief words it (`ICC BULLISH BREAK — …`, `ICC 1H CONFIRMED — …`, `ICC INVALIDATION WARNING — …`, `4H EMA: price crossed ABOVE …`).
+
+**The gates stop the order, not the signal.** They run in the brief's order — EMA, ICC 4H bias, ICC 1H continuation — and a held signal is still logged and exported with the exact reason (`NO ORDER SENT — GPS signal held — ICC bias is NTZ…`). Blocking the engine itself would desynchronise its state from the indicator's and later signals would stop matching TradingView.
+
+The Signal State panel shows **4H EMA**, **1H EMA** (value, ABOVE/BELOW), **ICC bias**, **ICC phase** (INDICATION / CORRECTION / CONTINUATION / GPS ARMED), **4H NTZ** and **1H structure** (CONFIRMED / WAITING / BROKEN), refreshed every second. The **Market trend** read-out above them (UPTREND / DOWNTREND / RANGING, price vs EMA *and* slope) is unchanged and follows the EMA timeframe; it is information only.
 
 ## TP / SL — pip distances
 
@@ -377,9 +400,9 @@ Adoption is **idempotent** — a trade already tracked is left exactly as it is,
 | Pick up existing trades | **ON** | Master switch for the whole feature |
 | Only ones this bot placed | **OFF** | Every order is tagged (`GPSBOT-E4`), so the bot can tell its own trades from a manual one. OFF adopts anything open on the instrument, which is what hands-free running needs. ON if you also trade the symbol by hand. |
 
-Two deliberate refusals:
+Manual trades are managed the same way — management and logging follow the existence of an open trade, not who opened it. A manual trade opened while the bot is running is picked up on `OnOrderOpen` without taking a queued bot entry's levels.
 
-- An adopted trade **with no stop** is flagged loudly, but the bot will **not invent one** — it does not know what that trade was meant to risk. Trailing and breakeven still take over once it is in profit.
+- A trade **with no SL/TP** gets them from your Stop loss / Take profit 1 (pips) settings, measured from that trade's own entry. A level already set by hand is never overwritten; a level price has already passed is reported and skipped rather than sent to be rejected. With *Attach stop-loss* off, a trade with no stop is flagged loudly and left as it is.
 - **Dry Run sends nothing**, including stop modifications. Adopted trades are tracked and shown in the panel, and the log says plainly that nothing will be moved. A stop modification is an order, and Dry Run's contract is that it never sends one.
 
 ### The circuit breaker survives a refresh
@@ -489,16 +512,17 @@ test_pine_parity   19 pass   0 fail
 test_orders        17 pass   0 fail
 test_management    32 pass   0 fail
 test_trend         17 pass   0 fail
-test_sell          47 pass   0 fail
-test_adopt         41 pass   0 fail
+test_sell          49 pass   0 fail
+test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
+test_icc           64 pass   0 fail
 ----------------------------------------
-TOTAL: 304 pass, 0 fail
+TOTAL: 382 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read and the independent buy and sell trend gates; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
+Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read; the 50 EMA gate on 1H, 4H and Both, computed from 1H/4H bars only; the ICC No Trade Zone, 4H bias on confirmed closes, correction, 1H continuation and its reset, opposite-bias pause, invalidation warning and auto close, and the gates holding the order but not the signal; adopted and manual trades getting SL/TP from settings; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
 
 **Not yet tested against live market data.**
 
@@ -521,7 +545,8 @@ Coverage includes: the full signal sequence with each milestone on its own bar; 
 - Confirm each engine logs under its own label and colour, and that its order comment carries `-E1` / `-E2` / `-E3`
 - Confirm the stop and target land at the pip distances you set
 - Confirm a cross-session setup carries without resetting
-- Confirm the Market Trend tile reads sensibly against the H1 chart
+- Confirm the 4H/1H EMA values match a 50 EMA on the 4H/1H chart
+- With ICC on, confirm the 4H NTZ in the panel matches the swing high and its origin low on the 4H chart, and that the bias only changes on a 4H close
 
 Only switch to **Live Trading** once the timestamps line up. Live mode places real orders.
 
@@ -534,7 +559,7 @@ Only switch to **Live Trading** once the timestamps line up. Live mode places re
 - Hard maximum lot cap; optional cap on entries per day
 - Refuses to start above the indicator's M30 timeframe limit
 - If the broker drops the SL/TP on the opening request, the bot reattaches them and warns loudly if that fails
-- Optional higher-timeframe trend gate: BUYs only in a confirmed uptrend
+- Trend gates: 50 EMA on the 1H/4H, and the ICC 4H structure + 1H continuation filter
 - Refuses to start with every engine switched off, and warns when the stop is set to 0 pips
 
 ---

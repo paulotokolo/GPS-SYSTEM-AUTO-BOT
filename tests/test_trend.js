@@ -101,20 +101,20 @@ function fvgSequence() {
 }
 
 {
-  // Filter ON with no trend established: the BUY is still a signal, but no order goes out.
-  const sb = run(buildSandbox(), fvgSequence(), defaultCfg({ trendFilterOn: true }));
-  console.log("\n===== 5: TREND FILTER ON, TREND UNKNOWN =====");
+  // 50 EMA filter ON with no 1H/4H EMA yet: the BUY is still a signal, but no order goes out.
+  const sb = run(buildSandbox(), fvgSequence(), defaultCfg({ emaFilterOn: true, emaTimeframe: "4h" }));
+  console.log("\n===== 5: EMA FILTER ON, EMA NOT READY =====");
   console.log("orders:", sb.__orders.length, "| signals:", sb.signalLog.length);
   check("5: the signal is still recorded", sb.signalLog.length === 1);
   check("5: the BUY is still logged", sb.__logLines.some((l) => l.includes("GPS BUY —")));
   check("5: but no order was sent", sb.__orders.length === 0);
   check("5: and the log says the filter is why",
-    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /trend filter/i.test(l)));
+    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /EMA filter/i.test(l) && /not ready/.test(l)));
 }
 
 {
   // Same series, filter OFF: the order goes out. Proves the filter is what stopped it.
-  const sb = run(buildSandbox(), fvgSequence(), defaultCfg({ trendFilterOn: false }));
+  const sb = run(buildSandbox(), fvgSequence(), defaultCfg({ emaFilterOn: false }));
   check("5: with the filter OFF the same signal DOES order", sb.__orders.length === 1);
 }
 

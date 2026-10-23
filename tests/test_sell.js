@@ -121,20 +121,31 @@ const sellOnly = (over) => defaultCfg(Object.assign({
 
 // ---------------------------------------------------------------- 3: the sell trend gate
 {
-  // Trend is unknown in the harness (no trend store), so a sell gate set to "downtrend
-  // only" must hold the order back while still recording the signal.
-  const sb = run(buildSandbox(), sellSequence(), sellOnly({ trendFilterSellOn: true }));
+  // No 1H/4H EMA in the harness yet, so the 50 EMA filter must hold the sell back while
+  // still recording the signal.
+  const sb = run(buildSandbox(), sellSequence(), sellOnly({ emaFilterOn: true, emaTimeframe: "4h" }));
   console.log("\n===== 3: SELL TREND GATE =====");
   console.log("orders:", sb.__orders.length, "| signals:", sb.signalLog.length);
   check("3: the signal is still recorded", sb.signalLog.length === 1);
   check("3: but no order was sent", sb.__orders.length === 0);
   check("3: and the log says the sell gate is why",
-    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /sell trend filter/i.test(l)));
+    sb.__logLines.some((l) => /NO ORDER SENT/.test(l) && /EMA filter/i.test(l)));
 }
 {
-  // The BUY gate must not touch sells — the two are independent.
-  const sb = run(buildSandbox(), sellSequence(), sellOnly({ trendFilterOn: true }));
-  check("3: the buy gate does not block a sell", sb.__orders.length === 1);
+  // Price (~2000) below the 4H EMA is a sell market: the sell goes through.
+  const sb = buildSandbox();
+  sb.icc.ema_4h = 3000;
+  run(sb, sellSequence(), sellOnly({ emaFilterOn: true, emaTimeframe: "4h" }));
+  check("3: a sell below the 4H EMA is sent", sb.__orders.length === 1);
+}
+{
+  // Price above the 4H EMA: the same sell is held, and the log names the EMA.
+  const sb = buildSandbox();
+  sb.icc.ema_4h = 1000;
+  run(sb, sellSequence(), sellOnly({ emaFilterOn: true, emaTimeframe: "4h" }));
+  check("3: a sell above the 4H EMA is held", sb.__orders.length === 0);
+  check("3: and the log says it is on the wrong side of the 4H EMA",
+    sb.__logLines.some((l) => /wrong side of 4H EMA 1000\.00 for sell/.test(l)));
 }
 
 // ---------------------------------------------------------------- 4: the 5-candle mirror
