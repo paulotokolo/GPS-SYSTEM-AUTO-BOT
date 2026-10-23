@@ -614,6 +614,7 @@ button:active { transform: scale(0.98); }
     <button class="eng-more" id="iccMore" type="button">&#9656; ICC settings</button>
     <div class="eng-body" id="iccBody">
       <div class="row"><label>NTZ lookback bars (4H)</label><input type="number" id="iccNtzLookback" value="20" step="1" min="3"></div>
+      <div class="row"><label>Swing strength (bars each side)</label><input type="number" id="iccSwingStrength" value="3" step="1" min="1" max="10"></div>
       <div class="row"><label>Require 1H continuation</label><input type="checkbox" id="iccRequireH1" checked></div>
       <div class="row"><label>1H swing point lookback</label><input type="number" id="iccH1Swings" value="3" step="1" min="2"></div>
       <div class="row"><label>Correction zone threshold (% of NTZ)</label><input type="number" id="iccCorrectionPct" value="50" step="1" min="0" max="100"></div>
@@ -622,7 +623,9 @@ button:active { transform: scale(0.98); }
     </div>
     <small class="hint">
       <b>Indication:</b> the 4H No Trade Zone is the latest 4H swing high and the swing low that
-      created it &mdash; nothing fires until a 4H candle <b>closes</b> outside it.
+      created it &mdash; nothing fires until a 4H candle <b>closes</b> outside it. A swing is the
+      highest high / lowest low of <b>Swing strength</b> bars on each side, on the 4H and the 1H
+      &mdash; 3 matches Liquid&rsquo;s &ldquo;Swing Prices (3)&rdquo; indicator.
       <b>Correction:</b> after the break the bias holds while price pulls back; engines wait.
       <b>Continuation:</b> the 1H prints higher highs and lows above the broken level (buys) or
       lower highs and lows below it (sells) &mdash; engines are armed. Auto close only acts on a
@@ -2341,22 +2344,37 @@ function emaOfBars(bars, len) {
   return e[e.length - 1];
 }
 
-function isSwingHigh(bars, i) {
-  return i >= 1 && i < bars.length - 1 && bars[i].h > bars[i - 1].h && bars[i].h > bars[i + 1].h;
+// A swing high is the highest high of `n` closed bars on each side of it (a swing low, the
+// lowest low) — the same rule as Liquid's "Swing Prices (n)" indicator, so the levels the
+// bot uses are the ones marked on the chart. n = 1 is the bare 3-bar pivot, which also
+// catches every minor bounce. On a flat top/bottom the first bar of the tie is the swing.
+function isSwingHigh(bars, i, n) {
+  n = n || 1;
+  if (i < n || i + n >= bars.length) return false;
+  for (var d = 1; d <= n; d++) {
+    if (!(bars[i].h > bars[i - d].h) || !(bars[i].h >= bars[i + d].h)) return false;
+  }
+  return true;
 }
-function isSwingLow(bars, i) {
-  return i >= 1 && i < bars.length - 1 && bars[i].l < bars[i - 1].l && bars[i].l < bars[i + 1].l;
+function isSwingLow(bars, i, n) {
+  n = n || 1;
+  if (i < n || i + n >= bars.length) return false;
+  for (var d = 1; d <= n; d++) {
+    if (!(bars[i].l < bars[i - d].l) || !(bars[i].l <= bars[i + d].l)) return false;
+  }
+  return true;
 }
 
 // The NTZ as of closed bar k: the most recent swing high within the last `lookback` bars,
 // and the most recent swing low before it — the low that created that high. A swing point
-// needs the bar after it closed, so bar k itself can never be one.
-function findNtz(bars, k, lookback) {
-  var from = Math.max(1, k - lookback + 1);
-  for (var i = k - 1; i >= from; i--) {
-    if (!isSwingHigh(bars, i)) continue;     // reads bar i+1 <= k: closed by then
-    for (var j = i - 1; j >= 1; j--) {
-      if (isSwingLow(bars, j) && bars[j].l < bars[i].h) {
+// needs its `n` bars on the right closed, so the newest n bars can never be one yet.
+function findNtz(bars, k, lookback, n) {
+  n = n || 1;
+  var from = Math.max(n, k - lookback + 1);
+  for (var i = k - n; i >= from; i--) {
+    if (!isSwingHigh(bars, i, n)) continue;  // reads up to bar i+n <= k: closed by then
+    for (var j = i - 1; j >= n; j--) {
+      if (isSwingLow(bars, j, n) && bars[j].l < bars[i].h) {
         return { high: bars[i].h, low: bars[j].l, hiTs: bars[i].ts, loTs: bars[j].ts };
       }
     }
@@ -2366,12 +2384,12 @@ function findNtz(bars, k, lookback) {
 }
 
 // Walks the closed 4H bars oldest to newest. Bias only ever changes on a confirmed close.
-function compute4hStructure(bars, lookback) {
+function compute4hStructure(bars, lookback, n) {
   var st = { bias: "NEUTRAL", ntz: null, breakLevel: null, breakTs: null, breakRange: null,
              lastBreakTs: null, brokenKey: null };
   var tfMs = H4_SECONDS * 1000;
   for (var k = 2; k < bars.length; k++) {
-    var z = findNtz(bars, k, lookback);
+    var z = findNtz(bars, k, lookback, n);
     if (z) st.ntz = z;                       // no new swing in range: keep the last one
     if (!st.ntz) continue;
 
@@ -2420,14 +2438,14 @@ function correctionActive(bars, st, pct) {
 // 1H continuation: the last N swing highs and N swing lows since the 4H break each beyond
 // the one before (higher for buys, lower for sells), all on the right side of the broken
 // level. A lower low on a buy (or higher high on a sell) breaks the sequence by itself.
-function h1Continuation(bars, bias, level, sinceTs, n) {
+function h1Continuation(bars, bias, level, sinceTs, n, strength) {
   if (bias !== "BULLISH" && bias !== "BEARISH") return false;
   var bull = bias === "BULLISH";
   var highs = [], lows = [];
   for (var i = 1; i < bars.length - 1; i++) {
     if (bars[i].ts < sinceTs) continue;
-    if (isSwingHigh(bars, i)) highs.push(bars[i].h);
-    if (isSwingLow(bars, i))  lows.push(bars[i].l);
+    if (isSwingHigh(bars, i, strength)) highs.push(bars[i].h);
+    if (isSwingLow(bars, i, strength))  lows.push(bars[i].l);
   }
   if (highs.length < n || lows.length < n) return false;
   var H = highs.slice(-n), L = lows.slice(-n);
@@ -2442,7 +2460,8 @@ function h1Continuation(bars, bias, level, sinceTs, n) {
 
 function evaluateIcc() {
   var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
-  var st = compute4hStructure(b4, Math.max(3, cfg.iccNtzLookback));
+  var strength = Math.max(1, cfg.iccSwingStrength || 1);
+  var st = compute4hStructure(b4, Math.max(3, cfg.iccNtzLookback), strength);
 
   icc.bias = st.bias;
   icc.ntz_high = st.ntz ? st.ntz.high : null;
@@ -2455,7 +2474,7 @@ function evaluateIcc() {
   icc.correction_active = directional &&
     correctionActive(b1.length ? b1 : b4, st, cfg.iccCorrectionPct);
   icc.h1_confirmed = directional &&
-    h1Continuation(b1, st.bias, st.breakLevel, st.breakTs, Math.max(2, cfg.iccH1Swings));
+    h1Continuation(b1, st.bias, st.breakLevel, st.breakTs, Math.max(2, cfg.iccH1Swings), strength);
 
   // BROKEN = it was confirmed on this same 4H break and has since been lost. It stays
   // BROKEN, not WAITING, until the 1H re-establishes or the 4H bias changes.
@@ -4175,7 +4194,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "attachSl","attachTp","attachMode","testLots","testSlPips",
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
-  "iccOn","iccNtzLookback","iccRequireH1","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
+  "iccOn","iccNtzLookback","iccSwingStrength","iccRequireH1","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
@@ -4308,6 +4327,7 @@ function readConfig() {
     trendTimeframe: document.getElementById("emaTimeframe").value === "1h" ? 3600 : 14400,
     iccOn: chk("iccOn"),
     iccNtzLookback: Math.max(3, int("iccNtzLookback", 20)),
+    iccSwingStrength: Math.min(10, Math.max(1, int("iccSwingStrength", 3))),
     iccRequireH1: chk("iccRequireH1"),
     iccH1Swings: Math.max(2, int("iccH1Swings", 3)),
     iccCorrectionPct: Math.min(100, Math.max(0, num("iccCorrectionPct", 50))),
@@ -4579,7 +4599,8 @@ function startBot() {
       "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn
-        ? "ON  ·  NTZ lookback " + cfg.iccNtzLookback + " (4H)  ·  1H continuation " +
+        ? "ON  ·  NTZ lookback " + cfg.iccNtzLookback + " (4H)  ·  swing strength " +
+          cfg.iccSwingStrength + "  ·  1H continuation " +
           (cfg.iccRequireH1 ? "required (" + cfg.iccH1Swings + " swings)" : "not required") +
           "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")

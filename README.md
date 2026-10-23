@@ -130,6 +130,7 @@ Both filters are independent toggles under **Trend Settings**. With both on, bot
 | EMA period | 50 | Computed from closed 1H/4H bars |
 | Enable ICC filter | **OFF** | |
 | NTZ lookback bars (4H) | 20 | |
+| Swing strength (bars each side) | 3 | Matches Liquid's *Swing Prices (3)*; used on the 4H and the 1H |
 | Require 1H continuation | **ON** | OFF unlocks on the 4H break alone |
 | 1H swing point lookback | 3 | Swing highs *and* swing lows checked |
 | Correction zone threshold | 50% | Of the NTZ range, toward the broken level |
@@ -138,7 +139,7 @@ Both filters are independent toggles under **Trend Settings**. With both on, bot
 
 **ICC — Indication, Correction, Continuation.**
 
-- **Indication.** The 4H No Trade Zone is the most recent 4H swing high (high above the bar either side, within the lookback) and the most recent swing low before it — the low that created it. Until a 4H candle **closes** outside it, the bias is `NTZ` and nothing fires. `NEUTRAL` means no structure has been found yet.
+- **Indication.** The 4H No Trade Zone is the most recent 4H swing high (within the lookback) and the most recent swing low before it — the low that created it. A swing high is the highest high of *Swing strength* closed bars on each side (a swing low, the lowest low), the same rule as Liquid's *Swing Prices* indicator, so the NTZ sits on the levels that indicator labels. The brief's literal "higher than the bar before and after" is strength 1, which also marks every minor bounce — on ZECUSDT it put the NTZ high on a 1258.15 bounce instead of the 1367.74 swing. Until a 4H candle **closes** outside it, the bias is `NTZ` and nothing fires. `NEUTRAL` means no structure has been found yet.
 - **Correction.** A 4H close above the NTZ high sets `BULLISH` (below the low: `BEARISH`). The bias then **holds through the pullback** and only changes on a 4H close through the other side of the current structure — otherwise every pullback would put price back inside a fresh NTZ and the correction phase could never exist. `correction_active` marks a retrace of at least the threshold toward the broken level.
 - **Continuation.** The last N 1H swing highs and N swing lows since the break must each be higher than the one before (lower for sells), all on the right side of the broken level. A lower low on a buy (higher high on a sell) resets `h1_confirmed` and pauses the engines; the 4H bias does not reset.
 
@@ -517,9 +518,9 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           67 pass   0 fail
+test_icc           74 pass   0 fail
 ----------------------------------------
-TOTAL: 385 pass, 0 fail
+TOTAL: 392 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

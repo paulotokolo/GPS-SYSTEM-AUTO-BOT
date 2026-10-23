@@ -40,7 +40,8 @@ function iccSandbox(over) {
   const sb = buildSandbox();
   sb.cfg = defaultCfg(Object.assign({
     emaFilterOn: false, emaTimeframe: "4h", trendEmaLen: 50,
-    iccOn: true, iccNtzLookback: 20, iccRequireH1: true, iccH1Swings: 3,
+    // The structural tests below are built on 1-bar swings; section 11 covers strength 3.
+    iccOn: true, iccNtzLookback: 20, iccSwingStrength: 1, iccRequireH1: true, iccH1Swings: 3,
     iccCorrectionPct: 50, iccPauseOpposite: true, iccAutoClose: false
   }, over || {}));
   sb.priceDecimals = 2;
@@ -362,6 +363,56 @@ function loadWith(saved) {
   const sb = loadWith({ instrumentId: "XAU/USD", engines: { e1: { enabled: true } }, emaFilterOn: true });
   check("10: nor is a user whose saved settings already include the EMA choice",
     !sb.__logLines.some((l) => /now defaults ON/.test(l)));
+}
+
+// ---------------------------------------------------------------- 11: swing strength
+// The client's ZECUSDT 4H chart, against Liquid's "Swing Prices (3)" labels:
+//   highs 1184.40, 1190.23, 1367.74   lows 1098.01, 1048.55, 1110.12, 1187.26
+// with a minor bounce to 1258.15 on the way down that a 1-bar pivot calls a swing high.
+function zecChart() {
+  const hl = [
+    [1140, 1100], [1150, 1110], [1160, 1120], [1184.40, 1140], [1170, 1120],
+    [1150, 1098.01], [1160, 1105], [1175, 1115], [1190.23, 1140], [1150, 1080],
+    [1120, 1048.55], [1100, 1060], [1130, 1115], [1150, 1125], [1160, 1130],
+    [1140, 1110.12], [1180, 1130], [1220, 1170], [1270, 1210], [1320, 1260],
+    [1367.74, 1300], [1340, 1280], [1300, 1240], [1250, 1225], [1258.15, 1232],
+    [1240, 1200], [1215, 1187.26], [1225, 1195], [1230, 1205], [1228, 1210], [1226, 1212]
+  ];
+  return hl.map(([h, l], i) => B(T0 + i * H4, (h + l) / 2, h, l, i >= 16 && i <= 20 ? h - 2 : (h + l) / 2));
+}
+{
+  const sb = iccSandbox({ iccSwingStrength: 3, iccRequireH1: false });
+  feed(sb, zecChart());
+  const marked = [];
+  const bars = zecChart();
+  for (let i = 0; i < bars.length; i++) {
+    if (sb.isSwingHigh(bars, i, 3)) marked.push("H " + bars[i].h);
+    if (sb.isSwingLow(bars, i, 3)) marked.push("L " + bars[i].l);
+  }
+  console.log("\n===== 11: SWING STRENGTH 3 vs LIQUID'S SWING PRICES (3) =====");
+  console.log("swings marked:", marked.join(", "));
+  console.log("NTZ", sb.icc.ntz_high, "/", sb.icc.ntz_low, "| bias", sb.icc.bias, "| broken", sb.icc.break_level);
+  check("11: strength 3 marks exactly the indicator's swings",
+    marked.join(",") === "H 1184.4,L 1098.01,H 1190.23,L 1048.55,L 1110.12,H 1367.74,L 1187.26", marked.join(","));
+  check("11: the minor bounce at 1258.15 is NOT a swing high", !marked.includes("H 1258.15"));
+  check("11: NTZ high is the 1367.74 swing high", sb.icc.ntz_high === 1367.74, sb.icc.ntz_high);
+  check("11: NTZ low is 1110.12, the swing low that created it", sb.icc.ntz_low === 1110.12, sb.icc.ntz_low);
+  check("11: the rally's close above 1190.23 set the bias BULLISH",
+    sb.icc.bias === "BULLISH" && sb.icc.break_level === 1190.23, sb.icc.bias + " " + sb.icc.break_level);
+}
+{
+  // The old 1-bar rule picks up the bounce — the mismatch the client saw.
+  const sb = iccSandbox({ iccSwingStrength: 1 });
+  feed(sb, zecChart());
+  check("11: with strength 1 the NTZ high is a minor bounce, not 1367.74",
+    sb.icc.ntz_high !== 1367.74, "NTZ high " + sb.icc.ntz_high);
+}
+{
+  // A flat top: two equal highs. The first of the pair is the swing, not neither.
+  const flatTop = [[10, 5], [11, 6], [12, 7], [15, 9], [15, 9], [13, 8], [12, 7], [11, 6]]
+    .map(([h, l], i) => B(T0 + i * H4, l, h, l, l));
+  const sb = buildSandbox();
+  check("11: on equal highs the first bar is the swing", sb.isSwingHigh(flatTop, 3, 3) && !sb.isSwingHigh(flatTop, 4, 3));
 }
 
 console.log("\n===== ASSERTIONS =====");
