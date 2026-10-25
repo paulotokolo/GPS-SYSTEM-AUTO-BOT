@@ -507,6 +507,7 @@ button:active { transform: scale(0.98); }
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mIccDir">&mdash;</span></div>
         <div class="state-box"><span class="state-label" id="mIccNtzLabel">NTZ high / low</span><span class="state-value" id="mIccNtz">&mdash;</span></div>
         <div class="state-box" id="mIccAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mIccAlign">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Entry mode</span><span class="state-value" id="mIccMode">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last entry</span><span class="state-value" id="mIccLast">&mdash;</span></div>
       </div>
     </div>
@@ -707,6 +708,15 @@ button:active { transform: scale(0.98); }
         </select>
       </div>
       <div class="row"><label>Trail after TP (hold past target)</label><input type="checkbox" id="iccModelTrail"></div>
+      <div class="row"><label>Aggressive Entry Mode</label><input type="checkbox" id="iccModelAggressive"></div>
+      <small class="hint">
+        <b>Standard</b> (OFF): enters on the 1H candle close that confirms continuation.
+        <b>Aggressive</b> (ON): enters the moment live price crosses back through the NTZ level
+        after the break &mdash; no candle close, no structure confirmation, no pullback. SL inside
+        the 1H swing range, TP at the structure target, up to 2 entries per cycle (re-arms when
+        price goes back inside the NTZ). <b>Alignment has no effect in Aggressive mode</b> &mdash;
+        use Standard if you want alignment.
+      </small>
       <small class="hint">The continuation 1H close <b>is</b> the entry: one market order per cycle. Entry
         timeframe is fixed at 1H. Not blocked by the 50 EMA or ICC filter.</small>
     </div>
@@ -2771,6 +2781,7 @@ function pollTrendStores() {
   var b4 = h4Store && h4Store.length > 1 ? h4Store.GetCandle(1) : null;
   var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
   key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
+  try { checkAggressiveEntry(livePrice()); } catch (e) {}
   if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
   trendStoreLens = key;
   updateTrendFilters();
@@ -2992,6 +3003,7 @@ function runIccCycle(p, data, mods) {
   // made continuation.
   var modelStep = function (k, t, h, fresh) {
     var sub = st.m[k], side = bull() ? "BUY" : "SELL";
+    if (k === "icc" && mods.icc.aggressive) return;   // Aggressive mode enters on the live cross instead
     if (k === "icc" && sub.entered) return;
     if (k === "gps" && sub.active) return;
     var fire = function (how) {
@@ -3198,7 +3210,7 @@ function updateEntryModels() {
   var sBars = p.structTf === "daily" ? data.d1 : data.h4;
   if (sBars.length < 3 || data.h1.length < 3) return;             // feeds still loading
   var mods = {
-    icc: { on: !!cfg.iccModelOn, align: !!cfg.iccModelAlign },
+    icc: { on: !!cfg.iccModelOn, align: !!cfg.iccModelAlign, aggressive: !!cfg.iccModelAggressive },
     gps: { on: !!cfg.gpsModelOn, align: !!cfg.gpsModelAlign }
   };
   var st = runIccCycle(p, data, mods);
@@ -3295,6 +3307,122 @@ function armTrailsAtTarget(target) {
   if (cfg.autoTrailingOn) { try { manageOpenTrades(); } catch (ex) {} }
 }
 
+// =====================================================================================
+//  ICC ENTRY MODEL — AGGRESSIVE ENTRY MODE
+//
+//  Same shared cycle (lock, indication, correction, target, resets). Only the trigger
+//  differs: instead of waiting for a 1H close, the entry fires the moment LIVE price crosses
+//  back through the broken NTZ level in the break direction — no candle close, no structure
+//  confirmation, no pullback wait, no alignment.
+//
+//    Armed  — after the indication, price is back inside the NTZ (below the broken high on a
+//             bullish cycle, above the broken low on a bearish one).
+//    Fire   — armed, and live price crosses back through that level.
+//    Again  — if price goes back inside before the TP is hit it re-arms. Max 2 per cycle.
+//
+//  SL sits inside the latest 1H swing range (the midpoint of the 1H swing high and low), or
+//  halfway to the 1H swing on the far side if the midpoint is not beyond the entry. TP is the
+//  structure target. This runs on the live price every second; it is runtime state, so it
+//  only ever arms from price actually being inside the NTZ while the bot is running.
+// =====================================================================================
+var AGGRESSIVE_MAX_ENTRIES = 2;
+var aggState = null;               // { key, armed, entries, lastEntry, maxLogged }
+var iccLastAggEntry = null;
+
+function aggCycleKey(st) { return st.lockHiTs + "/" + st.lockLoTs + "/" + st.dir + "/" + st.indBarTs; }
+
+// The structure-TF extreme since the break, from the live store — the TP before the shared
+// cycle has fixed its own target at continuation.
+function liveStructTarget(st) {
+  if (st.target !== null) return st.target;
+  var p = cycleParams();
+  var bars = closedBars(p.structTf === "daily" ? d1Store : h4Store), ext = null, bull = st.dir === "buy";
+  for (var i = 0; i < bars.length; i++) {
+    if (bars[i].ts < st.indBarTs) continue;
+    var v = bull ? hv(bars[i], p.src) : lv(bars[i], p.src);
+    if (ext === null || (bull ? v > ext : v < ext)) ext = v;
+  }
+  return ext;
+}
+
+// `dip` is the furthest price reached inside the NTZ before the cross — the pullback's own
+// low (high on sells). A live cross usually comes before the 1H has confirmed a swing on
+// that side (that takes Swing strength bars), so the dip stands in for it.
+function aggressiveStop(st, entry, dip) {
+  var bull = st.dir === "buy", hi = st.latest.h1Hi, lo = st.latest.h1Lo;
+  var below = function (v) { return v !== null && v !== undefined && (bull ? v < entry : v > entry); };
+  if (bull ? !below(lo) : !below(hi)) {
+    if (bull) lo = below(dip) ? dip : lo; else hi = below(dip) ? dip : hi;
+  }
+  if (hi !== null && lo !== null) {
+    var mid = (hi + lo) / 2;
+    if (below(mid)) return { sl: mid, how: "midpoint of the 1H swing range " + fmt(lo) + "–" + fmt(hi) };
+  }
+  var far = bull ? lo : hi;
+  if (below(far)) return { sl: (entry + far) / 2, how: "halfway to the pullback " + (bull ? "low " : "high ") + fmt(far) };
+  return modelStop("icc", entry, st.dir, null, null);
+}
+
+// Called every second with the live price.
+function checkAggressiveEntry(price) {
+  if (!isRunning || !cfg || !cfg.iccModelOn || !cfg.iccModelAggressive || price === null) return;
+  var st = iccCycle;
+  var live = st && st.dir && st.lockHigh !== null && st.status === "ACTIVE";
+  if (!live) { aggState = null; return; }
+
+  var key = aggCycleKey(st);
+  if (!aggState || aggState.key !== key) aggState = { key: key, armed: false, entries: 0, maxLogged: false };
+  var bull = st.dir === "buy", level = bull ? st.lockHigh : st.lockLow;
+  var inside = bull ? price < level : price > level;
+  var tag = "[ICC ENTRY MODEL] AGGRESSIVE";
+
+  if (aggState.entries >= AGGRESSIVE_MAX_ENTRIES) {
+    if (inside && !aggState.maxLogged) {
+      aggState.maxLogged = true;
+      log(tag + " — price back inside the NTZ, but the max " + AGGRESSIVE_MAX_ENTRIES + " entries for this cycle " +
+          "are used. No more entries until the next cycle.", "log-info");
+    }
+    return;
+  }
+  if (inside) {
+    if (aggState.armed) aggState.dip = bull ? Math.min(aggState.dip, price) : Math.max(aggState.dip, price);
+    if (!aggState.armed) {
+      aggState.armed = true;
+      aggState.dip = price;
+      log(tag + " ARMED — price back inside the NTZ (" + (bull ? "below " : "above ") + fmt(level) + "). Entry " +
+          (aggState.entries + 1) + "/" + AGGRESSIVE_MAX_ENTRIES + " fires the moment price crosses back " +
+          (bull ? "above " : "below ") + fmt(level) + ".", "log-info");
+    }
+    return;
+  }
+  if (!aggState.armed) return;                  // never fires without first being inside
+
+  aggState.armed = false;
+  aggState.entries++;
+  var side = bull ? "BUY" : "SELL";
+  var sl = aggressiveStop(st, price, aggState.dip);
+  var tgt = liveStructTarget(st);
+  var tp = modelTarget("icc", price, st.dir, tgt);
+  iccLastAggEntry = { dir: side, price: price, ts: Date.now() };
+  log(tag + " ENTRY " + aggState.entries + "/" + AGGRESSIVE_MAX_ENTRIES + " — price crossed " + (bull ? "above " : "below ") +
+      fmt(level) + " live. " + side + " Entry: " + fmt(price) + " | SL: " + fmt(sl.sl) + " (" + sl.how + ") | TP: " +
+      (tp.tp !== null ? fmt(tp.tp) : "none") + " (" + tp.how + ")", bull ? "log-buy" : "log-sell");
+
+  if (side === "BUY" ? !cfg.enableBuys : !cfg.enableSells) {
+    log(tag + " — NO ORDER SENT: " + side + " signals are switched off under Trade Direction.", "log-warn");
+    return;
+  }
+  signalCount++;
+  signalLog.push({ time: nyParts(Date.now()).fullLabel, model: "ICC ENTRY MODEL (AGGRESSIVE)", engine: "ICC ENTRY MODEL",
+                   kind: side, entry: price, sl: sl.sl, tp1: tp.tp === null ? "" : tp.tp, tp2: "", tp3: "",
+                   ref: "ICC " + cycleParams().structTf.toUpperCase() + " aggressive " + aggState.entries, bodyPct: "" });
+  refreshStatsDisplay();
+  beep();
+  submitOrder(null, price, sl.sl, tp.tp, tag + " " + side + " " + aggState.entries + "/" + AGGRESSIVE_MAX_ENTRIES, {
+    dir: st.dir, comment: BOT_TAG + "-ICCA", forceLevels: true, holdForTarget: !!cfg.iccModelTrail
+  });
+}
+
 // Gate for GPS engine orders while the GPS Entry Model is on. Null = allowed.
 function gpsModelGateReason(sell) {
   if (!cfg || !cfg.gpsModelOn) return null;
@@ -3367,7 +3495,20 @@ function renderModelPanels() {
     var statusCls = st.status === "COMPLETE" || st.status === "ACTIVE" ? "up" : st.status === "TIMED OUT" ? "down" : "muted";
     if (kind === "icc") {
       set("mIccStatus", statusText, statusCls);
-      set("mIccLast", since(st.lastIccEntry), st.lastIccEntry ? "" : "muted");
+      var lastE = st.lastIccEntry;
+      if (iccLastAggEntry && (!lastE || iccLastAggEntry.ts > lastE.ts)) lastE = iccLastAggEntry;
+      set("mIccLast", since(lastE), lastE ? "" : "muted");
+      if (!cfg.iccModelAggressive) {
+        set("mIccMode", "STANDARD — 1H close" + (alignOn ? " + alignment" : ""), "");
+      } else {
+        var used = aggState && aggState.key === aggCycleKey(st) ? aggState.entries : 0;
+        var armed = aggState && aggState.key === aggCycleKey(st) && aggState.armed;
+        set("mIccMode", "AGGRESSIVE — " + (!st.dir || st.status !== "ACTIVE" ? "waiting for a break"
+              : used >= AGGRESSIVE_MAX_ENTRIES ? "max entries used"
+              : armed ? "ARMED, fires on cross of " + fmt(bull ? st.lockHigh : st.lockLow)
+              : "waiting for price back inside NTZ") + " · " + used + "/" + AGGRESSIVE_MAX_ENTRIES,
+            armed ? (bull ? "up" : "down") : "pending");
+      }
     } else {
       set("mGpsStatus", statusText, statusCls);
       var live = engines.filter(function (e) { return e.def.dir === st.dir; })
@@ -3387,6 +3528,8 @@ function renderModelPanels() {
 }
 
 function resetEntryModels() {
+  aggState = null;
+  iccLastAggEntry = null;
   iccCycle = null;
   iccCycleSeen = null;
   gpsModelLastEntry = null;
@@ -4917,7 +5060,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "emaFilterOn","emaTimeframe","trendEmaLen",
   "iccOn","iccNtzLookback","iccSwingStrength","iccSwingSource","iccRequireH1",
   "gpsModelOn","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
-  "iccModelOn","iccModelAlign","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
+  "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
@@ -5062,6 +5205,7 @@ function readConfig() {
     gpsModelTrail: chk("gpsModelTrail"),
     iccModelOn: chk("iccModelOn"),
     iccModelAlign: chk("iccModelAlign"),
+    iccModelAggressive: chk("iccModelAggressive"),
     iccModelTpStruct: chk("iccModelTpStruct"),
     iccModelSlMode: document.getElementById("iccModelSlMode").value || "pips",
     iccModelTrail: chk("iccModelTrail"),
@@ -5354,8 +5498,10 @@ function startBot() {
       "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
         "GPS Entry Model " + (cfg.gpsModelOn ? "ON (engines on " + tfName(cfg.timeframe) + (cfg.gpsModelAlign ? ", alignment" : "") +
           ", SL " + cfg.gpsModelSlMode + (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
-        "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (1H entry" + (cfg.iccModelAlign ? ", alignment" : "") +
-          ", SL " + cfg.iccModelSlMode + (cfg.iccModelTrail ? ", trail after TP" : "") + ")" : "off") +
+        "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (" + (cfg.iccModelAggressive ? "AGGRESSIVE live-cross entry"
+          : "1H entry" + (cfg.iccModelAlign ? ", alignment" : "")) +
+          ", SL " + (cfg.iccModelAggressive ? "inside 1H swing range" : cfg.iccModelSlMode) +
+          (cfg.iccModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  swings " + cfg.iccSwingStrength + " bars, " + cfg.iccSwingSource,
       "Levels      SL " + cfg.slPips + "p  ·  TP " + cfg.tp1Pips + "/" + cfg.tp2Pips +
         "/" + cfg.tp3Pips + "p",

@@ -177,6 +177,8 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 
 **ICC Entry Model** — the continuation 1H close (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades — only the 1H candle that just closed.
 
+**ICC Entry Model — Aggressive Entry Mode** (toggle, default OFF). Same shared cycle; only the trigger changes. After the indication, once price is back **inside** the NTZ the model is armed, and the entry fires the moment **live** price crosses back through the broken level (above the NTZ high on a bullish cycle, below the low on a bearish one) — no candle close, no structure confirmation, no pullback wait, and **alignment has no effect** (use Standard for alignment). SL sits inside the 1H swing range: the midpoint of the latest 1H swing high and swing low, or halfway to the pullback's low if that midpoint is not below the entry (the dip inside the NTZ stands in for a 1H swing not yet confirmed). TP is the structure target; Trail after TP works as in Standard. If price goes back inside before the TP it re-arms — **max 2 entries per cycle**. Orders are tagged `GPSBOT-ICCA`; the panel's *Entry mode* row shows ARMED / waiting and entries used.
+
 **GPS Entry Model** — at continuation (alignment OFF) or the pullback touch (alignment ON) the GPS engines switch **on**, in the break direction only, on the bot's *Timeframe* (M5 or M15), until the cycle ends. Until then every engine signal logs `NO ORDER SENT — GPS Entry Model: engines WAITING`.
 
 Each model has its own Signal State panel: phase, cycle status, break direction, locked NTZ, Daily / 4H / 1H alignment (✅/❌, when alignment is on), engine status / entry TF (GPS) and last entry. On Start the bot logs `[ICC] Session start — Locked NTZ High … | Current Phase …`. The signal CSV has a **Model** column.
@@ -551,9 +553,9 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           78 pass   0 fail
-test_models        52 pass   0 fail
+test_models        69 pass   0 fail
 ----------------------------------------
-TOTAL: 448 pass, 0 fail
+TOTAL: 465 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

@@ -351,6 +351,79 @@ const activeCycle = (dir, target) => ({ phase: "CONTINUATION", dir, target, m: {
   check("8: and indicates on a Daily close", st.events.some((e) => /Daily closed above NTZ 104\.00/.test(e.text)));
 }
 
+// ---------------------------------------------------------------- 9: Aggressive Entry Mode
+// The base cycle up to the correction (NTZ 104 / 101, bullish break, 1H correcting), then
+// live prices fed straight in.
+function aggSandbox(over) {
+  const sb = modelSandbox(Object.assign({ iccModelAggressive: true }, over || {}));
+  const s = series(BASE, START);
+  const lastTs = s.h1[s.h1.length - 1].ts;
+  sb.h4Store = storeOf(s.h4.filter((b) => b.ts + H4 <= lastTs), H4);
+  sb.h1Store = storeOf(s.h1.slice(0, -1), H1);
+  sb.updateEntryModels();
+  return sb;
+}
+{
+  const sb = aggSandbox();
+  check("9: the shared cycle is in CORRECTION, bullish, NTZ high 104",
+    sb.iccCycle.phase === "CORRECTION" && sb.iccCycle.dir === "buy" && sb.iccCycle.lockHigh === 104);
+  sb.checkAggressiveEntry(108);
+  check("9: price still above the NTZ: not armed, no entry", sb.__orders.length === 0 &&
+    !sb.__logLines.some((l) => /AGGRESSIVE ARMED/.test(l)));
+  sb.checkAggressiveEntry(103.5);
+  check("9: price back inside the NTZ arms it",
+    sb.__logLines.some((l) => /\[ICC ENTRY MODEL\] AGGRESSIVE ARMED — price back inside the NTZ \(below 104\.00\)\. Entry 1\/2/.test(l)));
+  sb.checkAggressiveEntry(104.2);
+  console.log("\n===== 9: AGGRESSIVE ENTRY =====");
+  sb.__logLines.filter((l) => /AGGRESSIVE/.test(l)).forEach((l) => console.log(l));
+  const o = sb.__orders[0];
+  check("9: the live cross back above 104 fires a BUY immediately", sb.__orders.length === 1 && o.tradingAction === "BUY");
+  check("9: tagged GPSBOT-ICCA", o && o.comment === "GPSBOT-ICCA");
+  check("9: TP = the 4H extreme since the break (110.2 - 104.2 = 60 pips)", o && o.tp && o.tp.pips === 60, o && JSON.stringify(o.tp));
+  // No confirmed 1H swing low below 104.2 yet, so the dip inside the NTZ (103.5) is the
+  // swing low: midpoint with the 1H swing high, or halfway to the dip if that is not below.
+  const lat = sb.iccCycle.latest, lo = lat.h1Lo < 104.2 ? lat.h1Lo : 103.5, mid = (lat.h1Hi + lo) / 2;
+  const wantSl = mid < 104.2 ? mid : (104.2 + lo) / 2;
+  check("9: SL inside the 1H swing range, below the entry",
+    o && o.sl && Math.abs(o.sl.pips - Math.round((104.2 - wantSl) / 0.1 * 10) / 10) < 0.11, o && JSON.stringify(o.sl));
+  check("9: the stop is tight — well inside the 100-pip fallback", o && o.sl && o.sl.pips < 20, o && JSON.stringify(o.sl));
+  check("9: logged as ENTRY 1/2", sb.__logLines.some((l) => /AGGRESSIVE ENTRY 1\/2 — price crossed above 104\.00 live\. BUY Entry: 104\.20/.test(l)));
+
+  sb.checkAggressiveEntry(104.5);
+  check("9: no second entry without going back inside first", sb.__orders.length === 1);
+  sb.checkAggressiveEntry(103);
+  sb.checkAggressiveEntry(104.1);
+  check("9: back inside + cross again = entry 2/2", sb.__orders.length === 2 &&
+    sb.__logLines.some((l) => /AGGRESSIVE ENTRY 2\/2/.test(l)));
+  sb.checkAggressiveEntry(103);
+  sb.checkAggressiveEntry(104.3);
+  check("9: max 2 entries per cycle", sb.__orders.length === 2 &&
+    sb.__logLines.some((l) => /max 2 entries for this cycle are used/.test(l)));
+  check("9: the CSV labels it ICC ENTRY MODEL (AGGRESSIVE)", sb.signalLog.every((r) => r.model === "ICC ENTRY MODEL (AGGRESSIVE)"));
+}
+{
+  const sb = aggSandbox({ iccModelAlign: true });
+  sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
+  check("9: alignment has no effect in Aggressive mode (Daily not bullish, still enters)", sb.__orders.length === 1);
+}
+{
+  const sb = aggSandbox({ iccModelTrail: true });
+  sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
+  check("9: trail after TP ON: aggressive entry sent with no TP", sb.__orders.length === 1 && !sb.__orders[0].tp);
+}
+{
+  // The standard 1H-close entry is off in Aggressive mode.
+  const sb = modelSandbox({ iccModelAggressive: true });
+  liveFeed(sb, series(BASE, START));
+  check("9: Aggressive mode: the continuation 1H close does NOT place a standard entry",
+    sb.__orders.length === 0 && !sb.__logLines.some((l) => /ENTRY PLACED/.test(l)));
+}
+{
+  const sb = aggSandbox({ iccModelAggressive: false });
+  sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
+  check("9: Aggressive OFF: live crosses do nothing", sb.__orders.length === 0);
+}
+
 console.log("\n===== ASSERTIONS =====");
 let fails = 0;
 results.forEach(([n, ok]) => { if (!ok) fails++; console.log((ok ? "PASS  " : "FAIL  ") + n); });
