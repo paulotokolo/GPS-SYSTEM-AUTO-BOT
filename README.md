@@ -130,7 +130,8 @@ Both filters are independent toggles under **Trend Settings**. With both on, bot
 | EMA period | 50 | Computed from closed 1H/4H bars |
 | Enable ICC filter | **OFF** | |
 | NTZ lookback bars (4H) | 20 | |
-| Swing strength (bars each side) | 3 | Matches Liquid's *Swing Prices (3)*; used on the 4H and the 1H |
+| Swing strength (bars each side) | 3 | Used on every ICC timeframe |
+| Swing source | **Close** | Candle body rule: swings and phases use closes. *Wick* measures highs/lows, matching Liquid's *Swing Prices* labels |
 | Require 1H continuation | **ON** | OFF unlocks on the 4H break alone |
 | 1H swing point lookback | 3 | Swing highs *and* swing lows checked |
 | Correction zone threshold | 50% | Of the NTZ range, toward the broken level |
@@ -148,6 +149,26 @@ The state is recomputed from the stores rather than accumulated, so after a rest
 **The gates stop the order, not the signal.** They run in the brief's order — EMA, ICC 4H bias, ICC 1H continuation — and a held signal is still logged and exported with the exact reason (`NO ORDER SENT — GPS signal held — ICC bias is NTZ…`). Blocking the engine itself would desynchronise its state from the indicator's and later signals would stop matching TradingView.
 
 The Signal State panel shows **4H EMA**, **1H EMA** (value, ABOVE/BELOW), **ICC bias**, **ICC phase** (INDICATION / CORRECTION / CONTINUATION / GPS ARMED), **4H NTZ** and **1H structure** (CONFIRMED / WAITING / BROKEN), refreshed every second. The **Market trend** read-out above them (UPTREND / DOWNTREND / RANGING, price vs EMA *and* slope) is unchanged and follows the EMA timeframe; it is information only.
+
+## ICC Entry Models — GPS Entry Model and ICC Entry Model
+
+Two separately toggled entry models (both **OFF** by default) built on one ICC cycle. The structure timeframe is **Daily or 4H**; the **1H** is the fixed entry layer. They are independent of the 50 EMA / ICC *filter* above, and of each other — with both on, each logs under its own prefix (`[ICC GPS MODEL]`, `[ICC ENTRY MODEL]`).
+
+**The cycle**
+
+1. **Lock.** The latest structure-TF swing high and swing low (closes, *Swing strength* bars each side) become the NTZ and are frozen for the cycle. Later swings are logged `IGNORED`.
+2. **Indication.** A structure-TF candle **body closes** outside the NTZ. Wicks never count.
+3. **Correction.** The 1H turns against the break — a 1H swing high forms after a bullish break (a swing low after a bearish one). Price does **not** have to come back into the NTZ.
+4. **Continuation.** A 1H candle closes beyond the latest corrective swing — above the lower high for buys, below the higher low for sells.
+   *Require all timeframe alignment* ON: the Daily and 4H must both be biased the trade's way (each one's latest close beyond its own swing), then price must pull back to the latest 1H swing point (higher low / lower high), and the first 1H close in the trend direction off it is the trigger. A 1H close through that swing sends it back to Correction.
+
+**Resets** — the cycle ends, and the bot waits for a fresh swing high **and** swing low before locking again, on: completion; **disrespect** (a structure-TF body close back through the other side of the NTZ); **timeout** (no correction within *Max wait* structure candles, default 20); or a **new structure swing beyond the locked level** while still waiting for the correction.
+
+**ICC Entry Model** — the trigger *is* the entry: one market order per cycle, tagged `GPSBOT-ICC`. SL below the latest 1H swing low (above the swing high for sells), TP at the structure extreme since the break; either falls back to the pip settings if it is not on the right side of the entry. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but is not blocked by the 50 EMA / ICC filter. An entry is only taken off the 1H candle that just closed — history never trades.
+
+**GPS Entry Model** — the trigger switches the GPS engines **on**, in the break direction only, on the bot's *Timeframe* (M5 or M15). Until then every engine signal logs `NO ORDER SENT — GPS Entry Model: engines WAITING`. While active, each entry's TP is the structure target (SL stays the pip stop). The engines switch off and the cycle resets when the target is hit, the NTZ is disrespected, or the *Engine active window* (default 20 structure candles) ends.
+
+Each model has its own panel in Signal State: phase, cycle status / engine status, break direction, locked NTZ, Daily / 4H / 1H alignment (✅/❌, when alignment is on), entry TF and last entry. On Start each logs where its cycle stands (`Session start — Locked NTZ High … | Current Phase …`). The signal CSV has a **Model** column.
 
 ## TP / SL — pip distances
 
@@ -518,9 +539,10 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           74 pass   0 fail
+test_icc           78 pass   0 fail
+test_models        51 pass   0 fail
 ----------------------------------------
-TOTAL: 392 pass, 0 fail
+TOTAL: 447 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

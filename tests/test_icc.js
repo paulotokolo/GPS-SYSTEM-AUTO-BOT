@@ -41,7 +41,9 @@ function iccSandbox(over) {
   sb.cfg = defaultCfg(Object.assign({
     emaFilterOn: false, emaTimeframe: "4h", trendEmaLen: 50,
     // The structural tests below are built on 1-bar swings; section 11 covers strength 3.
-    iccOn: true, iccNtzLookback: 20, iccSwingStrength: 1, iccRequireH1: true, iccH1Swings: 3,
+    // and on wicks (highs/lows distinct from closes); section 12 covers the body rule.
+    iccOn: true, iccNtzLookback: 20, iccSwingStrength: 1, iccSwingSource: "wick",
+    iccRequireH1: true, iccH1Swings: 3,
     iccCorrectionPct: 50, iccPauseOpposite: true, iccAutoClose: false
   }, over || {}));
   sb.priceDecimals = 2;
@@ -381,13 +383,13 @@ function zecChart() {
   return hl.map(([h, l], i) => B(T0 + i * H4, (h + l) / 2, h, l, i >= 16 && i <= 20 ? h - 2 : (h + l) / 2));
 }
 {
-  const sb = iccSandbox({ iccSwingStrength: 3, iccRequireH1: false });
+  const sb = iccSandbox({ iccSwingStrength: 3, iccSwingSource: "wick", iccRequireH1: false });
   feed(sb, zecChart());
   const marked = [];
   const bars = zecChart();
   for (let i = 0; i < bars.length; i++) {
-    if (sb.isSwingHigh(bars, i, 3)) marked.push("H " + bars[i].h);
-    if (sb.isSwingLow(bars, i, 3)) marked.push("L " + bars[i].l);
+    if (sb.isSwingHigh(bars, i, 3, "wick")) marked.push("H " + bars[i].h);
+    if (sb.isSwingLow(bars, i, 3, "wick")) marked.push("L " + bars[i].l);
   }
   console.log("\n===== 11: SWING STRENGTH 3 vs LIQUID'S SWING PRICES (3) =====");
   console.log("swings marked:", marked.join(", "));
@@ -412,7 +414,22 @@ function zecChart() {
   const flatTop = [[10, 5], [11, 6], [12, 7], [15, 9], [15, 9], [13, 8], [12, 7], [11, 6]]
     .map(([h, l], i) => B(T0 + i * H4, l, h, l, l));
   const sb = buildSandbox();
-  check("11: on equal highs the first bar is the swing", sb.isSwingHigh(flatTop, 3, 3) && !sb.isSwingHigh(flatTop, 4, 3));
+  check("11: on equal highs the first bar is the swing",
+    sb.isSwingHigh(flatTop, 3, 3, "wick") && !sb.isSwingHigh(flatTop, 4, 3, "wick"));
+}
+
+// ---------------------------------------------------------------- 12: candle body rule
+{
+  // Bar 3 wicks far above its neighbours but CLOSES below bar 2's close: on the body rule
+  // it is not a swing high, bar 2 is. On wicks it is the other way round.
+  const bars = [[100, 101, 99, 100], [100, 103, 99, 102], [102, 106, 101, 105],
+                [105, 115, 103, 104], [104, 105, 100, 101], [101, 102, 98, 99], [99, 100, 96, 97]]
+    .map(([o, h, l, c], i) => B(T0 + i * H4, o, h, l, c));
+  const sb = buildSandbox();
+  check("12: body rule — a wick-only spike is NOT a swing high", !sb.isSwingHigh(bars, 3, 1, "close"));
+  check("12: body rule — the highest CLOSE is the swing high", sb.isSwingHigh(bars, 2, 1, "close"));
+  check("12: wick mode still marks the wick spike", sb.isSwingHigh(bars, 3, 1, "wick"));
+  check("12: close is the default source", sb.isSwingHigh(bars, 2, 1) && !sb.isSwingHigh(bars, 3, 1));
 }
 
 console.log("\n===== ASSERTIONS =====");
