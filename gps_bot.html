@@ -657,7 +657,6 @@ button:active { transform: scale(0.98); }
           <option value="wick">Wick (match Liquid Swing Prices)</option>
         </select>
       </div>
-      <div class="row"><label>Require 1H continuation</label><input type="checkbox" id="iccRequireH1" checked></div>
       <div class="row"><label>Pause GPS on opposite bias</label><input type="checkbox" id="iccPauseOpposite" checked></div>
       <div class="row"><label>Auto close on ICC invalidation</label><input type="checkbox" id="iccAutoClose"></div>
     </div>
@@ -665,8 +664,8 @@ button:active { transform: scale(0.98); }
       Blocks GPS engine orders against the ICC structure. It reads the <b>same shared ICC
       cycle</b> as the entry models below &mdash; same NTZ high and low, same break, same phase.
       Inside the NTZ (or while scanning for a fresh swing high and low) nothing is allowed;
-      after the break only the break direction is, and with <b>Require 1H continuation</b> only
-      once the cycle reaches Continuation. A swing is the highest / lowest <b>close</b> of
+      after the break only the break direction is, and only
+      once the cycle reaches Continuation (see <b>1H continuation check</b> below). A swing is the highest / lowest <b>close</b> of
       <b>Swing strength</b> bars on each side (<b>Swing source</b> Wick measures highs and lows,
       matching Liquid&rsquo;s &ldquo;Swing Prices&rdquo; labels). Auto close acts when the NTZ is
       disrespected against an open trade, in Live mode. The structure timeframe and Max wait
@@ -724,6 +723,14 @@ button:active { transform: scale(0.98); }
       <div class="row"><label>ICC structure timeframe</label>
         <select id="iccStructTf"><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
       </div>
+      <div class="row"><label>1H continuation check</label><input type="checkbox" id="iccRequireH1" checked></div>
+      <small class="hint">
+        <b>ON</b> (entry type 1): after the break the 1H shows a corrective swing &mdash; price does
+        <b>not</b> need to come back into the NTZ &mdash; and the 1H close that flips back in the
+        break direction is the continuation. <b>OFF</b> (entry type 2): price must correct back
+        <b>into</b> the NTZ, and the 1H body close back out through the NTZ level is the
+        continuation. Applies to the ICC Filter and both models. (Aggressive Entry Mode is type 3.)
+      </small>
       <div class="row"><label>Max wait per phase (structure candles)</label><input type="number" id="iccMaxWait" value="20" step="1" min="1"></div>
       <small class="hint">
         Shared by the ICC Filter and both models, with <b>Swing strength</b> and <b>Swing source</b>
@@ -2537,9 +2544,10 @@ function trendGateReason(sell, price) {
         return "GPS signal held — ICC 4H bias is " + icc.bias + ", against this " + side +
                " (Pause GPS on Opposite Bias is ON).";
       }
-    } else if (cfg.iccRequireH1 && !icc.h1_confirmed) {
-      return "GPS signal held — ICC 4H confirmed " + want.toLowerCase() +
-             " but 1H continuation not yet confirmed. Waiting.";
+    } else if (!icc.h1_confirmed) {
+      return "GPS signal held — ICC 4H confirmed " + want.toLowerCase() + " but " +
+             (cfg.iccRequireH1 === false ? "price has not yet corrected into the NTZ and closed back out (1H)"
+                                         : "1H continuation not yet confirmed") + ". Waiting.";
     }
   }
   return null;
@@ -2970,6 +2978,21 @@ function runIccCycle(p, data, mods) {
     refreshLatest(t1);
     if (!st.dir) continue;
 
+    // 1H continuation check OFF (entry type 2): the correction is price actually coming back
+    // INTO the NTZ, and the continuation is a 1H body close back out through the broken level.
+    var level = bull() ? st.lockHigh : st.lockLow;
+    if (st.phase === "INDICATION" && p.contMode === "ntz") {
+      if (bull() ? h.c < level : h.c > level) {
+        st.phase = "CORRECTION";
+        st.waitCount = 0;
+        st.corrLevel = level;
+        emit(t1, "CORRECTION", "CORRECTION — 1H closed back inside the NTZ (" + (bull() ? "below " : "above ") +
+             fmt(level) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 + ". Waiting for a 1H close back " +
+             (bull() ? "above " : "below ") + fmt(level) + ".");
+      }
+      continue;
+    }
+
     if (st.phase === "INDICATION") {
       var c0 = latestSwing(hSw, bull(), t1, st.indBarTs);
       if (c0) {
@@ -2984,7 +3007,7 @@ function runIccCycle(p, data, mods) {
     }
 
     if (st.phase === "CORRECTION") {
-      var c1 = latestSwing(hSw, bull(), t1, st.indBarTs);
+      var c1 = p.contMode === "ntz" ? null : latestSwing(hSw, bull(), t1, st.indBarTs);
       if (c1) st.corrLevel = c1.val;                 // follows each new lower high / higher low
       if (!(bull() ? h.c > st.corrLevel : h.c < st.corrLevel)) continue;
       st.phase = "CONTINUATION";
@@ -2996,7 +3019,8 @@ function runIccCycle(p, data, mods) {
         st.target = h.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
         why = "TP1 pips — the " + sName + " extreme is not beyond the trigger";
       }
-      emit(t1, "CONTINUATION", "CONTINUATION — 1H closed " + (bull() ? "above " : "below ") + fmt(st.corrLevel) +
+      emit(t1, "CONTINUATION", "CONTINUATION — 1H closed " + (p.contMode === "ntz" ? "back out of the NTZ, " : "") +
+           (bull() ? "above " : "below ") + fmt(st.corrLevel) +
            ". TP target " + fmt(st.target) + " (" + why + ").", bull() ? "log-buy" : "log-sell");
       MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t1, h, true); });
       continue;
@@ -3021,6 +3045,9 @@ function cycleParams() {
     n: Math.max(1, cfg.iccSwingStrength || 1),
     src: cfg.iccSwingSource,
     maxWait: Math.max(1, cfg.iccMaxWait || 20),
+    // 1H continuation check ON = entry type 1 (the 1H flips back, no NTZ re-entry needed);
+    // OFF = entry type 2 (price must come back into the NTZ, then close back out of it).
+    contMode: cfg.iccRequireH1 === false ? "ntz" : "h1",
     entryTf: cfg.timeframe
   };
 }
@@ -4742,7 +4769,6 @@ function refreshStatePanel(ny) {
                                           : "scanning for a fresh swing high + low",
         icc.ntz_high !== null ? "" : "muted");
       if (icc.bias !== "BULLISH" && icc.bias !== "BEARISH") t("stH1Struct", "—", "muted");
-      else if (!cfg.iccRequireH1) t("stH1Struct", "NOT REQUIRED", "muted");
       else t("stH1Struct", icc.h1_state,
              icc.h1_state === "CONFIRMED" ? "up" : icc.h1_state === "BROKEN" ? "down" : "pending");
     }
@@ -5318,7 +5344,7 @@ function startBot() {
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn
         ? "ON  ·  reads the shared " + cfg.iccStructTf.toUpperCase() + " ICC cycle  ·  1H continuation " +
-          (cfg.iccRequireH1 ? "required" : "not required") +
+          (cfg.iccRequireH1 ? "type 1 (1H flip)" : "type 2 (NTZ re-entry + close out)") +
           "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
         : "off"),

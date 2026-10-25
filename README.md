@@ -131,14 +131,13 @@ Both filters are independent toggles under **Trend Settings**. With both on, bot
 | Enable ICC filter | **OFF** | Reads the shared ICC cycle (below) |
 | Swing strength (bars each side) | 3 | Used on every ICC timeframe |
 | Swing source | **Close** | Candle body rule: swings and phases use closes. *Wick* measures highs/lows, matching Liquid's *Swing Prices* labels |
-| Require 1H continuation | **ON** | Allow the break direction only once the cycle reaches Continuation; OFF allows it from the break |
 | Pause GPS on opposite bias | **ON** | Bullish break pauses sells; bearish pauses buys |
 | Auto close on ICC invalidation | **OFF** | Live only; closes trades the NTZ is disrespected against |
 
 **ICC Filter — one NTZ for the whole bot.** The filter has no structure scan of its own: it reads the **shared ICC cycle** described under *ICC Entry Models* — the same locked NTZ high and low, the same break, the same phase — so the filter and the entry models can never disagree about where the NTZ is. (It used to measure its own NTZ from the low that *started* the rally to the high; the client asked for one consistent NTZ everywhere.)
 
 - **Bias** is the cycle's break direction. `NTZ` while the levels are locked but unbroken, `NEUTRAL` while the cycle is scanning for a fresh swing high and low (e.g. right after a cycle completes). Both hold every GPS order.
-- **1H structure** is `CONFIRMED` once the cycle reaches Continuation; with *Require 1H continuation* ON, the break direction is only allowed from then.
+- **1H structure** is `CONFIRMED` once the cycle reaches Continuation; the break direction is only allowed from then (whichever entry type *1H continuation check* selects).
 - **Invalidation**: when the cycle logs `LEVEL DISRESPECTED` against an open trade, the filter warns (`ICC INVALIDATION WARNING — …`) and, with *Auto close* ON in Live mode, closes it.
 
 The cycle's structure timeframe (Daily / 4H), *Max wait*, *Swing strength* and *Swing source* are shared by the filter and both models. The cycle runs whenever the filter or either model is on, and logs as `[ICC] …`.
@@ -155,8 +154,15 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
 
 1. **Lock.** The structure-TF swing high and swing low that form after the last reset (closes, *Swing strength* bars each side) become the NTZ and are frozen until the cycle ends. Later swings are logged `IGNORED`.
 2. **Indication.** A structure-TF candle **body closes** outside the NTZ. Wicks never count.
-3. **Correction.** The 1H turns against the break — a 1H swing high forms after a bullish break (a swing low after a bearish one). Price does **not** have to come back into the NTZ.
-4. **Continuation.** A 1H candle closes beyond the latest corrective swing. The TP target is fixed here: the structure-TF extreme since the break (TP1 pips from the trigger if that extreme is not beyond it).
+3. **Correction** and 4. **Continuation** depend on *1H continuation check* (shared setting, default ON):
+
+   | Entry type | Correction | Continuation (the entry, for the ICC Entry Model) |
+   | :--- | :--- | :--- |
+   | **1 — check ON** | The 1H turns against the break (a 1H swing high after a bullish break). Price does **not** have to come back into the NTZ — a shallow pullback qualifies | A 1H body close back in the break direction, beyond the latest corrective swing |
+   | **2 — check OFF** | Price corrects back **into** the NTZ (a 1H close inside it) | A 1H body close back **out** through the NTZ level in the break direction |
+   | **3 — Aggressive Entry Mode** | Price back inside the NTZ (live) | The moment live price crosses back out — no candle close (ICC Entry Model only; see below) |
+
+   The TP target is fixed at continuation: the structure-TF extreme since the break (TP1 pips from the trigger if that extreme is not beyond it).
 5. **Complete.** Price reaches the target: `CYCLE COMPLETE — TP target hit at …. Bot reset.` in each model's log, *Cycle status: COMPLETE — Target Reached*.
 
 **Resets** — the cycle also ends on **disrespect** (a structure-TF body close back through the other side of the NTZ — that same close can start the opposite cycle), **timeout** (any phase lasting longer than *Max wait* structure candles, default 20), or a **new structure swing beyond the locked level** before the correction. After a reset the next NTZ is the next fresh swing high and swing low; the pair just used is never re-locked (except after a disrespect).
@@ -549,10 +555,10 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           66 pass   0 fail
-test_models        69 pass   0 fail
+test_icc           67 pass   0 fail
+test_models        76 pass   0 fail
 ----------------------------------------
-TOTAL: 453 pass, 0 fail
+TOTAL: 461 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

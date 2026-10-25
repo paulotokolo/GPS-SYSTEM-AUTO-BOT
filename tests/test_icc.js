@@ -114,10 +114,16 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   check("2: sells are paused on the opposite bias", /against this sell/.test(sb.trendGateReason(true, 109)));
 }
 {
+  // 1H continuation check OFF (entry type 2): the break alone is not enough — price has to
+  // come back into the NTZ and close back out.
   const sb = iccSandbox({ iccRequireH1: false });
   feedS(sb, series(CYCLE.slice(0, 7), T0));
-  check("2: with 'Require 1H' OFF the buy unlocks on the break alone",
-    sb.trendGateReason(false, 109) === null && sb.icc.gps_buy_unlocked);
+  check("2: check OFF: the buy is held after the break, waiting for the NTZ re-entry",
+    /has not yet corrected into the NTZ and closed back out/.test(sb.trendGateReason(false, 109)));
+  // (kept below the 109 target, so the cycle is still live)
+  feedS(sb, series(CYCLE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 105, 105.5, 106]]), T0));
+  check("2: check OFF: after a 1H close back inside and back out, the buy is open",
+    sb.trendGateReason(false, 106) === null && sb.icc.gps_buy_unlocked);
   check("2: and the phase reads GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
 }
 {

@@ -351,6 +351,46 @@ const activeCycle = (dir, target) => ({ phase: "CONTINUATION", dir, target, m: {
   check("8: and indicates on a Daily close", st.events.some((e) => /Daily closed above NTZ 104\.00/.test(e.text)));
 }
 
+// ---------------------------------------------------------------- 8b: entry type 2
+// After the break at 109 (NTZ 104 / 101): 1H closes 107, 105, 103.5 (back INSIDE the NTZ),
+// 103, then 104.5 (back OUT above 104), 106, 107, 108.
+const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107, 108]]);
+{
+  const sb = modelSandbox({ iccRequireH1: false, gpsModelOn: true });
+  const s = series(TYPE2, START);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  console.log("\n===== 8b: ENTRY TYPE 2 — NTZ RE-ENTRY =====");
+  st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
+  check("8b: type 2: CORRECTION is the 1H close back inside the NTZ",
+    st.events.some((e) => e.type === "CORRECTION" && /1H closed back inside the NTZ \(below 104\.00\)/.test(e.text)));
+  const entry = st.events.find((e) => e.type === "ENTRY");
+  check("8b: type 2: the entry is the 1H body close back out above 104", !!entry && entry.entry === 104.5,
+    entry && entry.entry);
+  check("8b: type 2: logged as closing back out of the NTZ",
+    st.events.some((e) => e.type === "CONTINUATION" && /closed back out of the NTZ, above 104\.00\. TP target 109\.00/.test(e.text)));
+  check("8b: type 2: the GPS engines switch on at the same close",
+    st.events.some((e) => e.type === "ACTIVE" && e.ts === entry.ts));
+}
+{
+  // The same candles with the check ON (type 1): the 1H swing high 109 is the corrective
+  // structure and 108 never closes above it — no entry. Type 2 entered; type 1 does not.
+  const sb = modelSandbox({ iccRequireH1: true });
+  const s = series(TYPE2, START);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: type 1 on the same candles waits for the 1H flip (no entry yet)",
+    st.phase === "CORRECTION" && !types(st).includes("ENTRY"), st.phase);
+}
+{
+  // Type 1 does not need the NTZ re-entry: the base cycle never goes back below 104 and
+  // still enters.
+  const sb = modelSandbox({ iccRequireH1: true });
+  const s = series(BASE, START);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: type 1 enters on a shallow pullback that never re-enters the NTZ", types(st).includes("ENTRY"));
+  const st2 = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: type 2 does not enter on that shallow pullback", !types(st2).includes("ENTRY"));
+}
+
 // ---------------------------------------------------------------- 9: Aggressive Entry Mode
 // The base cycle up to the correction (NTZ 104 / 101, bullish break, 1H correcting), then
 // live prices fed straight in.
