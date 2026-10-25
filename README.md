@@ -128,31 +128,28 @@ Both filters are independent toggles under **Trend Settings**. With both on, bot
 | Enable 50 EMA filter | **ON** | Buys only above the EMA, sells only below it |
 | EMA timeframe | **4H** | 1H / 4H / Both (both must agree) |
 | EMA period | 50 | Computed from closed 1H/4H bars |
-| Enable ICC filter | **OFF** | |
-| NTZ lookback bars (4H) | 20 | |
+| Enable ICC filter | **OFF** | Reads the shared ICC cycle (below) |
 | Swing strength (bars each side) | 3 | Used on every ICC timeframe |
 | Swing source | **Close** | Candle body rule: swings and phases use closes. *Wick* measures highs/lows, matching Liquid's *Swing Prices* labels |
-| Require 1H continuation | **ON** | OFF unlocks on the 4H break alone |
-| 1H swing point lookback | 3 | Swing highs *and* swing lows checked |
-| Correction zone threshold | 50% | Of the NTZ range, toward the broken level |
-| Pause GPS on opposite bias | **ON** | 4H bullish pauses sells; bearish pauses buys |
-| Auto close on ICC invalidation | **OFF** | Live only; closes trades a 4H break goes against |
+| Require 1H continuation | **ON** | Allow the break direction only once the cycle reaches Continuation; OFF allows it from the break |
+| Pause GPS on opposite bias | **ON** | Bullish break pauses sells; bearish pauses buys |
+| Auto close on ICC invalidation | **OFF** | Live only; closes trades the NTZ is disrespected against |
 
-**ICC — Indication, Correction, Continuation.**
+**ICC Filter — one NTZ for the whole bot.** The filter has no structure scan of its own: it reads the **shared ICC cycle** described under *ICC Entry Models* — the same locked NTZ high and low, the same break, the same phase — so the filter and the entry models can never disagree about where the NTZ is. (It used to measure its own NTZ from the low that *started* the rally to the high; the client asked for one consistent NTZ everywhere.)
 
-- **Indication.** The 4H No Trade Zone is the most recent 4H swing high (within the lookback) and the most recent swing low before it — the low that created it. A swing high is the highest high of *Swing strength* closed bars on each side (a swing low, the lowest low), the same rule as Liquid's *Swing Prices* indicator, so the NTZ sits on the levels that indicator labels. The brief's literal "higher than the bar before and after" is strength 1, which also marks every minor bounce — on ZECUSDT it put the NTZ high on a 1258.15 bounce instead of the 1367.74 swing. Until a 4H candle **closes** outside it, the bias is `NTZ` and nothing fires. `NEUTRAL` means no structure has been found yet.
-- **Correction.** A 4H close above the NTZ high sets `BULLISH` (below the low: `BEARISH`). The bias then **holds through the pullback** and only changes on a 4H close through the other side of the current structure — otherwise every pullback would put price back inside a fresh NTZ and the correction phase could never exist. `correction_active` marks a retrace of at least the threshold toward the broken level.
-- **Continuation.** The last N 1H swing highs and N swing lows since the break must each be higher than the one before (lower for sells), all on the right side of the broken level. A lower low on a buy (higher high on a sell) resets `h1_confirmed` and pauses the engines; the 4H bias does not reset.
+- **Bias** is the cycle's break direction. `NTZ` while the levels are locked but unbroken, `NEUTRAL` while the cycle is scanning for a fresh swing high and low (e.g. right after a cycle completes). Both hold every GPS order.
+- **1H structure** is `CONFIRMED` once the cycle reaches Continuation; with *Require 1H continuation* ON, the break direction is only allowed from then.
+- **Invalidation**: when the cycle logs `LEVEL DISRESPECTED` against an open trade, the filter warns (`ICC INVALIDATION WARNING — …`) and, with *Auto close* ON in Live mode, closes it.
 
-The state is recomputed from the stores rather than accumulated, so after a restart or reconnect it is exactly what it would have been with the bot running all along. Each change is logged as the brief words it (`ICC BULLISH BREAK — …`, `ICC 1H CONFIRMED — …`, `ICC INVALIDATION WARNING — …`, `4H EMA: price crossed ABOVE …`).
+The cycle's structure timeframe (Daily / 4H), *Max wait*, *Swing strength* and *Swing source* are shared by the filter and both models. The cycle runs whenever the filter or either model is on, and logs as `[ICC] …`.
 
 **The gates stop the order, not the signal.** They run in the brief's order — EMA, ICC 4H bias, ICC 1H continuation — and a held signal is still logged and exported with the exact reason (`NO ORDER SENT — GPS signal held — ICC bias is NTZ…`). Blocking the engine itself would desynchronise its state from the indicator's and later signals would stop matching TradingView.
 
-The Signal State panel shows **4H EMA**, **1H EMA** (value, ABOVE/BELOW), **ICC bias**, **ICC phase** (INDICATION / CORRECTION / CONTINUATION / GPS ARMED), **4H NTZ** and **1H structure** (CONFIRMED / WAITING / BROKEN), refreshed every second. The **Market trend** read-out above them (UPTREND / DOWNTREND / RANGING, price vs EMA *and* slope) is unchanged and follows the EMA timeframe; it is information only.
+The Signal State panel shows **4H EMA** and **1H EMA** (value, ABOVE/BELOW), then an **ICC FILTER** section: **ICC bias**, **ICC phase** (INDICATION / CORRECTION / CONTINUATION / GPS ARMED), the **shared NTZ** and **1H structure** (CONFIRMED / WAITING), refreshed every second. The **Market trend** read-out above them (UPTREND / DOWNTREND / RANGING, price vs EMA *and* slope) is unchanged and follows the EMA timeframe; it is information only.
 
 ## ICC Entry Models — GPS Entry Model and ICC Entry Model
 
-Two separately toggled entry models (both **OFF** by default) that read **one shared ICC cycle**. The NTZ, the phase and the resets are calculated once, on one structure timeframe (**Daily or 4H**, shared), with the **1H** as the entry layer — so both models always show the same levels and phase. They differ only in how they enter. Both are independent of the 50 EMA / ICC *filter* above.
+Two separately toggled entry models (both **OFF** by default) that read **one shared ICC cycle**. The NTZ, the phase and the resets are calculated once, on one structure timeframe (**Daily or 4H**, shared), with the **1H** as the entry layer — so both models always show the same levels and phase. They differ only in how they enter. The ICC Filter above reads this same cycle; the models are not blocked by it (the GPS Entry Model's engines still are, as GPS engine orders).
 
 **The shared cycle**
 
@@ -552,10 +549,10 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           78 pass   0 fail
+test_icc           66 pass   0 fail
 test_models        69 pass   0 fail
 ----------------------------------------
-TOTAL: 465 pass, 0 fail
+TOTAL: 453 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

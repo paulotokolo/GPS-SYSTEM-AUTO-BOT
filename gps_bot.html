@@ -493,9 +493,12 @@ button:active { transform: scale(0.98); }
     <div class="state-grid" style="margin-bottom:10px;">
       <div class="state-box"><span class="state-label">4H EMA</span><span class="state-value" id="stEma4h">&mdash;</span></div>
       <div class="state-box"><span class="state-label">1H EMA</span><span class="state-value" id="stEma1h">&mdash;</span></div>
-      <div class="state-box"><span class="state-label">ICC bias (4H)</span><span class="state-value" id="stIccBias">&mdash;</span></div>
+    </div>
+    <div class="model-panel-title">ICC Filter</div>
+    <div class="state-grid" style="margin-bottom:10px;">
+      <div class="state-box"><span class="state-label" id="stIccBiasLabel">ICC bias (4H)</span><span class="state-value" id="stIccBias">&mdash;</span></div>
       <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="stIccPhase">&mdash;</span></div>
-      <div class="state-box"><span class="state-label">4H NTZ (high / low)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
+      <div class="state-box"><span class="state-label" id="stIccNtzLabel">4H NTZ high / low (shared)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
       <div class="state-box"><span class="state-label">1H structure</span><span class="state-value" id="stH1Struct">&mdash;</span></div>
     </div>
 
@@ -643,11 +646,10 @@ button:active { transform: scale(0.98); }
       nothing.
     </small>
 
-    <div class="trend-sub">ICC &mdash; Indication, Correction, Continuation</div>
+    <div class="trend-sub">ICC Filter</div>
     <div class="row"><label>Enable ICC filter</label><input type="checkbox" id="iccOn"></div>
     <button class="eng-more" id="iccMore" type="button">&#9656; ICC settings</button>
     <div class="eng-body" id="iccBody">
-      <div class="row"><label>NTZ lookback bars (4H)</label><input type="number" id="iccNtzLookback" value="20" step="1" min="3"></div>
       <div class="row"><label>Swing strength (bars each side)</label><input type="number" id="iccSwingStrength" value="3" step="1" min="1" max="10"></div>
       <div class="row"><label>Swing source</label>
         <select id="iccSwingSource">
@@ -656,21 +658,19 @@ button:active { transform: scale(0.98); }
         </select>
       </div>
       <div class="row"><label>Require 1H continuation</label><input type="checkbox" id="iccRequireH1" checked></div>
-      <div class="row"><label>1H swing point lookback</label><input type="number" id="iccH1Swings" value="3" step="1" min="2"></div>
-      <div class="row"><label>Correction zone threshold (% of NTZ)</label><input type="number" id="iccCorrectionPct" value="50" step="1" min="0" max="100"></div>
       <div class="row"><label>Pause GPS on opposite bias</label><input type="checkbox" id="iccPauseOpposite" checked></div>
       <div class="row"><label>Auto close on ICC invalidation</label><input type="checkbox" id="iccAutoClose"></div>
     </div>
     <small class="hint">
-      <b>Indication:</b> the 4H No Trade Zone is the latest 4H swing high and the swing low that
-      created it &mdash; nothing fires until a 4H candle <b>closes</b> outside it. A swing is the
-      highest / lowest <b>close</b> of <b>Swing strength</b> bars on each side, on the 4H and the 1H
-      (set <b>Swing source</b> to Wick to measure highs and lows instead, which matches
-      Liquid&rsquo;s &ldquo;Swing Prices&rdquo; labels).
-      <b>Correction:</b> after the break the bias holds while price pulls back; engines wait.
-      <b>Continuation:</b> the 1H prints higher highs and lows above the broken level (buys) or
-      lower highs and lows below it (sells) &mdash; engines are armed. Auto close only acts on a
-      4H break against an open trade, in Live mode.
+      Blocks GPS engine orders against the ICC structure. It reads the <b>same shared ICC
+      cycle</b> as the entry models below &mdash; same NTZ high and low, same break, same phase.
+      Inside the NTZ (or while scanning for a fresh swing high and low) nothing is allowed;
+      after the break only the break direction is, and with <b>Require 1H continuation</b> only
+      once the cycle reaches Continuation. A swing is the highest / lowest <b>close</b> of
+      <b>Swing strength</b> bars on each side (<b>Swing source</b> Wick measures highs and lows,
+      matching Liquid&rsquo;s &ldquo;Swing Prices&rdquo; labels). Auto close acts when the NTZ is
+      disrespected against an open trade, in Live mode. The structure timeframe and Max wait
+      are under ICC Entry Models.
     </small>
 
     <div class="trend-sub">ICC Entry Models</div>
@@ -726,8 +726,8 @@ button:active { transform: scale(0.98); }
       </div>
       <div class="row"><label>Max wait per phase (structure candles)</label><input type="number" id="iccMaxWait" value="20" step="1" min="1"></div>
       <small class="hint">
-        Shared by both models, with <b>Swing strength</b> and <b>Swing source</b> above &mdash; both
-        models always see the same NTZ and phase. <b>Alignment</b> only changes a model&rsquo;s
+        Shared by the ICC Filter and both models, with <b>Swing strength</b> and <b>Swing source</b>
+        above &mdash; everything always sees the same NTZ and phase. <b>Alignment</b> only changes a model&rsquo;s
         entry: Daily and 4H must agree, then price must pull back to the latest 1H swing.
         <b>Trail after TP</b>: no TP is placed; when price reaches the target the cycle completes
         and the bot&rsquo;s <b>Auto Trailing</b> takes over the trade (keep Auto Trailing ON).
@@ -2416,15 +2416,12 @@ function newIccState() {
     ema_bullish: false, ema_bearish: false,
     gps_buy_unlocked: false, gps_sell_unlocked: false,
     // Working state behind the fields above.
-    break_level: null,            // the 4H level broken to set the current bias
-    break_ts: null,               // close time of the 4H bar that set the current bias
-    last_break_ts: null,          // newest 4H break in the bias direction (continuation breaks too)
-    h1_state: "WAITING",          // WAITING / CONFIRMED / BROKEN — for the panel
+    break_level: null,            // the NTZ level broken to set the current bias
+    h1_state: "WAITING",          // WAITING / CONFIRMED — for the panel
     phase: "—"
   };
 }
 var icc = newIccState();
-var iccPrev = null;               // last evaluated snapshot, for logging transitions
 var emaSideLogged = {};           // "4h"/"1h" -> "above"/"below", for cross logs
 var emaBothLogged = null;
 var trendStoreLens = "";
@@ -2474,125 +2471,27 @@ function isSwingLow(bars, i, n, src) {
   return true;
 }
 
-// The NTZ as of closed bar k: the most recent swing high within the last `lookback` bars,
-// and the most recent swing low before it — the low that created that high. A swing point
-// needs its `n` bars on the right closed, so the newest n bars can never be one yet.
-function findNtz(bars, k, lookback, n, src) {
-  n = n || 1;
-  var from = Math.max(n, k - lookback + 1);
-  for (var i = k - n; i >= from; i--) {
-    if (!isSwingHigh(bars, i, n, src)) continue;  // reads up to bar i+n <= k: closed by then
-    for (var j = i - 1; j >= n; j--) {
-      if (isSwingLow(bars, j, n, src) && lv(bars[j], src) < hv(bars[i], src)) {
-        return { high: hv(bars[i], src), low: lv(bars[j], src), hiTs: bars[i].ts, loTs: bars[j].ts };
-      }
-    }
-    return null;      // newest swing high has no origin low in the loaded history
+// The ICC filter has no structure scan of its own. It reads the one shared ICC cycle (the
+// same NTZ, phase and break the entry models use), so the filter can never disagree with
+// the models about where the NTZ is or which way it broke.
+//   bias          — the cycle's break direction; NTZ while locked but unbroken; NEUTRAL
+//                   while scanning for a fresh swing high and low
+//   h1_confirmed  — the cycle has reached CONTINUATION (a 1H close through the corrective
+//                   structure)
+function mapIccFromCycle() {
+  var st = iccCycle;
+  if (!st) {
+    icc.bias = "NEUTRAL"; icc.ntz_high = icc.ntz_low = icc.break_level = null;
+    icc.correction_active = icc.h1_confirmed = false; icc.h1_state = "WAITING";
+    return;
   }
-  return null;
-}
-
-// Walks the closed 4H bars oldest to newest. Bias only ever changes on a confirmed close.
-function compute4hStructure(bars, lookback, n, src) {
-  var st = { bias: "NEUTRAL", ntz: null, breakLevel: null, breakTs: null, breakRange: null,
-             lastBreakTs: null, brokenKey: null };
-  var tfMs = H4_SECONDS * 1000;
-  for (var k = 2; k < bars.length; k++) {
-    var z = findNtz(bars, k, lookback, n, src);
-    if (z) st.ntz = z;                       // no new swing in range: keep the last one
-    if (!st.ntz) continue;
-
-    var c = bars[k].c, closeTs = bars[k].ts + tfMs;
-    var up = c > st.ntz.high, dn = c < st.ntz.low;
-    if (up || dn) {
-      var bias = up ? "BULLISH" : "BEARISH";
-      // The same structure staying broken is not a new break; a new NTZ breaking is.
-      var key = bias + (up ? st.ntz.hiTs : st.ntz.loTs);
-      if (bias !== st.bias) {
-        st.bias = bias;
-        st.breakLevel = up ? st.ntz.high : st.ntz.low;
-        st.breakTs = closeTs;
-        st.breakRange = st.ntz.high - st.ntz.low;
-      }
-      if (key !== st.brokenKey) { st.brokenKey = key; st.lastBreakTs = closeTs; }
-    } else if (st.bias === "NEUTRAL" || st.bias === "NTZ") {
-      st.bias = "NTZ";
-    }
-  }
-  return st;
-}
-
-// Correction: price has retraced at least `pct`% of the broken NTZ's range back toward the
-// broken level, measured from the furthest point reached since the break.
-function correctionActive(bars, st, pct) {
-  if (!(st.breakRange > 0) || st.breakTs === null) return false;
-  var bull = st.bias === "BULLISH";
-  var since = st.breakTs - H4_SECONDS * 1000;        // include the break bar itself
-  var extreme = null, back = null;
-  for (var i = 0; i < bars.length; i++) {
-    var b = bars[i];
-    if (b.ts < since) continue;
-    if (extreme === null || (bull ? b.h > extreme : b.l < extreme)) {
-      extreme = bull ? b.h : b.l;
-      back = null;                                     // new extreme — pullback restarts
-    } else {
-      var p = bull ? b.l : b.h;
-      if (back === null || (bull ? p < back : p > back)) back = p;
-    }
-  }
-  if (extreme === null || back === null) return false;
-  return Math.abs(extreme - back) >= st.breakRange * pct / 100;
-}
-
-// 1H continuation: the last N swing highs and N swing lows since the 4H break each beyond
-// the one before (higher for buys, lower for sells), all on the right side of the broken
-// level. A lower low on a buy (or higher high on a sell) breaks the sequence by itself.
-function h1Continuation(bars, bias, level, sinceTs, n, strength, src) {
-  if (bias !== "BULLISH" && bias !== "BEARISH") return false;
-  var bull = bias === "BULLISH";
-  var highs = [], lows = [];
-  for (var i = 1; i < bars.length - 1; i++) {
-    if (bars[i].ts < sinceTs) continue;
-    if (isSwingHigh(bars, i, strength, src)) highs.push(hv(bars[i], src));
-    if (isSwingLow(bars, i, strength, src))  lows.push(lv(bars[i], src));
-  }
-  if (highs.length < n || lows.length < n) return false;
-  var H = highs.slice(-n), L = lows.slice(-n);
-  for (var k = 1; k < n; k++) {
-    if (bull ? !(H[k] > H[k - 1] && L[k] > L[k - 1]) : !(H[k] < H[k - 1] && L[k] < L[k - 1])) return false;
-  }
-  for (var m = 0; m < n; m++) {
-    if (bull ? !(L[m] > level && H[m] > level) : !(H[m] < level && L[m] < level)) return false;
-  }
-  return true;
-}
-
-function evaluateIcc() {
-  var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
-  var strength = Math.max(1, cfg.iccSwingStrength || 1);
-  var st = compute4hStructure(b4, Math.max(3, cfg.iccNtzLookback), strength, cfg.iccSwingSource);
-
-  icc.bias = st.bias;
-  icc.ntz_high = st.ntz ? st.ntz.high : null;
-  icc.ntz_low  = st.ntz ? st.ntz.low : null;
-  icc.break_level = st.breakLevel;
-  icc.break_ts = st.breakTs;
-  icc.last_break_ts = st.lastBreakTs;
-
-  var directional = st.bias === "BULLISH" || st.bias === "BEARISH";
-  icc.correction_active = directional &&
-    correctionActive(b1.length ? b1 : b4, st, cfg.iccCorrectionPct);
-  icc.h1_confirmed = directional &&
-    h1Continuation(b1, st.bias, st.breakLevel, st.breakTs, Math.max(2, cfg.iccH1Swings), strength,
-                   cfg.iccSwingSource);
-
-  // BROKEN = it was confirmed on this same 4H break and has since been lost. It stays
-  // BROKEN, not WAITING, until the 1H re-establishes or the 4H bias changes.
-  var sameBreak = iccPrev && iccPrev.break_ts === icc.break_ts;
-  if (!directional) icc.h1_state = "WAITING";
-  else if (icc.h1_confirmed) icc.h1_state = "CONFIRMED";
-  else if (sameBreak && (iccPrev.h1_confirmed || iccPrev.h1_state === "BROKEN")) icc.h1_state = "BROKEN";
-  else icc.h1_state = "WAITING";
+  icc.ntz_high = st.lockHigh;
+  icc.ntz_low = st.lockLow;
+  icc.bias = st.dir ? (st.dir === "buy" ? "BULLISH" : "BEARISH") : st.lockHigh !== null ? "NTZ" : "NEUTRAL";
+  icc.break_level = st.dir ? (st.dir === "buy" ? st.lockHigh : st.lockLow) : null;
+  icc.correction_active = st.phase === "CORRECTION";
+  icc.h1_confirmed = st.phase === "CONTINUATION";
+  icc.h1_state = icc.h1_confirmed ? "CONFIRMED" : "WAITING";
 }
 
 function livePrice() {
@@ -2668,82 +2567,14 @@ function refreshTrendGates(price) {
   icc.phase = armed ? "GPS ARMED" : icc.h1_confirmed ? "CONTINUATION" : "CORRECTION";
 }
 
-function iccSnapshot() {
-  return { bias: icc.bias, ntz_high: icc.ntz_high, ntz_low: icc.ntz_low,
-           break_ts: icc.break_ts, break_level: icc.break_level, last_break_ts: icc.last_break_ts,
-           correction_active: icc.correction_active, h1_confirmed: icc.h1_confirmed,
-           h1_state: icc.h1_state };
-}
-
-// One log line per ICC state change, worded as in the brief.
-function reportIccChanges(prev) {
-  var now = icc;
-  var ntzText = fmt(now.ntz_low) + " to " + fmt(now.ntz_high);
-
-  if (!prev) {
-    if (now.bias === "NEUTRAL") {
-      log("ICC: no 4H structure identified yet — waiting for 4H candles. All GPS orders held.", "log-info");
-    } else {
-      log("ICC (4H) read on start: bias " + now.bias + " · NTZ " + ntzText +
-          (now.break_level !== null ? " · broken level " + fmt(now.break_level) : "") +
-          " · 1H " + now.h1_state, "log-info");
-    }
-    return;
-  }
-
-  if (now.bias !== prev.bias) {
-    if (now.bias === "BULLISH") {
-      log("ICC BULLISH BREAK — 4H candle closed above NTZ high " + fmt(now.break_level) +
-          ". Buyers in control. Correction phase. Watching for 1H continuation above " +
-          fmt(now.break_level) + ".", "log-buy");
-    } else if (now.bias === "BEARISH") {
-      log("ICC BEARISH BREAK — 4H candle closed below NTZ low " + fmt(now.break_level) +
-          ". Sellers in control. Correction phase. Watching for 1H continuation below " +
-          fmt(now.break_level) + ".", "log-sell");
-    } else if (now.bias === "NTZ") {
-      log("ICC NTZ — price inside No Trade Zone " + ntzText +
-          ". All GPS engines paused until confirmed break.", "log-warn");
-    }
-    if ((prev.bias === "BULLISH" || prev.bias === "BEARISH") &&
-        (now.bias === "BULLISH" || now.bias === "BEARISH")) {
-      handleIccInvalidation(now.bias);
-    }
-  } else if (now.last_break_ts !== prev.last_break_ts &&
-             (now.bias === "BULLISH" || now.bias === "BEARISH")) {
-    log("ICC " + now.bias + " BREAK — 4H closed " + (now.bias === "BULLISH" ? "above" : "below") +
-        " the next structure level. Continuation of the existing " + now.bias.toLowerCase() +
-        " structure; 1H still measured from " + fmt(now.break_level) + ".", "log-info");
-  }
-
-  if ((now.ntz_high !== prev.ntz_high || now.ntz_low !== prev.ntz_low) && now.ntz_high !== null &&
-      (now.bias === "NTZ" || now.bias === "NEUTRAL")) {
-    log("ICC INDICATION — 4H No Trade Zone identified. NTZ range: " + ntzText +
-        ". Watching for confirmed break.", "log-info");
-  }
-
-  if (now.bias === prev.bias && now.correction_active && !prev.correction_active) {
-    log("ICC CORRECTION — price returned toward broken level " + fmt(now.break_level) +
-        ". Watching for 1H " + (now.bias === "BULLISH" ? "higher highs and lows." : "lower highs and lows."),
-        "log-info");
-  }
-
-  if (now.h1_confirmed && !prev.h1_confirmed) {
-    log("ICC 1H CONFIRMED — " + (now.bias === "BULLISH" ? "higher highs and higher lows" : "lower highs and lower lows") +
-        " confirmed on 1H " + (now.bias === "BULLISH" ? "above " : "below ") + fmt(now.break_level) +
-        ". GPS engines fully armed.", now.bias === "BULLISH" ? "log-buy" : "log-sell");
-  } else if (!now.h1_confirmed && prev.h1_confirmed && now.bias === prev.bias) {
-    log("ICC 1H BROKEN — 1H continuation structure lost. h1_confirmed reset. GPS engines paused. " +
-        "Waiting for 1H to re-establish.", "log-warn");
-  }
-}
-
-// A 4H break against an open position. Always a warning; a close only if asked for.
-function handleIccInvalidation(newBias) {
+// The NTZ disrespected against an open position. Always a warning; a close only if asked for.
+function handleIccInvalidation(newBias, level) {
   var against = newBias === "BULLISH" ? "sell" : "buy";
   var ids = Object.keys(managedOrders).filter(function (id) { return managedOrders[id].dir === against; });
   if (!ids.length) return;
-  log("ICC INVALIDATION WARNING — 4H candle closed " + (newBias === "BULLISH" ? "above " : "below ") +
-      fmt(icc.break_level) + " against open " + against + " position" + (ids.length > 1 ? "s" : "") +
+  log("ICC INVALIDATION WARNING — " + tfLabel(cfg.iccStructTf === "daily" ? D1_SECONDS : H4_SECONDS) +
+      " candle closed " + (newBias === "BULLISH" ? "above " : "below ") +
+      fmt(level) + " against open " + against + " position" + (ids.length > 1 ? "s" : "") +
       " (" + ids.join(", ") + "). Review trade immediately.", "log-warn");
   beep();
   if (!cfg.iccAutoClose) return;
@@ -2766,13 +2597,8 @@ function updateTrendFilters() {
   var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
   icc.ema_4h = emaOfBars(b4, cfg.trendEmaLen);
   icc.ema_1h = emaOfBars(b1, cfg.trendEmaLen);
-  if (cfg.iccOn) {
-    evaluateIcc();
-    if (b4.length >= 3) {
-      if (isRunning) reportIccChanges(iccPrev);
-      iccPrev = iccSnapshot();
-    }
-  }
+  try { updateEntryModels(); } catch (e) {}      // the shared ICC cycle (filter + models)
+  if (cfg.iccOn) mapIccFromCycle();
   refreshTrendGates(livePrice());
 }
 
@@ -2785,7 +2611,6 @@ function pollTrendStores() {
   if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
   trendStoreLens = key;
   updateTrendFilters();
-  try { updateEntryModels(); } catch (e) {}
 }
 
 // 50 EMA cross logs, judged on each closed 5M bar's close against the 1H/4H EMA.
@@ -2826,7 +2651,6 @@ function reportEmaPosition(price) {
 
 function resetTrendFilters() {
   icc = newIccState();
-  iccPrev = null;
   emaSideLogged = {};
   emaBothLogged = null;
   trendStoreLens = "";
@@ -3122,7 +2946,8 @@ function runIccCycle(p, data, mods) {
       if (bull() ? b.c < st.lockLow : b.c > st.lockHigh) {
         emit(t, "DISRESPECT", "LEVEL DISRESPECTED — " + sName + " body closed " + (bull() ? "below " : "above ") +
              fmt(bull() ? st.lockLow : st.lockHigh) + ", through the locked NTZ in the opposite direction. " +
-             "Cycle INVALIDATED. Resetting.", "log-warn");
+             "Cycle INVALIDATED. Resetting.", "log-warn",
+             { act: "disrespect", wasDir: st.dir, level: bull() ? st.lockLow : st.lockHigh });
         reset(t, "RESET", "DISRESPECT");
         // The same close may already be the break the other way: re-lock and re-check it.
         i--; ps -= fresh.length;
@@ -3204,7 +3029,7 @@ function modelOpt(kind, name) { return cfg[(kind === "gps" ? "gpsModel" : "iccMo
 
 // Replays the shared cycle and handles whatever happened since the previous replay.
 function updateEntryModels() {
-  if (!cfg || (!cfg.gpsModelOn && !cfg.iccModelOn)) return;
+  if (!cfg || (!cfg.gpsModelOn && !cfg.iccModelOn && !cfg.iccOn)) return;
   var data = { d1: closedBars(d1Store), h4: closedBars(h4Store), h1: closedBars(h1Store) };
   var p = cycleParams();
   var sBars = p.structTf === "daily" ? data.d1 : data.h4;
@@ -3226,7 +3051,8 @@ function updateEntryModels() {
             : "no NTZ locked yet (waiting for a fresh swing high and swing low)") +
           " | Current Phase: " + st.phase + (st.dir ? " (" + (st.dir === "buy" ? "BULLISH" : "BEARISH") + ")" : "") +
           " | " + tfLabel(p.structTf === "daily" ? D1_SECONDS : H4_SECONDS) + " structure, shared by " +
-          [cfg.iccModelOn ? "ICC Entry Model" : null, cfg.gpsModelOn ? "GPS Entry Model" : null]
+          [cfg.iccOn ? "ICC Filter" : null, cfg.iccModelOn ? "ICC Entry Model" : null,
+           cfg.gpsModelOn ? "GPS Entry Model" : null]
             .filter(Boolean).join(" + "), "log-info");
     }
     return;
@@ -3238,6 +3064,7 @@ function updateEntryModels() {
     log(e.text, e.cls);
     if (e.act === "entry") placeIccModelEntry(e);
     if (e.act === "target" && e.kind === MODEL_KINDS.filter(modelEnabled)[0]) armTrailsAtTarget(e.target);
+    if (e.act === "disrespect" && cfg.iccOn) handleIccInvalidation(e.wasDir === "buy" ? "BEARISH" : "BULLISH", e.level);
   });
 }
 
@@ -3448,6 +3275,7 @@ function syncModelOptions() {
     document.getElementById(m + "Opts").classList.toggle("shown", isOn);
     document.getElementById(m + "Panel").classList.toggle("shown", isOn);
   });
+  any = any || document.getElementById("iccOn").checked;
   document.getElementById("iccCycleOpts").classList.toggle("shown", any);
 }
 
@@ -4907,7 +4735,11 @@ function refreshStatePanel(ny) {
           ? "GPS ARMED — " + (icc.bias === "BULLISH" ? "BUY" : "SELL") : icc.phase,
         icc.phase === "GPS ARMED" ? (icc.bias === "BULLISH" ? "up" : "down")
         : icc.phase === "—" ? "muted" : "pending");
-      t("stIccNtz", icc.ntz_high !== null ? "NTZ " + fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low) : "—",
+      var sTf = cfg.iccStructTf === "daily" ? "Daily" : "4H";
+      lbl("stIccBiasLabel", "ICC bias (" + sTf + ")");
+      lbl("stIccNtzLabel", sTf + " NTZ high / low (shared)");
+      t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
+                                          : "scanning for a fresh swing high + low",
         icc.ntz_high !== null ? "" : "muted");
       if (icc.bias !== "BULLISH" && icc.bias !== "BEARISH") t("stH1Struct", "—", "muted");
       else if (!cfg.iccRequireH1) t("stH1Struct", "NOT REQUIRED", "muted");
@@ -5058,9 +4890,9 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "attachSl","attachTp","attachMode","testLots","testSlPips",
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
-  "iccOn","iccNtzLookback","iccSwingStrength","iccSwingSource","iccRequireH1",
+  "iccOn","iccSwingStrength","iccSwingSource","iccRequireH1",
   "gpsModelOn","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
-  "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
+  "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
@@ -5192,7 +5024,6 @@ function readConfig() {
     // The market-trend read-out follows the EMA timeframe: 4H unless it is set to 1H only.
     trendTimeframe: document.getElementById("emaTimeframe").value === "1h" ? 3600 : 14400,
     iccOn: chk("iccOn"),
-    iccNtzLookback: Math.max(3, int("iccNtzLookback", 20)),
     iccSwingStrength: Math.min(10, Math.max(1, int("iccSwingStrength", 3))),
     iccSwingSource: document.getElementById("iccSwingSource").value === "wick" ? "wick" : "close",
     // ICC Entry Models. Structure is Daily or 4H only — the 1H is the fixed entry layer.
@@ -5211,8 +5042,6 @@ function readConfig() {
     iccModelTrail: chk("iccModelTrail"),
     iccMaxWait: Math.max(1, int("iccMaxWait", 20)),
     iccRequireH1: chk("iccRequireH1"),
-    iccH1Swings: Math.max(2, int("iccH1Swings", 3)),
-    iccCorrectionPct: Math.min(100, Math.max(0, num("iccCorrectionPct", 50))),
     iccPauseOpposite: chk("iccPauseOpposite"),
     iccAutoClose: chk("iccAutoClose"),
 
@@ -5456,7 +5285,6 @@ function startBot() {
   // EMA timeframe, so it is the 4H store unless the EMA is set to 1H only.
   var onTrendCandle = function () {
     try { updateTrendFilters(); } catch (e) {}
-    try { updateEntryModels(); } catch (e) {}
     try { computeTrend(); reportTrendChange(); } catch (e) {}
   };
   h4Store = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
@@ -5465,7 +5293,7 @@ function startBot() {
   Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: H1_SECONDS }, h1Store);
   // Daily feed — only the entry models use it (Daily structure, and Daily alignment).
   d1Store = null;
-  if (cfg.gpsModelOn || cfg.iccModelOn) {
+  if (cfg.gpsModelOn || cfg.iccModelOn || cfg.iccOn) {
     d1Store = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
     Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: D1_SECONDS }, d1Store);
   }
@@ -5489,13 +5317,12 @@ function startBot() {
       "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn
-        ? "ON  ·  NTZ lookback " + cfg.iccNtzLookback + " (4H)  ·  swing strength " +
-          cfg.iccSwingStrength + "  ·  1H continuation " +
-          (cfg.iccRequireH1 ? "required (" + cfg.iccH1Swings + " swings)" : "not required") +
+        ? "ON  ·  reads the shared " + cfg.iccStructTf.toUpperCase() + " ICC cycle  ·  1H continuation " +
+          (cfg.iccRequireH1 ? "required" : "not required") +
           "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
         : "off"),
-      "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
+      "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "same shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
         "GPS Entry Model " + (cfg.gpsModelOn ? "ON (engines on " + tfName(cfg.timeframe) + (cfg.gpsModelAlign ? ", alignment" : "") +
           ", SL " + cfg.gpsModelSlMode + (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (" + (cfg.iccModelAggressive ? "AGGRESSIVE live-cross entry"
@@ -5664,8 +5491,8 @@ Framework.OnLoad = function () {
     if (zm) zm.addEventListener("change", syncZoneLabels);
   });
   syncZoneLabels();
-  ["gpsModel", "iccModel"].forEach(function (m) {
-    document.getElementById(m + "On").addEventListener("change", syncModelOptions);
+  ["gpsModelOn", "iccModelOn", "iccOn"].forEach(function (id) {
+    document.getElementById(id).addEventListener("change", syncModelOptions);
   });
   syncModelOptions();
   document.getElementById("iccMore").addEventListener("click", function () {

@@ -22,35 +22,22 @@ function storeOf(bars, formingClose) {
 }
 const B = (ts, o, h, l, c) => ({ ts, o, h, l, c, v: 100 });
 
-// The 4H structure every scenario starts from:
-//   bar 1 low 95 is a swing low, bar 3 high 120 is a swing high made from it -> NTZ 95-120.
-function h4Base() {
-  return [
-    B(T0 + 0 * H4, 100, 105, 100, 102),
-    B(T0 + 1 * H4, 102, 103,  95,  97),   // swing low 95
-    B(T0 + 2 * H4,  97, 110,  98, 108),
-    B(T0 + 3 * H4, 108, 120, 105, 115),   // swing high 120
-    B(T0 + 4 * H4, 115, 115, 108, 110)    // closes inside the NTZ
-  ];
-}
-const breakUp = B(T0 + 5 * H4, 110, 126, 109, 125);        // closes above 120
-const breakTs = T0 + 6 * H4;                               // close time of the break bar
 
 function iccSandbox(over) {
   const sb = buildSandbox();
   sb.cfg = defaultCfg(Object.assign({
     emaFilterOn: false, emaTimeframe: "4h", trendEmaLen: 50,
-    // The structural tests below are built on 1-bar swings; section 11 covers strength 3.
-    // and on wicks (highs/lows distinct from closes); section 12 covers the body rule.
-    iccOn: true, iccNtzLookback: 20, iccSwingStrength: 1, iccSwingSource: "wick",
-    iccRequireH1: true, iccH1Swings: 3,
-    iccCorrectionPct: 50, iccPauseOpposite: true, iccAutoClose: false
+    // The cycle sections use 1-bar swings on closes; section 11 covers strength 3 on wicks.
+    iccOn: true, iccStructTf: "4h", iccMaxWait: 20, iccSwingStrength: 1, iccSwingSource: "close",
+    iccRequireH1: true, iccPauseOpposite: true, iccAutoClose: false,
+    iccModelOn: false, gpsModelOn: false
   }, over || {}));
   sb.priceDecimals = 2;
   sb.isRunning = true;
   sb.managedOrders = {};
   sb.forceCloseQueue = {};
   sb.resetTrendFilters();
+  sb.resetEntryModels();
   return sb;
 }
 function feed(sb, h4, h1) {
@@ -59,156 +46,152 @@ function feed(sb, h4, h1) {
   sb.updateTrendFilters();
 }
 
-// A clean 1H uptrend after the break: swing highs 128,130,132,134 and swing lows
-// 121,123,125 — all above the broken 120.
-function h1Up() {
-  const hs = [125, 128, 124, 130, 126, 132, 128, 134, 130];
-  const ls = [122, 125, 121, 127, 123, 129, 125, 131, 127];
-  return hs.map((h, i) => B(breakTs + i * H1, ls[i] + 1, h, ls[i], ls[i] + 2));
+
+// The ICC filter reads the one shared ICC cycle (the same one the entry models use). These
+// sections drive that cycle with candles and check what the filter makes of it.
+//
+// 1H closes in groups of four; each group is one 4H candle (o = previous close, wicks 1).
+function series(groups, startTs) {
+  const h1 = [], h4 = [];
+  let prev = groups[0][0];
+  groups.forEach((g, gi) => {
+    const gBars = g.map((c, k) => {
+      const o = prev; prev = c;
+      return B(startTs + (gi * 4 + k) * H1, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c);
+    });
+    h1.push(...gBars);
+    h4.push(B(gBars[0].ts, gBars[0].o, Math.max(...gBars.map((x) => x.h)), Math.min(...gBars.map((x) => x.l)), gBars[3].c));
+  });
+  return { h1, h4 };
 }
+function extend(s, closes) {
+  let prev = s.h1[s.h1.length - 1].c;
+  closes.forEach((c) => {
+    const o = prev; prev = c;
+    s.h1.push(B(s.h1[s.h1.length - 1].ts + H1, o, Math.max(o, c) + 1, Math.min(o, c) - 1, c));
+  });
+  return s;
+}
+// Swing high 104 then swing low 101 -> NTZ 104 / 101; 4H closes 109 -> bullish break;
+// 1H swing high 111 then lower high 108.5 -> correction; 1H close 109.5 -> continuation.
+const CYCLE = [
+  [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
+  [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
+  [110, 111, 110.5, 110.2], [107, 108.5, 107.5, 109.5]
+];
+const feedS = (sb, s) => feed(sb, s.h4, s.h1);
 
 // ---------------------------------------------------------------- 1: INDICATION
 {
   const sb = iccSandbox();
-  feed(sb, h4Base());
-  console.log("===== 1: NO TRADE ZONE =====");
+  feedS(sb, series(CYCLE.slice(0, 6), T0));
+  console.log("===== 1: NO TRADE ZONE (shared cycle) =====");
   console.log(JSON.stringify(sb.icc));
-  check("1: NTZ high is the 4H swing high", sb.icc.ntz_high === 120, sb.icc.ntz_high);
-  check("1: NTZ low is the swing low that created it", sb.icc.ntz_low === 95, sb.icc.ntz_low);
-  check("1: a close inside the NTZ is bias NTZ", sb.icc.bias === "NTZ", sb.icc.bias);
+  check("1: the filter's NTZ is the shared cycle's locked high / low",
+    sb.icc.ntz_high === 104 && sb.icc.ntz_low === 101 &&
+    sb.iccCycle.lockHigh === 104 && sb.iccCycle.lockLow === 101, sb.icc.ntz_high + "/" + sb.icc.ntz_low);
+  check("1: no break yet = bias NTZ", sb.icc.bias === "NTZ", sb.icc.bias);
   check("1: the phase is INDICATION", sb.icc.phase === "INDICATION", sb.icc.phase);
-  check("1: buys are held inside the NTZ", /ICC bias is NTZ/.test(sb.trendGateReason(false, 110)));
-  check("1: and sells too", /ICC bias is NTZ/.test(sb.trendGateReason(true, 110)));
+  check("1: buys are held inside the NTZ", /ICC bias is NTZ/.test(sb.trendGateReason(false, 102)));
+  check("1: and sells too", /ICC bias is NTZ/.test(sb.trendGateReason(true, 102)));
   check("1: the master gates are both shut", !sb.icc.gps_buy_unlocked && !sb.icc.gps_sell_unlocked);
-  check("1: the forming 4H bar is never read (its huge high is not the NTZ)", sb.icc.ntz_high !== 1e9);
 }
 {
   const sb = iccSandbox();
-  feed(sb, h4Base().slice(0, 2));
-  check("1: with too little 4H history the bias is NEUTRAL", sb.icc.bias === "NEUTRAL", sb.icc.bias);
+  feedS(sb, series(CYCLE.slice(0, 2), T0));
+  check("1: with no swing pair yet the bias is NEUTRAL", sb.icc.bias === "NEUTRAL", sb.icc.bias);
   check("1: and NEUTRAL holds signals", /ICC bias is NEUTRAL/.test(sb.trendGateReason(false, 110)));
 }
 
 // ---------------------------------------------------------------- 2: BULLISH BREAK
 {
   const sb = iccSandbox();
-  feed(sb, h4Base());
-  feed(sb, h4Base().concat([breakUp]));
-  console.log("\n===== 2: BULLISH BREAK =====");
-  sb.__logLines.filter((l) => /ICC/.test(l)).forEach((l) => console.log(l));
-  check("2: a 4H close above the NTZ high sets BULLISH", sb.icc.bias === "BULLISH", sb.icc.bias);
-  check("2: the broken level is the NTZ high", sb.icc.break_level === 120);
-  check("2: the break is logged as in the brief",
-    sb.__logLines.some((l) => /ICC BULLISH BREAK — 4H candle closed above NTZ high 120\.00\. Buyers in control/.test(l)));
-  check("2: without 1H continuation the buy is held, waiting for the 1H",
-    /4H confirmed bullish but 1H continuation not yet confirmed/.test(sb.trendGateReason(false, 125)));
-  check("2: the phase is CORRECTION", sb.icc.phase === "CORRECTION", sb.icc.phase);
-  check("2: sells are paused on the opposite bias",
-    /against this sell/.test(sb.trendGateReason(true, 125)));
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  check("2: a 4H close above the locked high sets BULLISH", sb.icc.bias === "BULLISH", sb.icc.bias);
+  check("2: the broken level is the locked high", sb.icc.break_level === 104);
+  check("2: before continuation the buy is held, waiting for the 1H",
+    /4H confirmed bullish but 1H continuation not yet confirmed/.test(sb.trendGateReason(false, 109)));
+  check("2: sells are paused on the opposite bias", /against this sell/.test(sb.trendGateReason(true, 109)));
 }
 {
   const sb = iccSandbox({ iccRequireH1: false });
-  feed(sb, h4Base().concat([breakUp]));
-  check("2: with 'Require 1H' OFF the buy unlocks on the 4H break alone",
-    sb.trendGateReason(false, 125) === null && sb.icc.gps_buy_unlocked);
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  check("2: with 'Require 1H' OFF the buy unlocks on the break alone",
+    sb.trendGateReason(false, 109) === null && sb.icc.gps_buy_unlocked);
   check("2: and the phase reads GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
 }
 {
   const sb = iccSandbox({ iccPauseOpposite: false });
-  feed(sb, h4Base().concat([breakUp]));
-  check("2: with 'Pause on opposite bias' OFF a sell is not blocked by ICC",
-    sb.trendGateReason(true, 125) === null);
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  check("2: with 'Pause on opposite bias' OFF a sell is not blocked by ICC", sb.trendGateReason(true, 109) === null);
 }
 
-// ---------------------------------------------------------------- 3: 1H CONTINUATION
+// ---------------------------------------------------------------- 3: CORRECTION -> CONTINUATION -> COMPLETE
 {
   const sb = iccSandbox();
-  const h4 = h4Base().concat([breakUp]);
-  feed(sb, h4, []);
-  feed(sb, h4, h1Up());
-  console.log("\n===== 3: 1H CONTINUATION =====");
-  sb.__logLines.filter((l) => /1H/.test(l)).forEach((l) => console.log(l));
-  check("3: higher highs and higher lows above the level confirm the 1H", sb.icc.h1_confirmed === true);
-  check("3: the 1H structure reads CONFIRMED", sb.icc.h1_state === "CONFIRMED");
-  check("3: the buy gate is open", sb.trendGateReason(false, 130) === null && sb.icc.gps_buy_unlocked);
+  feedS(sb, series(CYCLE.slice(0, 8), T0));
+  check("3: the 1H turning down is the CORRECTION phase", sb.icc.correction_active && sb.icc.phase === "CORRECTION",
+    sb.icc.phase);
+  feedS(sb, series(CYCLE, T0));
+  check("3: the cycle's continuation confirms the 1H", sb.icc.h1_confirmed === true && sb.icc.h1_state === "CONFIRMED");
+  check("3: the buy gate is open", sb.trendGateReason(false, 109.5) === null && sb.icc.gps_buy_unlocked);
   check("3: the phase is GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
-  check("3: it is logged", sb.__logLines.some((l) =>
-    /ICC 1H CONFIRMED — higher highs and higher lows confirmed on 1H above 120\.00\. GPS engines fully armed/.test(l)));
+  feedS(sb, extend(series(CYCLE, T0), [110.5]));
+  check("3: when the cycle completes at its target the filter goes back to scanning (NEUTRAL)",
+    sb.icc.bias === "NEUTRAL" && sb.icc.ntz_high === null && /NEUTRAL/.test(sb.trendGateReason(false, 111)));
+}
 
-  // A lower low breaks it: 118 is below the previous swing low and below the broken level.
-  const broken = h1Up().concat([
-    B(breakTs + 9 * H1, 130, 131, 118, 120),
-    B(breakTs + 10 * H1, 121, 133, 124, 130)
-  ]);
-  feed(sb, h4, broken);
-  check("3: a lower 1H swing low resets h1_confirmed", sb.icc.h1_confirmed === false);
-  check("3: the 1H structure reads BROKEN", sb.icc.h1_state === "BROKEN", sb.icc.h1_state);
-  check("3: the 4H bias does NOT reset", sb.icc.bias === "BULLISH");
-  check("3: buys pause again", sb.trendGateReason(false, 130) !== null);
-  check("3: the reset is logged", sb.__logLines.some((l) => /ICC 1H BROKEN — 1H continuation structure lost/.test(l)));
+// ---------------------------------------------------------------- 4: one NTZ everywhere
+{
+  // The client's case: the filter used the low that STARTED the rally to the high, the
+  // models the most recent swing low. Now both read the same lock.
+  const sb = iccSandbox({ iccModelOn: true, gpsModelOn: true });
+  const s = series(CYCLE.slice(0, 8), T0);
+  feedS(sb, s);
+  check("4: filter NTZ high === entry models' locked high", sb.icc.ntz_high === sb.iccCycle.lockHigh);
+  check("4: filter NTZ low === entry models' locked low", sb.icc.ntz_low === sb.iccCycle.lockLow);
+  check("4: filter bias matches the models' break direction",
+    sb.icc.bias === (sb.iccCycle.dir === "buy" ? "BULLISH" : "BEARISH"));
+  check("4: filter phase matches (CORRECTION)", sb.icc.correction_active && sb.iccCycle.phase === "CORRECTION");
 }
 {
-  // Swing points from BEFORE the break never count toward continuation.
+  // With only the filter on, the shared cycle still runs (and logs as [ICC]).
   const sb = iccSandbox();
-  const early = h1Up().map((b) => Object.assign({}, b, { ts: b.ts - 20 * H1 }));
-  feed(sb, h4Base().concat([breakUp]), early);
-  check("3: 1H swings before the 4H break do not confirm", sb.icc.h1_confirmed === false);
-}
-{
-  // Fewer swing points than the configured lookback is not enough.
-  const sb = iccSandbox({ iccH1Swings: 5 });
-  feed(sb, h4Base().concat([breakUp]), h1Up());
-  check("3: with a 5-swing lookback, 4 highs / 3 lows do not confirm", sb.icc.h1_confirmed === false);
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  check("4: the shared cycle runs for the filter alone", !!sb.iccCycle && sb.iccCycle.dir === "buy");
 }
 
-// ---------------------------------------------------------------- 4: CORRECTION
-{
-  const sb = iccSandbox();
-  const h4 = h4Base().concat([breakUp]);
-  // From the break bar: up to 130, then back down to 116 — 14 of a 25-point NTZ = 56%.
-  const pull = [
-    B(T0 + 5 * H4 + 0 * H1, 110, 121, 109, 120),
-    B(T0 + 5 * H4 + 1 * H1, 120, 130, 119, 128),
-    B(T0 + 5 * H4 + 2 * H1, 128, 129, 120, 121)
-  ];
-  feed(sb, h4, pull);
-  check("4: a 36% pullback is not yet a correction", sb.icc.correction_active === false);
-  feed(sb, h4, pull.concat([B(T0 + 5 * H4 + 3 * H1, 121, 122, 116, 117)]));
-  check("4: a 56% pullback toward the broken level is", sb.icc.correction_active === true);
-  check("4: and is logged", sb.__logLines.some((l) => /ICC CORRECTION — price returned toward broken level 120\.00/.test(l)));
-}
-
-// ---------------------------------------------------------------- 5: BEARISH FLIP + INVALIDATION
+// ---------------------------------------------------------------- 5: DISRESPECT + INVALIDATION
 function flipScenario(over) {
   const sb = iccSandbox(over);
   const orders = {
-    B1: { orderId: "B1", instrumentId: "XAU/USD", orderType: "BUY", openPrice: 124, closePrice: 92 },
-    S1: { orderId: "S1", instrumentId: "XAU/USD", orderType: "SELL", openPrice: 100, closePrice: 92 }
+    B1: { orderId: "B1", instrumentId: "XAU/USD", orderType: "BUY", openPrice: 108, closePrice: 100.5 },
+    S1: { orderId: "S1", instrumentId: "XAU/USD", orderType: "SELL", openPrice: 104, closePrice: 100.5 }
   };
   sb.Framework.Orders = { forEach: (fn) => Object.values(orders).forEach(fn), get: (id) => orders[id] || null };
-  sb.managedOrders = { B1: { dir: "buy", entryPrice: 124 }, S1: { dir: "sell", entryPrice: 100 } };
-  const h4 = h4Base().concat([breakUp]);
-  feed(sb, h4);
-  feed(sb, h4.concat([B(T0 + 6 * H4, 125, 126, 90, 92)]));    // closes below the 95 low
+  sb.managedOrders = { B1: { dir: "buy", entryPrice: 108 }, S1: { dir: "sell", entryPrice: 104 } };
+  // Bullish break, then a 4H close below the locked low 101.
+  const g = CYCLE.slice(0, 7).concat([[105, 103, 101, 100.5]]);
+  const s = series(g, T0);
+  feed(sb, s.h4.slice(0, -1), s.h1.slice(0, -4));         // start-up read
+  feed(sb, s.h4, s.h1);                                   // the disrespect candle closes live
   return sb;
 }
 {
   const sb = flipScenario();
-  console.log("\n===== 5: BEARISH BREAK AGAINST AN OPEN BUY =====");
+  console.log("\n===== 5: DISRESPECT AGAINST AN OPEN BUY =====");
   sb.__logLines.filter((l) => /ICC|Closed/.test(l)).forEach((l) => console.log(l));
-  check("5: a 4H close below the NTZ low flips to BEARISH", sb.icc.bias === "BEARISH", sb.icc.bias);
-  check("5: the bearish break is logged",
-    sb.__logLines.some((l) => /ICC BEARISH BREAK — 4H candle closed below NTZ low 95\.00\. Sellers in control/.test(l)));
+  check("5: the disrespect close is logged", sb.__logLines.some((l) => /LEVEL DISRESPECTED — 4H body closed below 101\.00/.test(l)));
+  check("5: and that same close flips the shared cycle (and the filter) BEARISH", sb.icc.bias === "BEARISH", sb.icc.bias);
   check("5: the open BUY gets an invalidation warning",
-    sb.__logLines.some((l) => /ICC INVALIDATION WARNING — 4H candle closed below 95\.00 against open buy position \(B1\)/.test(l)));
+    sb.__logLines.some((l) => /ICC INVALIDATION WARNING — 4H candle closed below 101\.00 against open buy position \(B1\)/.test(l)));
   check("5: with auto close OFF nothing is closed", !sb.__orders.some((o) => o.tradingAction === "CLOSE"));
 }
 {
   const sb = flipScenario({ iccAutoClose: true });
   const closes = sb.__orders.filter((o) => o.tradingAction === "CLOSE");
-  check("5: with auto close ON the buy is closed", closes.length === 1 && closes[0].orderId === "B1",
-    JSON.stringify(closes));
-  check("5: the sell (with the new bias) is left open", !closes.some((o) => o.orderId === "S1"));
+  check("5: with auto close ON the buy is closed", closes.length === 1 && closes[0].orderId === "B1", JSON.stringify(closes));
+  check("5: the sell is left open", !closes.some((o) => o.orderId === "S1"));
   check("5: the close is labelled as an ICC close", sb.__logLines.some((l) => /Closed order B1 \(ICC invalidation\)/.test(l)));
 }
 {
@@ -270,7 +253,7 @@ function refEma(closes, len) {
 // ---------------------------------------------------------------- 7: EMA + ICC together
 {
   const sb = iccSandbox({ emaFilterOn: true, emaTimeframe: "4h", trendEmaLen: 3 });
-  feed(sb, h4Base().concat([breakUp]), h1Up());
+  feedS(sb, series(CYCLE, T0));
   const ema = sb.icc.ema_4h;
   check("7: both ON, ICC armed and price above the 4H EMA: buy passes",
     sb.icc.h1_confirmed && sb.trendGateReason(false, ema + 1) === null);
@@ -331,18 +314,18 @@ function fvgSequence() {
 {
   const sb = iccSandbox();
   sb.isRunning = false;
-  feed(sb, h4Base());
-  feed(sb, h4Base().concat([breakUp]));
-  check("9: no ICC transition is logged while the bot is stopped",
-    !sb.__logLines.some((l) => /ICC/.test(l)));
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  feedS(sb, series(CYCLE, T0));
+  check("9: no ICC line is logged while the bot is stopped", !sb.__logLines.some((l) => /ICC/.test(l)));
 }
 {
   const sb = iccSandbox();
-  feed(sb, h4Base().concat([breakUp]));
-  feed(sb, h4Base().concat([breakUp]));
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
   const n = sb.__logLines.filter((l) => /ICC/.test(l)).length;
-  check("9: the first read is logged once as a start-up summary, and a re-read adds nothing",
-    n === 1 && sb.__logLines.some((l) => /ICC \(4H\) read on start: bias BULLISH/.test(l)), "lines " + n);
+  check("9: the first read is one start-up summary naming the filter, and a re-read adds nothing",
+    n === 1 && sb.__logLines.some((l) => /\[ICC\] Session start — Locked NTZ High: 104\.00 \| Locked NTZ Low: 101\.00 \| Current Phase: INDICATION \(BULLISH\).*ICC Filter/.test(l)),
+    "lines " + n);
 }
 
 // ---------------------------------------------------------------- 10: upgrade notice
@@ -393,21 +376,10 @@ function zecChart() {
   }
   console.log("\n===== 11: SWING STRENGTH 3 vs LIQUID'S SWING PRICES (3) =====");
   console.log("swings marked:", marked.join(", "));
-  console.log("NTZ", sb.icc.ntz_high, "/", sb.icc.ntz_low, "| bias", sb.icc.bias, "| broken", sb.icc.break_level);
   check("11: strength 3 marks exactly the indicator's swings",
     marked.join(",") === "H 1184.4,L 1098.01,H 1190.23,L 1048.55,L 1110.12,H 1367.74,L 1187.26", marked.join(","));
   check("11: the minor bounce at 1258.15 is NOT a swing high", !marked.includes("H 1258.15"));
-  check("11: NTZ high is the 1367.74 swing high", sb.icc.ntz_high === 1367.74, sb.icc.ntz_high);
-  check("11: NTZ low is 1110.12, the swing low that created it", sb.icc.ntz_low === 1110.12, sb.icc.ntz_low);
-  check("11: the rally's close above 1190.23 set the bias BULLISH",
-    sb.icc.bias === "BULLISH" && sb.icc.break_level === 1190.23, sb.icc.bias + " " + sb.icc.break_level);
-}
-{
-  // The old 1-bar rule picks up the bounce — the mismatch the client saw.
-  const sb = iccSandbox({ iccSwingStrength: 1 });
-  feed(sb, zecChart());
-  check("11: with strength 1 the NTZ high is a minor bounce, not 1367.74",
-    sb.icc.ntz_high !== 1367.74, "NTZ high " + sb.icc.ntz_high);
+  check("11: strength 1 would also mark the 1258.15 bounce", sb.isSwingHigh(bars, 24, 1, "wick"));
 }
 {
   // A flat top: two equal highs. The first of the pair is the swing, not neither.
