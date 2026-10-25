@@ -1,5 +1,5 @@
-// ICC Entry Models: the GPS Entry Model and the ICC Entry Model — swing lock, the three
-// phases on the structure TF + 1H, alignment and pullback, the four resets, and orders.
+// ICC Entry Models: ONE shared ICC cycle (swing lock, phases, resets) that both the ICC Entry
+// Model and the GPS Entry Model read, the per-model entry conditions, and their orders.
 const { buildSandbox, defaultCfg, run, M5 } = require("./harness");
 
 const results = [];
@@ -8,7 +8,7 @@ const check = (n, ok, extra) => results.push([n + (extra ? "  (" + extra + ")" :
 const H1 = 3600e3, H4 = 4 * H1, D1 = 24 * H1;
 // The last full hour before now: the scenario's continuation candle closes there, so a
 // "live" entry is minutes old rather than hours. (Structure bars need not sit on real
-// 4H boundaries for the model.)
+// 4H boundaries for the cycle.)
 const END = Math.floor(Date.now() / H1) * H1;
 
 // 1H closes in groups of four; each group is one 4H candle. o = previous close, wicks 1.
@@ -26,19 +26,31 @@ function series(groups, startTs) {
   });
   return { h1, h4 };
 }
+// Extra 1H closes after a series (no new 4H candle closes).
+function more(s, closes) {
+  let prev = s.h1[s.h1.length - 1].c;
+  closes.forEach((c) => {
+    const o = prev; prev = c;
+    s.h1.push({ ts: s.h1[s.h1.length - 1].ts + H1, o, h: Math.max(o, c) + 1, l: Math.min(o, c) - 1, c, v: 1 });
+  });
+  return s;
+}
 
 // The base bullish scenario (closes):
 //   G1 104 = swing high, G2 101 = swing low  -> NTZ 104 / 101 locked at G3's close
 //   G3 103 / G4 102 = new swings inside      -> ignored
 //   G6 closes 109 above 104                  -> INDICATION (bullish)
 //   1H 111 swing high, then lower high 108.5 -> CORRECTION
-//   1H closes 109.5 above 108.5              -> CONTINUATION
+//   1H closes 109.5 above 108.5              -> CONTINUATION, target 110.2 (4H extreme)
 const BASE = [
   [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
   [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
   [110, 111, 110.5, 110.2], [107, 108.5, 107.5, 109.5]
 ];
 const START = END - BASE.length * H4;
+// Same shape with the post-break high at 113, so the target sits well above the
+// continuation — for scenarios that need price to wander before it is reached.
+const WIDE = BASE.slice(0, 7).concat([[110, 114, 113.5, 113], [107, 108.5, 107.5, 109.5]]);
 
 function storeOf(bars, tfMs) {
   const last = bars[bars.length - 1];
@@ -49,9 +61,9 @@ function storeOf(bars, tfMs) {
 function modelSandbox(over) {
   const sb = buildSandbox();
   sb.cfg = defaultCfg(Object.assign({
-    iccSwingStrength: 1, iccSwingSource: "close", iccMaxWait: 20,
-    gpsModelOn: false, gpsModelStructTf: "4h", gpsModelAlign: false, gpsModelActiveWindow: 20,
-    iccModelOn: true, iccModelStructTf: "4h", iccModelAlign: false,
+    iccStructTf: "4h", iccSwingStrength: 1, iccSwingSource: "close", iccMaxWait: 20,
+    iccModelOn: true, iccModelAlign: false, iccModelTpStruct: true, iccModelSlMode: "pips", iccModelTrail: false,
+    gpsModelOn: false, gpsModelAlign: false, gpsModelTpStruct: true, gpsModelSlMode: "pips", gpsModelTrail: false,
     sizingMode: "fixed", fixedLots: 0.1
   }, over || {}));
   sb.priceDecimals = 2;
@@ -61,116 +73,158 @@ function modelSandbox(over) {
   sb.resetEntryModels();
   return sb;
 }
-const params = (sb, kind) => sb.modelParams(kind);
-const runModel = (sb, kind, d) => sb.runIccModel(kind, params(sb, kind), d);
-const types = (st) => st.events.map((e) => e.type.split("|")[0]);
+const mods = (sb) => ({
+  icc: { on: !!sb.cfg.iccModelOn, align: !!sb.cfg.iccModelAlign },
+  gps: { on: !!sb.cfg.gpsModelOn, align: !!sb.cfg.gpsModelAlign }
+});
+const cycle = (sb, d) => sb.runIccCycle(sb.cycleParams(), d, mods(sb));
+const types = (st, kind) => st.events.filter((e) => kind === undefined || e.kind === kind).map((e) => e.type.split("|")[0]);
+const shared = (st) => st.events.filter((e) => !e.kind).map((e) => e.type + "@" + e.ts).join(",");
+// Feed a series in two steps (everything but the last 1H candle, then all of it) — the
+// first is the start-up read, the second is that candle closing live.
+function liveFeed(sb, s) {
+  const lastTs = s.h1[s.h1.length - 1].ts;
+  sb.h4Store = storeOf(s.h4.filter((b) => b.ts + H4 <= lastTs), H4);
+  sb.h1Store = storeOf(s.h1.slice(0, -1), H1);
+  sb.updateEntryModels();
+  sb.h4Store = storeOf(s.h4, H4);
+  sb.h1Store = storeOf(s.h1, H1);
+  sb.updateEntryModels();
+}
 
-// ---------------------------------------------------------------- 1: the full cycle
+// ---------------------------------------------------------------- 1: the shared cycle
 {
-  const sb = modelSandbox();
-  const { h1, h4 } = series(BASE, START);
-  const st = runModel(sb, "icc", { d1: [], h4, h1 });
-  console.log("===== 1: ICC ENTRY MODEL — FULL CYCLE =====");
-  st.events.forEach((e) => console.log(e.text));
-  const t = types(st);
-  check("1: the NTZ locks on the swing high and the swing low", t[0] === "LOCK" &&
-    /Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st.events[0].text));
+  const sb = modelSandbox({ gpsModelOn: true });
+  const s = more(series(BASE, START), [110.5]);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  console.log("===== 1: ONE SHARED CYCLE, BOTH MODELS ON =====");
+  st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
+  check("1: the NTZ locks once, for both models",
+    st.events.filter((e) => e.type === "LOCK").length === 1 &&
+    st.events.some((e) => e.type === "LOCK" && /^\[ICC\] Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(e.text)));
   check("1: later swings inside the NTZ are IGNORED, the lock holds",
-    t.filter((x) => x === "IGNORED").length >= 2 && st.events.some((e) => /New swing detected at 103\.00 — IGNORED/.test(e.text)));
-  check("1: a 4H body close above the locked high is the INDICATION",
-    st.events.some((e) => e.type === "INDICATION" && /4H closed above NTZ 104\.00\. Break direction: BULLISH/.test(e.text)));
-  check("1: the 1H turning down is the CORRECTION (price never re-entered the NTZ)",
+    st.events.some((e) => /New swing detected at 103\.00 — IGNORED/.test(e.text)));
+  check("1: one INDICATION on the 4H body close above 104",
+    st.events.filter((e) => e.type === "INDICATION").length === 1 &&
+    st.events.some((e) => /4H closed above NTZ 104\.00\. Break direction: BULLISH/.test(e.text)));
+  check("1: CORRECTION when the 1H turns down — price never came back into the NTZ",
     st.events.some((e) => e.type === "CORRECTION" && /swing high 111\.00/.test(e.text)));
+  check("1: CONTINUATION on the 1H close above the lower high, with the 4H target",
+    st.events.some((e) => e.type === "CONTINUATION" && /closed above 108\.50\. TP target 110\.20/.test(e.text)));
   const entry = st.events.find((e) => e.type === "ENTRY");
-  check("1: a 1H close above the lower high 108.5 is the entry", !!entry && entry.entry === 109.5,
-    entry ? entry.text : "no entry");
-  check("1: SL is below the latest 1H swing low (its wick)", !!entry && entry.sl === 106.5, entry && entry.sl);
-  check("1: TP is the 4H extreme since the break", !!entry && entry.tp === 110.2, entry && entry.tp);
-  check("1: the cycle completes and resets", t[t.length - 1] === "COMPLETE" && st.status === "RESET" && st.phase === "WAITING");
-  check("1: the last entry is remembered for the panel", st.lastEntry && st.lastEntry.dir === "BUY" && st.lastEntry.price === 109.5);
-  check("1: after a reset it does not force a new cycle — no NTZ until fresh swings form", st.lockHigh === null);
+  check("1: the ICC model enters on that same 1H close", !!entry && entry.entry === 109.5 && entry.kind === "icc");
+  check("1: the GPS model's engines switch on at that same close",
+    st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
+  check("1: the cycle does NOT end at the entry — it ends when the TP target is hit",
+    st.events.filter((e) => e.type === "COMPLETE").every((e) => e.ts > entry.ts));
+  check("1: each model logs the brief's completion line",
+    st.events.some((e) => e.text === "[ICC ENTRY MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset.") &&
+    st.events.some((e) => e.text === "[ICC GPS MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset."));
+  check("1: status COMPLETE, phase WAITING, NTZ cleared", st.status === "COMPLETE" && st.phase === "WAITING" && st.lockHigh === null);
+  check("1: the last ICC entry is remembered for the panel", st.lastIccEntry && st.lastIccEntry.price === 109.5);
 }
 
-// ---------------------------------------------------------------- 2: history never trades; live does
+// ---------------------------------------------------------------- 2: the client's bugs
 {
-  const sb = modelSandbox();
-  const { h1, h4 } = series(BASE, START);
-  // Everything up to the bar before the continuation candle: the start-up read.
-  sb.h4Store = storeOf(h4.slice(0, -1), H4);
-  sb.h1Store = storeOf(h1.slice(0, -1), H1);
-  sb.updateEntryModels();
-  check("2: the first read logs the session-start state", sb.__logLines.some((l) =>
-    /\[ICC ENTRY MODEL\] Session start — Locked NTZ High: 104\.00 \| Locked NTZ Low: 101\.00 \| Current Phase: CORRECTION/.test(l)));
-  check("2: and sends nothing", sb.__orders.length === 0);
-  // The continuation candle closes.
-  sb.h4Store = storeOf(h4, H4);
-  sb.h1Store = storeOf(h1, H1);
-  sb.updateEntryModels();
-  console.log("\n===== 2: LIVE CONTINUATION =====");
-  sb.__logLines.filter((l) => /ICC ENTRY MODEL|ORDER/.test(l)).forEach((l) => console.log(l));
-  const o = sb.__orders[0];
-  check("2: the continuation close places ONE market order", sb.__orders.length === 1 && o.tradingAction === "BUY");
-  check("2: tagged GPSBOT-ICC", o && o.comment === "GPSBOT-ICC");
-  check("2: SL sent as the distance to the 1H swing (109.5 - 106.5 = 30 pips)", o && o.sl && o.sl.pips === 30, o && JSON.stringify(o.sl));
-  check("2: TP sent as the distance to the structure target (110.2 = 7 pips)", o && o.tp && o.tp.pips === 7, o && JSON.stringify(o.tp));
-  check("2: the log carries the brief's ENTRY PLACED line",
-    sb.__logLines.some((l) => /\[ICC ENTRY MODEL\] CONTINUATION — 1H candle body close confirmed\. ENTRY PLACED\. BUY Entry: 109\.50 \| SL: 106\.50 \| TP: 110\.20/.test(l)));
-  check("2: and CYCLE COMPLETE", sb.__logLines.some((l) => /\[ICC ENTRY MODEL\] CYCLE COMPLETE/.test(l)));
-  check("2: the CSV row is labelled ICC ENTRY MODEL",
-    sb.signalLog.length === 1 && sb.signalLog[0].model === "ICC ENTRY MODEL");
-  sb.updateEntryModels();
-  check("2: a re-read does not trade the same candle twice", sb.__orders.length === 1);
+  // Alignment ON vs OFF, and GPS model on or off, must give the SAME NTZ and phase path.
+  const s = more(series(BASE, START), [110, 110.1]);
+  const a = cycle(modelSandbox({ iccModelAlign: false }), { d1: [], h4: s.h4, h1: s.h1 });
+  const b = cycle(modelSandbox({ iccModelAlign: true, gpsModelOn: true, gpsModelAlign: true }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("2: alignment ON/OFF and either model: identical locks, phases and resets", shared(a) === shared(b),
+    shared(a) + "  vs  " + shared(b));
+  check("2: same NTZ and phase right now", a.lockHigh === b.lockHigh && a.phase === b.phase && a.dir === b.dir);
+  check("2: alignment only changed the ENTRY — blocked with Daily not bullish",
+    types(b, "icc").includes("NOTALIGNED") && !types(b, "icc").includes("ENTRY") && types(a, "icc").includes("ENTRY"));
 }
 {
-  const sb = modelSandbox({ tradingMode: "dry" });
-  const { h1, h4 } = series(BASE, START);
-  sb.h4Store = storeOf(h4.slice(0, -1), H4); sb.h1Store = storeOf(h1.slice(0, -1), H1); sb.updateEntryModels();
-  sb.h4Store = storeOf(h4, H4); sb.h1Store = storeOf(h1, H1); sb.updateEntryModels();
-  check("2: Dry Run logs the entry but sends nothing",
-    sb.__orders.length === 0 && sb.__logLines.some((l) => /ENTRY PLACED/.test(l)) && sb.__logLines.some((l) => /DRY RUN/.test(l)));
-}
-{
-  const sb = modelSandbox({ enableBuys: false });
-  const { h1, h4 } = series(BASE, START);
-  sb.h4Store = storeOf(h4.slice(0, -1), H4); sb.h1Store = storeOf(h1.slice(0, -1), H1); sb.updateEntryModels();
-  sb.h4Store = storeOf(h4, H4); sb.h1Store = storeOf(h1, H1); sb.updateEntryModels();
-  check("2: the BUY master switch off blocks the ICC model's buy", sb.__orders.length === 0 &&
-    sb.__logLines.some((l) => /BUY signals are switched off/.test(l)));
-}
-{
-  // The EMA filter does NOT block the ICC Entry Model.
-  const sb = modelSandbox({ emaFilterOn: true, iccOn: true });
-  sb.icc.bias = "NTZ";
-  const { h1, h4 } = series(BASE, START);
-  sb.h4Store = storeOf(h4.slice(0, -1), H4); sb.h1Store = storeOf(h1.slice(0, -1), H1); sb.updateEntryModels();
-  sb.h4Store = storeOf(h4, H4); sb.h1Store = storeOf(h1, H1); sb.updateEntryModels();
-  check("2: the 50 EMA / ICC filters do not block the ICC Entry Model", sb.__orders.length === 1);
-}
-
-// ---------------------------------------------------------------- 3: resets
-{
-  // Disrespect: a 4H close below the locked low 101 after the bullish break.
-  const g = BASE.slice(0, 7).concat([[105, 103, 101, 100.5]]);
-  const sb = modelSandbox();
-  const s = series(g, START);
-  const st = runModel(sb, "icc", { d1: [], h4: s.h4, h1: s.h1 });
-  check("3: a 4H body close back through the NTZ is DISRESPECT",
-    types(st).includes("DISRESPECT") && st.events.some((e) => /LEVEL DISRESPECTED — 4H body closed below 101\.00/.test(e.text)));
-  check("3: which resets the cycle with no entry", !types(st).includes("ENTRY") && st.phase === "WAITING");
-}
-{
-  // Timeout: after the break the 1H just keeps rising — no correction within Max wait.
-  const g = BASE.slice(0, 7).concat([[110, 111, 112, 113], [114, 115, 116, 117], [118, 119, 120, 121]]);
-  const sb = modelSandbox({ iccMaxWait: 2 });
+  // The stuck GPS model: alignment ON, continuation reached, Daily never agrees, price never
+  // pulls back. It must not hold the old levels forever — Max wait ends the cycle.
+  const g = WIDE.concat([[109.6, 109.7, 109.8, 109.9], [109.9, 109.95, 110, 110.05], [110.06, 110.07, 110.08, 110.09]]);
+  const sb = modelSandbox({ iccModelOn: false, gpsModelOn: true, gpsModelAlign: true, iccMaxWait: 2 });
   const s = series(g, START - 3 * H4);
-  const st = runModel(sb, "icc", { d1: [], h4: s.h4, h1: s.h1 });
-  check("3: no correction within Max wait candles is a TIMEOUT",
-    types(st).includes("TIMEOUT") && st.events.some((e) => /TIMEOUT — No correction detected after 2 4H candles/.test(e.text)));
-  check("3: the status reads TIMED OUT", st.status === "TIMED OUT", st.status);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("2: a continuation that never reaches its target or entry times out and resets",
+    types(st).includes("TIMEOUT") && st.events.some((e) => /TIMEOUT — Target not reached after 2 4H candles/.test(e.text)) &&
+    st.lockHigh === null);
+}
+
+// ---------------------------------------------------------------- 3: startup + live
+{
+  const sb = modelSandbox();
+  const s = series(BASE, START);
+  liveFeed(sb, s);
+  console.log("\n===== 3: START-UP READ, THEN LIVE CONTINUATION =====");
+  sb.__logLines.filter((l) => /ICC|ORDER/.test(l)).forEach((l) => console.log(l));
+  check("3: on start the phase is where the cycle already is (CORRECTION), not WAITING",
+    sb.__logLines.some((l) => /\[ICC\] Session start — Locked NTZ High: 104\.00 \| Locked NTZ Low: 101\.00 \| Current Phase: CORRECTION \(BULLISH\)/.test(l)));
+  const o = sb.__orders[0];
+  check("3: the live continuation close places ONE market order", sb.__orders.length === 1 && o.tradingAction === "BUY");
+  check("3: tagged GPSBOT-ICC", o && o.comment === "GPSBOT-ICC");
+  check("3: default stop = fixed pips (100)", o && o.sl && o.sl.pips === 100, o && JSON.stringify(o.sl));
+  check("3: default TP = the structure target (110.2 - 109.5 = 7 pips)", o && o.tp && o.tp.pips === 7, o && JSON.stringify(o.tp));
+  check("3: the CSV row is labelled ICC ENTRY MODEL", sb.signalLog.length === 1 && sb.signalLog[0].model === "ICC ENTRY MODEL");
+  sb.updateEntryModels();
+  check("3: a re-read does not trade the same candle twice", sb.__orders.length === 1);
 }
 {
-  // New swing beyond the locked level while still waiting for the correction.
-  const sb = modelSandbox();
+  const s = series(BASE, START);
+  const h1 = modelSandbox({ iccModelSlMode: "h1" }); liveFeed(h1, s);
+  check("3: SL = latest 1H swing: below the 107.5 swing's wick (106.5 = 30 pips)",
+    h1.__orders[0] && h1.__orders[0].sl.pips === 30, h1.__orders[0] && JSON.stringify(h1.__orders[0].sl));
+  const st = modelSandbox({ iccModelSlMode: "struct" }); liveFeed(st, s);
+  check("3: SL = latest structure swing: below the 4H swing low's wick",
+    st.__orders[0] && st.__orders[0].sl.pips > 30, st.__orders[0] && JSON.stringify(st.__orders[0].sl));
+  const tp1 = modelSandbox({ iccModelTpStruct: false }); liveFeed(tp1, s);
+  check("3: TP structure OFF = Take profit 1 pips (100)", tp1.__orders[0] && tp1.__orders[0].tp.pips === 100);
+  const dry = modelSandbox({ tradingMode: "dry" }); liveFeed(dry, s);
+  check("3: Dry Run logs the entry but sends nothing", dry.__orders.length === 0 && dry.__logLines.some((l) => /ENTRY PLACED/.test(l)));
+  const nob = modelSandbox({ enableBuys: false }); liveFeed(nob, s);
+  check("3: the BUY master switch off blocks the ICC model's buy", nob.__orders.length === 0);
+  const flt = modelSandbox({ emaFilterOn: true, iccOn: true }); flt.icc.bias = "NTZ"; liveFeed(flt, s);
+  check("3: the 50 EMA / ICC filters do not block the ICC Entry Model", flt.__orders.length === 1);
+}
+
+// ---------------------------------------------------------------- 4: trail after TP
+{
+  const sb = modelSandbox({ iccModelTrail: true, autoTrailingOn: true, trailAfterProfitDollars: 1, profitLockDistanceDollars: 0.5 });
+  const s = series(BASE, START);
+  liveFeed(sb, s);
+  const o = sb.__orders[0];
+  check("4: trail ON: the order goes out with NO TP", o && !o.tp, o && JSON.stringify(o));
+  // The fill: managed, held for the target, not trailed yet even though it is in profit.
+  const order = { orderId: "T1", instrumentId: "XAU/USD", orderType: "BUY", openPrice: 109.5, closePrice: 110.0,
+                  profit: 50, sl: 99.5, tp: null, comment: "GPSBOT-ICC" };
+  sb.Framework.Orders = { forEach: (fn) => [order].forEach(fn), get: (id) => (id === "T1" ? order : null) };
+  sb.Framework.OnOrderOpen(order);
+  check("4: the fill is marked as held for the target", sb.managedOrders.T1 && sb.managedOrders.T1.holdForTarget === true);
+  const before = sb.__orders.length;
+  sb.manageOpenTrades();
+  check("4: before the target, the trail does not touch it", sb.__orders.length === before);
+  sb.armTrailsAtTarget(110.2);
+  check("4: at the target the trail takes over", sb.managedOrders.T1.targetHit === true && sb.__orders.length > before &&
+    sb.__logLines.some((l) => /TP target 110\.20 reached — trail active on T1/.test(l)));
+}
+
+// ---------------------------------------------------------------- 5: resets
+{
+  // Disrespect: a 4H close below 101 after the bullish break. The same close is the break the
+  // other way, so it re-locks and indicates BEARISH straight away.
+  const g = BASE.slice(0, 7).concat([[105, 103, 101, 100.5]]);
+  const s = series(g, START);
+  const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
+  check("5: a 4H body close back through the NTZ is DISRESPECT",
+    st.events.some((e) => /LEVEL DISRESPECTED — 4H body closed below 101\.00/.test(e.text)));
+  check("5: and that same close is the bearish INDICATION of the next cycle",
+    st.dir === "sell" && st.phase === "INDICATION", st.dir + " " + st.phase);
+}
+{
+  const g = BASE.slice(0, 7).concat([[110, 111, 112, 113], [114, 115, 116, 117], [118, 119, 120, 121]]);
+  const s = series(g, START - 3 * H4);
+  const st = cycle(modelSandbox({ iccMaxWait: 2 }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("5: no correction within Max wait is a TIMEOUT",
+    st.events.some((e) => /TIMEOUT — No correction detected after 2 4H candles/.test(e.text)) && st.status === "TIMED OUT");
+}
+{
   const s = series(BASE.slice(0, 7), START);
   const risingH1 = [];
   for (let k = 0; k < 8; k++) {
@@ -178,102 +232,53 @@ const types = (st) => st.events.map((e) => e.type.split("|")[0]);
     risingH1.push({ ts: s.h1[s.h1.length - 1].ts + (k + 1) * H1, o: c - 1, h: c + 1, l: c - 2, c, v: 1 });
   }
   const h4 = s.h4.concat([
-    { ts: s.h4[6].ts + H4, o: 109, h: 114, l: 108, c: 113, v: 1 },     // swing high 113 (> locked 104)
+    { ts: s.h4[6].ts + H4, o: 109, h: 114, l: 108, c: 113, v: 1 },
     { ts: s.h4[6].ts + 2 * H4, o: 113, h: 113, l: 110, c: 111, v: 1 }
   ]);
-  const st = runModel(sb, "icc", { d1: [], h4, h1: s.h1.concat(risingH1) });
-  check("3: a new 4H swing beyond the locked high before any correction INVALIDATES the cycle",
-    types(st).includes("INVALIDATED") && st.events.some((e) => /New swing formed beyond locked level at 113\.00/.test(e.text)));
+  const st = cycle(modelSandbox(), { d1: [], h4, h1: s.h1.concat(risingH1) });
+  check("5: a new 4H swing beyond the locked high before any correction INVALIDATES the cycle",
+    st.events.some((e) => /INVALIDATED — New swing formed beyond locked level at 113\.00/.test(e.text)));
 }
 {
-  // The same new 4H swing AFTER the correction started is not an invalidation.
-  const sb = modelSandbox();
-  const s = series(BASE, START);
-  const st = runModel(sb, "icc", { d1: [], h4: s.h4, h1: s.h1 });
-  check("3: once correcting, a new 4H swing is ignored rather than invalidating", !types(st).includes("INVALIDATED"));
+  // After completion the next NTZ comes from swings that formed after the reset — the old
+  // pair is never re-used.
+  const g = BASE.concat([[110.5, 112, 111, 110], [109, 108, 107.8, 108.5], [109, 109.5, 109.2, 109.4], [109, 108.8, 108.9, 109]]);
+  const s = series(g, START - 4 * H4);
+  const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
+  const locks = st.events.filter((e) => e.type === "LOCK");
+  check("5: after COMPLETE, the next lock uses fresh swings", locks.length === 2 && !/104\.00/.test(locks[1].text),
+    locks.map((e) => e.text).join(" || "));
 }
 
-// ---------------------------------------------------------------- 4: alignment ON
-// Daily bias BULLISH: swing high 104 on day 1, closed above on day 3 — well before the 1H.
+// ---------------------------------------------------------------- 6: alignment entries
 const dailyBull = [
   { ts: START - 4 * D1, o: 99, h: 101, l: 98, c: 100, v: 1 }, { ts: START - 3 * D1, o: 100, h: 105, l: 99, c: 104, v: 1 },
   { ts: START - 2 * D1, o: 104, h: 104, l: 101, c: 102, v: 1 }, { ts: START - D1, o: 102, h: 111, l: 101, c: 110, v: 1 }
 ];
 {
-  const sb = modelSandbox({ iccModelAlign: true });
-  const s = series(BASE, START);
-  const st = runModel(sb, "icc", { d1: [], h4: s.h4, h1: s.h1 });
-  check("4: alignment ON with Daily not bullish: NOT ALIGNED, entry blocked",
-    types(st).includes("NOTALIGNED") && !types(st).includes("ENTRY") &&
-    st.events.some((e) => /TF ALIGNMENT CHECK — Daily: NTZ \| 4H: BULLISH \| 1H: BULLISH — NOT ALIGNED\. Entry blocked/.test(e.text)));
-  check("4: and it stays in CORRECTION", st.phase === "CORRECTION", st.phase);
-}
-function pullbackSeries(after) {
-  const s = series(BASE, START);
-  let prev = s.h1[s.h1.length - 1].c;
-  after.forEach((c, k) => {
-    const o = prev; prev = c;
-    s.h1.push({ ts: s.h1[s.h1.length - 1].ts + H1, o, h: Math.max(o, c) + 1, l: Math.min(o, c) - 1, c, v: 1 });
-  });
-  return s;
-}
-{
-  // Aligned at the 109.5 close -> wait for a pullback to the 1H higher low 107.5 ->
-  // 110 (no touch), 108 (low 107 touches, bearish), 108.8 (bullish close) = entry.
-  const sb = modelSandbox({ iccModelAlign: true });
-  const s = pullbackSeries([110, 108, 108.8]);
-  const st = runModel(sb, "icc", { d1: dailyBull, h4: s.h4, h1: s.h1 });
-  console.log("\n===== 4: ALIGNMENT + PULLBACK =====");
+  // Aligned at the 109.5 continuation -> pullback to the 1H higher low 107.5 ->
+  // 110 (no touch), 108 (low 107 touches, bearish), 108.8 (bullish close) = ICC entry.
+  const sb = modelSandbox({ iccModelAlign: true, gpsModelOn: true, gpsModelAlign: true });
+  const s = more(series(WIDE, START), [110, 108, 108.8]);
+  const st = cycle(sb, { d1: dailyBull, h4: s.h4, h1: s.h1 });
+  console.log("\n===== 6: ALIGNMENT + PULLBACK =====");
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
-  check("4: Daily + 4H + 1H aligned confirms the correction complete", st.events.some((e) =>
-    e.type === "ALIGNED" && /1H structure shifted BULLISH\. All TFs aligned\. CONTINUATION phase triggered/.test(e.text)));
+  check("6: alignment confirmed on the continuation close", st.events.some((e) => e.type === "ALIGNED" && e.kind === "icc"));
   const entry = st.events.find((e) => e.type === "ENTRY");
-  check("4: no entry on the alignment candle itself — it waits for the pullback",
-    !!entry && entry.entry !== 109.5);
-  check("4: entry is the first bullish 1H close after the pullback touched the higher low",
-    !!entry && entry.entry === 108.8, entry && entry.entry);
-  check("4: logged as the brief's alignment entry",
-    !!entry && /CORRECTION COMPLETE — All TFs aligned\. 1H pullback confirmed\. ENTRY PLACED/.test(entry.text));
+  check("6: the ICC entry waits for the pullback, then the first bullish 1H close", !!entry && entry.entry === 108.8,
+    entry && entry.entry);
+  const act = st.events.find((e) => e.type === "ACTIVE" && e.kind === "gps");
+  check("6: the GPS engines switch on at the pullback touch", !!act && act.ts < entry.ts);
 }
 {
-  // A 1H CLOSE below the higher low breaks the structure: back to correction, no entry.
   const sb = modelSandbox({ iccModelAlign: true });
-  const s = pullbackSeries([110, 107]);
-  const st = runModel(sb, "icc", { d1: dailyBull, h4: s.h4, h1: s.h1 });
-  check("4: a 1H close below the higher low sends it back to CORRECTION",
-    types(st).includes("PULLBROKEN") && st.phase === "CORRECTION" && !types(st).includes("ENTRY"));
+  const s = more(series(WIDE, START), [110, 107]);
+  const st = cycle(sb, { d1: dailyBull, h4: s.h4, h1: s.h1 });
+  check("6: a 1H close below the higher low cancels that pullback, the phase stays CONTINUATION",
+    types(st, "icc").includes("PULLBROKEN") && st.phase === "CONTINUATION" && !types(st, "icc").includes("ENTRY"));
 }
 
-// ---------------------------------------------------------------- 5: GPS Entry Model
-{
-  const sb = modelSandbox({ iccModelOn: false, gpsModelOn: true });
-  const s = series(BASE, START);
-  const st = runModel(sb, "gps", { d1: [], h4: s.h4, h1: s.h1 });
-  console.log("\n===== 5: GPS ENTRY MODEL =====");
-  st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
-  check("5: continuation switches the engines ON (no order of its own)",
-    st.active && st.phase === "CONTINUATION" && !types(st).includes("ENTRY") &&
-    st.events.some((e) => /\[ICC GPS MODEL\] CONTINUATION — 1H closed above 108\.50\. BUY engines ACTIVE on M5\. Target 110\.20/.test(e.text)));
-  sb.modelState.gps = st;
-  check("5: buys are allowed while active", sb.gpsModelGateReason(false) === null);
-  check("5: sells are not", /ACTIVE for BUYS only/.test(sb.gpsModelGateReason(true)));
-
-  // Target hit on the next 1H: the cycle completes and the engines switch off.
-  const s2 = pullbackSeries([110.5]);
-  const st2 = runModel(sb, "gps", { d1: [], h4: s2.h4, h1: s2.h1 });
-  check("5: reaching the structure target completes the cycle and turns the engines OFF",
-    !st2.active && st2.events.some((e) => /CYCLE COMPLETE — target 110\.20 reached\. Engines OFF/.test(e.text)));
-}
-{
-  const sb = modelSandbox({ iccModelOn: false, gpsModelOn: true });
-  const s = series(BASE.slice(0, 7), START);
-  const st = runModel(sb, "gps", { d1: [], h4: s.h4, h1: s.h1 });
-  sb.modelState.gps = st;
-  check("5: before continuation the engines are WAITING",
-    /engines WAITING \(ICC phase INDICATION\)/.test(sb.gpsModelGateReason(false)));
-}
-
-// GPS engines firing through the model gate, on the harness FVG buy (entry ~2004).
+// ---------------------------------------------------------------- 7: GPS engines through the gate
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
 function fvgSequence() {
@@ -294,53 +299,56 @@ function fvgSequence() {
   bars.push(flat(t0 + 6 * M5, 2004));
   return bars;
 }
-const gpsCfg = (over) => defaultCfg(Object.assign({ gpsModelOn: true, iccModelOn: false }, over || {}));
+const gpsCfg = (over) => defaultCfg(Object.assign({ gpsModelOn: true, iccModelOn: false, gpsModelTpStruct: true,
+                                                    gpsModelSlMode: "pips", gpsModelTrail: false }, over || {}));
+const activeCycle = (dir, target) => ({ phase: "CONTINUATION", dir, target, m: { gps: { active: true }, icc: {} },
+                                        latest: { h1Hi: 2010, h1Lo: 1995, sHi: 2030, sLo: 1980 } });
 {
   const sb = buildSandbox();
-  sb.modelState.gps = null;
   run(sb, fvgSequence(), gpsCfg());
-  check("5: with the model WAITING, a GPS buy signal is logged but not ordered",
+  check("7: no cycle / engines WAITING: the GPS buy is logged but not ordered",
     sb.signalLog.length === 1 && sb.__orders.length === 0 &&
     sb.__logLines.some((l) => /\[ENGINE 1\] BUY signal fired — NO ORDER SENT — GPS Entry Model: engines WAITING/.test(l)));
 }
 {
   const sb = buildSandbox();
-  sb.modelState.gps = { active: true, dir: "buy", target: 2050, phase: "CONTINUATION" };
+  sb.iccCycle = activeCycle("buy", 2050);
   run(sb, fvgSequence(), gpsCfg());
-  const o = sb.__orders[0];
-  console.log("\n===== 5: GPS MODEL ACTIVE ORDER =====");
-  console.log(JSON.stringify(o));
-  check("5: with the model ACTIVE for buys, the GPS buy is ordered", sb.__orders.length === 1);
-  check("5: its TP is the structure target (2050 from ~2004)", o && o.tp && Math.abs(o.tp.pips - (2050 - sb.signalLog[0].entry) / 0.1) < 0.11,
-    o && JSON.stringify(o.tp));
-  check("5: its SL is the normal pip stop", o && o.sl && o.sl.pips === 100);
-  check("5: logged as GPS MODEL ACTIVE — ORDER SENT",
-    sb.__logLines.some((l) => /\[ENGINE 1\] BUY signal fired — GPS MODEL ACTIVE — ORDER SENT · TP = structure target 2050\.00/.test(l)));
-  check("5: the CSV row is labelled GPS ENTRY MODEL", sb.signalLog[0].model === "GPS ENTRY MODEL");
+  const o = sb.__orders[0], entry = sb.signalLog[0].entry;
+  check("7: engines ACTIVE for buys: the GPS buy is ordered", sb.__orders.length === 1);
+  check("7: TP = the shared structure target", o && Math.abs(o.tp.pips - (2050 - entry) / 0.1) < 0.11, o && JSON.stringify(o.tp));
+  check("7: SL = the fixed pip stop by default", o && o.sl.pips === 100);
+  check("7: logged as GPS MODEL ACTIVE — ORDER SENT", sb.__logLines.some((l) => /GPS MODEL ACTIVE — ORDER SENT/.test(l)));
+  check("7: CSV row labelled GPS ENTRY MODEL", sb.signalLog[0].model === "GPS ENTRY MODEL");
 }
 {
   const sb = buildSandbox();
-  sb.modelState.gps = { active: true, dir: "sell", target: 1900, phase: "CONTINUATION" };
-  run(sb, fvgSequence(), gpsCfg());
-  check("5: a buy while the model is active for SELLS is not ordered", sb.__orders.length === 0);
+  sb.iccCycle = activeCycle("buy", 2050);
+  run(sb, fvgSequence(), gpsCfg({ gpsModelSlMode: "h1" }));
+  const o = sb.__orders[0], entry = sb.signalLog[0].entry;
+  check("7: SL option 1H swing uses the shared latest 1H swing low", o && Math.abs(o.sl.pips - (entry - 1995) / 0.1) < 0.11,
+    o && JSON.stringify(o.sl));
 }
 {
   const sb = buildSandbox();
-  sb.modelState.gps = null;
+  sb.iccCycle = activeCycle("sell", 1900);
+  run(sb, fvgSequence(), gpsCfg());
+  check("7: engines ACTIVE for sells: a buy is not ordered", sb.__orders.length === 0);
+}
+{
+  const sb = buildSandbox();
   run(sb, fvgSequence(), gpsCfg({ gpsModelOn: false }));
-  check("5: with the GPS model OFF the engines trade as normal", sb.__orders.length === 1);
+  check("7: GPS model OFF: the engines trade as normal", sb.__orders.length === 1);
 }
 
-// ---------------------------------------------------------------- 6: Daily structure
+// ---------------------------------------------------------------- 8: Daily structure
 {
-  // The same shape on Daily candles: the NTZ, indication and target all come from Daily.
-  const sb = modelSandbox({ iccModelStructTf: "daily" });
+  const sb = modelSandbox({ iccStructTf: "daily" });
   const s = series(BASE, START);
   const d1 = s.h4.map((b, i) => Object.assign({}, b, { ts: START - (BASE.length - i) * D1 }));
-  const st = runModel(sb, "icc", { d1, h4: [], h1: [] });
-  check("6: Daily structure locks the Daily swing high / low",
-    st.events.some((e) => e.type === "LOCK" && /NTZ set \(Daily\)/.test(e.text)));
-  check("6: and indicates on a Daily close", st.events.some((e) => /Daily closed above NTZ 104\.00/.test(e.text)));
+  const st = cycle(sb, { d1, h4: [], h1: [] });
+  check("8: Daily structure locks the Daily swing high / low", st.events.some((e) => e.type === "LOCK" && /NTZ set \(Daily\)/.test(e.text)));
+  check("8: and indicates on a Daily close", st.events.some((e) => /Daily closed above NTZ 104\.00/.test(e.text)));
 }
 
 console.log("\n===== ASSERTIONS =====");

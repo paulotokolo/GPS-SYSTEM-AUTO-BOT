@@ -515,6 +515,7 @@ button:active { transform: scale(0.98); }
       <div class="state-grid">
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mGpsPhase">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Engine status</span><span class="state-value" id="mGpsEngines">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mGpsStatus">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mGpsDir">&mdash;</span></div>
         <div class="state-box"><span class="state-label" id="mGpsNtzLabel">NTZ high / low</span><span class="state-value" id="mGpsNtz">&mdash;</span></div>
         <div class="state-box" id="mGpsAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mGpsAlign">&mdash;</span></div>
@@ -673,42 +674,55 @@ button:active { transform: scale(0.98); }
 
     <div class="trend-sub">ICC Entry Models</div>
     <small class="hint">
-      Two separate entry models built on the ICC cycle: lock the structure swing high/low
-      (NTZ) &rarr; <b>Indication</b> (body close outside it) &rarr; <b>Correction</b> (the 1H turns
-      against the break) &rarr; <b>Continuation</b> (a 1H close breaks that corrective structure).
-      Either, both or neither can run. The 1H is always the entry layer.
+      One shared ICC cycle that both models read: lock the structure swing high/low (NTZ)
+      &rarr; <b>Indication</b> (body close outside it) &rarr; <b>Correction</b> (the 1H turns
+      against the break) &rarr; <b>Continuation</b> (a 1H close breaks that corrective
+      structure) &rarr; <b>Complete</b> (TP target hit). The models only differ in how they enter.
     </small>
     <div class="row"><label>Enable GPS Entry Model</label><input type="checkbox" id="gpsModelOn"></div>
     <div class="model-opts" id="gpsModelOpts">
-      <div class="row"><label>ICC structure timeframe</label>
-        <select id="gpsModelStructTf"><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
-      </div>
       <div class="row"><label>Require all timeframe alignment</label><input type="checkbox" id="gpsModelAlign"></div>
-      <div class="row"><label>Engine active window (structure candles)</label><input type="number" id="gpsModelActiveWindow" value="20" step="1" min="1"></div>
-      <small class="hint">
-        GPS engines stay off until continuation, then trade the break direction only on the
-        bot&rsquo;s <b>Timeframe</b> (set it to M5 or M15), with TP at the structure target, until
-        the target is hit, the NTZ is disrespected, or the window ends.
-      </small>
+      <div class="row"><label>TP = structure swing high/low</label><input type="checkbox" id="gpsModelTpStruct" checked></div>
+      <div class="row"><label>Stop loss</label>
+        <select id="gpsModelSlMode">
+          <option value="pips" selected>Fixed pip stop</option>
+          <option value="h1">Most recent 1H swing high/low</option>
+          <option value="struct">Most recent structure swing high/low</option>
+        </select>
+      </div>
+      <div class="row"><label>Trail after TP (hold past target)</label><input type="checkbox" id="gpsModelTrail"></div>
+      <small class="hint">GPS engines stay off until continuation, then trade the break direction only on the
+        bot&rsquo;s <b>Timeframe</b> (set it to M5 or M15) until the cycle ends. Fixed pip stop =
+        the normal Stop loss (pips) setting.</small>
     </div>
     <div class="row"><label>Enable ICC Entry Model</label><input type="checkbox" id="iccModelOn"></div>
     <div class="model-opts" id="iccModelOpts">
-      <div class="row"><label>ICC structure timeframe</label>
-        <select id="iccModelStructTf"><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
-      </div>
       <div class="row"><label>Require all timeframe alignment</label><input type="checkbox" id="iccModelAlign"></div>
+      <div class="row"><label>TP = structure swing high/low</label><input type="checkbox" id="iccModelTpStruct" checked></div>
+      <div class="row"><label>Stop loss</label>
+        <select id="iccModelSlMode">
+          <option value="pips" selected>Fixed pip stop</option>
+          <option value="h1">Most recent 1H swing high/low</option>
+          <option value="struct">Most recent structure swing high/low</option>
+        </select>
+      </div>
+      <div class="row"><label>Trail after TP (hold past target)</label><input type="checkbox" id="iccModelTrail"></div>
+      <small class="hint">The continuation 1H close <b>is</b> the entry: one market order per cycle. Entry
+        timeframe is fixed at 1H. Not blocked by the 50 EMA or ICC filter.</small>
+    </div>
+    <div class="model-opts" id="iccCycleOpts">
+      <div class="row"><label>ICC structure timeframe</label>
+        <select id="iccStructTf"><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
+      </div>
+      <div class="row"><label>Max wait per phase (structure candles)</label><input type="number" id="iccMaxWait" value="20" step="1" min="1"></div>
       <small class="hint">
-        The continuation 1H close <b>is</b> the entry: one market order per cycle, SL beyond the
-        latest 1H swing, TP at the structure target. Entry timeframe is fixed at 1H. Not
-        blocked by the 50 EMA or ICC filter.
+        Shared by both models, with <b>Swing strength</b> and <b>Swing source</b> above &mdash; both
+        models always see the same NTZ and phase. <b>Alignment</b> only changes a model&rsquo;s
+        entry: Daily and 4H must agree, then price must pull back to the latest 1H swing.
+        <b>Trail after TP</b>: no TP is placed; when price reaches the target the cycle completes
+        and the bot&rsquo;s <b>Auto Trailing</b> takes over the trade (keep Auto Trailing ON).
       </small>
     </div>
-    <div class="row"><label>Max wait for correction (structure candles)</label><input type="number" id="iccMaxWait" value="20" step="1" min="1"></div>
-    <small class="hint">
-      Shared by both models, with <b>Swing strength</b> and <b>Swing source</b> above. Alignment
-      ON = Daily and 4H must agree, the 1H must shift back, then price must pull back to the
-      latest 1H swing before the entry fires.
-    </small>
   </fieldset>
 
   <!-- ---------------- Trading session window ---------------- -->
@@ -2808,37 +2822,38 @@ function resetTrendFilters() {
 }
 
 // =====================================================================================
-//  ICC ENTRY MODELS — GPS Entry Model and ICC Entry Model
+//  ICC ENTRY MODELS — one shared ICC cycle, two ways to enter it
 //
-//  Both run the same ICC cycle off a structure timeframe (Daily or 4H), with the 1H as the
-//  fixed entry layer:
+//  There is ONE ICC engine. It finds and locks the NTZ, and tracks the phase, on the
+//  structure timeframe (Daily or 4H) with the 1H as the entry layer. Both models read that
+//  same state; the only thing that differs between them is how they enter:
 //
-//    LOCK          — the latest structure-TF swing high and swing low are locked as the NTZ.
-//                    They stay frozen for the whole cycle; later swings are logged as ignored.
+//    ICC Entry Model — a market order on a 1H close. One trade per cycle.
+//    GPS Entry Model — the GPS engines are switched on, in the break direction, on M5/M15.
+//
+//  The shared cycle:
+//    LOCK          — the structure-TF swing high and swing low that form after the last
+//                    reset are locked as the NTZ, and frozen until the cycle ends. Later
+//                    swings are logged as ignored.
 //    INDICATION    — a structure-TF candle CLOSES outside the locked NTZ.
 //    CORRECTION    — the 1H turns against the break: a 1H swing high forms after a bullish
 //                    break (a swing low after a bearish one). Price does not have to come
 //                    back into the NTZ.
-//    CONTINUATION  — a 1H candle closes beyond the latest corrective 1H swing (above the
-//                    lower high for buys, below the higher low for sells).
-//                    Alignment ON: Daily and 4H must also agree, then price pulls back to the
-//                    latest 1H swing point and the first 1H close in the trend direction off
-//                    it is the trigger.
+//    CONTINUATION  — a 1H candle closes beyond the latest corrective 1H swing.
+//    COMPLETE      — price reaches the TP target: the structure-TF extreme since the break.
 //
-//    ICC Entry Model — the trigger IS the entry: market order, SL beyond the latest 1H swing,
-//                      TP at the structure extreme since the break. One trade per cycle.
-//    GPS Entry Model — the trigger switches the GPS engines on, in the break direction only,
-//                      until the target is hit, the setup is disrespected, or the active
-//                      window runs out.
+//  Ends early on: disrespect (a structure-TF close back through the other side of the NTZ),
+//  timeout (any phase lasting longer than Max wait structure candles), or a new structure
+//  swing beyond the locked level before the correction.
 //
-//  A cycle resets on: completion, disrespect (a structure-TF close back through the NTZ the
-//  other way), timeout (no correction within Max wait structure candles), or a new structure
-//  swing beyond the locked level before the correction starts. After any reset the bot waits
-//  for a fresh swing high AND swing low before it locks again.
+//  "Require all timeframe alignment" never changes the NTZ or the phase. It is purely each
+//  model's entry condition during CONTINUATION: Daily and 4H must agree, then price must
+//  pull back to the latest 1H swing point before that model enters.
 //
-//  Like the trend filters, the whole cycle is replayed from the candle stores on every update,
-//  so after a restart the state is exactly what it would have been. Only events newer than
-//  the last replay are logged or acted on, so history never places an order.
+//  The whole cycle is replayed from the candle stores on every update, so the state after a
+//  restart is exactly what it would have been with the bot running — including the phase:
+//  it never shows WAITING just because the bot was started. Only events newer than the last
+//  replay are logged or acted on, so history never places an order.
 // =====================================================================================
 var D1_SECONDS = 86400;
 var d1Store = null;
@@ -2847,9 +2862,10 @@ var MODEL_DEFS = {
   gps: { tag: "[ICC GPS MODEL]", name: "GPS Entry Model" },
   icc: { tag: "[ICC ENTRY MODEL]", name: "ICC Entry Model" }
 };
-var modelState = { gps: null, icc: null };
-var modelSeen = { gps: null, icc: null };      // event keys already logged/acted on
-var gpsModelLastEntry = null;                  // GPS-model order sent this session
+var MODEL_KINDS = ["icc", "gps"];
+var iccCycle = null;               // the shared cycle state, as of the last replay
+var iccCycleSeen = null;           // event keys already logged/acted on
+var gpsModelLastEntry = null;      // GPS-model order sent this session
 
 // The brief's own wording: "Daily", "4H", "1H".
 function tfLabel(seconds) { return seconds >= D1_SECONDS ? "Daily" : seconds >= H4_SECONDS ? "4H" : "1H"; }
@@ -2866,7 +2882,7 @@ function swingList(bars, tfMs, n, src) {
 }
 
 // A timeframe's own bias over time: the direction of its latest close beyond its latest
-// swing high or swing low. Used for Daily / 4H alignment.
+// swing high or swing low. Used for the Daily / 4H alignment check.
 function biasTimeline(bars, swings, tfMs) {
   var out = [], p = 0, sh = null, sl = null, bias = "NTZ";
   for (var k = 0; k < bars.length; k++) {
@@ -2890,27 +2906,30 @@ function biasAt(tl, t) {
   return ans;
 }
 
-function newModelState() {
+function newModelSub() {
+  return { aligned: false, pullLevel: null, pulled: false, active: false, entered: false };
+}
+function newCycleState() {
   return {
     phase: "WAITING",           // WAITING / INDICATION / CORRECTION / CONTINUATION
-    status: "WAITING",          // WAITING / ACTIVE / RESET / TIMED OUT
-    lockHigh: null, lockLow: null,
+    status: "WAITING",          // WAITING / ACTIVE / COMPLETE / RESET / TIMED OUT
+    lockHigh: null, lockLow: null, lockHiTs: null, lockLoTs: null,
     dir: null,                  // "buy" / "sell" once indicated
-    indBarTs: null, indCount: 0,
+    indBarTs: null, waitCount: 0,
     corrLevel: null,            // the 1H swing a continuation close has to break
-    aligned: false,             // alignment ON: Daily + 4H agreed and the 1H shifted
-    pullLevel: null, pulled: false,
-    active: false, activeCount: 0, target: null,
-    resetTs: -Infinity,
-    lastEntry: null,
+    target: null,
     align: { d: "NTZ", h4: "NTZ" },
+    latest: { h1Hi: null, h1Lo: null, sHi: null, sLo: null },   // swing extremes (wicks) for stops
+    m: { icc: newModelSub(), gps: newModelSub() },
+    lastIccEntry: null,
+    resetTs: -Infinity, resetWhy: null, prevPair: null,
     events: []
   };
 }
 
-// Replays one model's cycle across the loaded history. `p` is that model's settings.
-function runIccModel(kind, p, data) {
-  var tag = MODEL_DEFS[kind].tag;
+// Replays the shared cycle across the loaded history. `p` = shared settings, `mods` = the
+// enabled models and each one's alignment toggle.
+function runIccCycle(p, data, mods) {
   var sBars = p.structTf === "daily" ? data.d1 : data.h4;
   var sSec = p.structTf === "daily" ? D1_SECONDS : H4_SECONDS;
   var sMs = sSec * 1000, hMs = H1_SECONDS * 1000;
@@ -2923,28 +2942,30 @@ function runIccModel(kind, p, data) {
   var dTl = biasTimeline(data.d1, swingList(data.d1, D1_SECONDS * 1000, n, src), D1_SECONDS * 1000);
   var h4Tl = biasTimeline(data.h4, swingList(data.h4, H4_SECONDS * 1000, n, src), H4_SECONDS * 1000);
 
-  var st = newModelState();
+  var st = newCycleState();
   var bull = function () { return st.dir === "buy"; };
-  var emit = function (t, type, text, cls, extra) {
-    var e = { ts: t, key: kind + "|" + type + "|" + t, type: type, text: tag + " " + text, cls: cls || "log-info" };
+  var on = function (k) { return !!(mods[k] && mods[k].on); };
+  var emit = function (t, type, text, cls, extra, kind) {
+    var tag = kind ? MODEL_DEFS[kind].tag : "[ICC]";
+    var e = { ts: t, key: (kind || "icc*") + "|" + type + "|" + t, type: type, kind: kind || null,
+              text: tag + " " + text, cls: cls || "log-info" };
     if (extra) for (var k in extra) e[k] = extra[k];
     st.events.push(e);
     return e;
   };
-  var reset = function (t, status, type, text, cls) {
-    emit(t, type, text, cls || "log-warn");
-    var last = st.lastEntry;
-    st = Object.assign(newModelState(), { status: status, resetTs: t, lastEntry: last, events: st.events });
+  // Per-model lines for a cycle-level event, so each model's log reads on its own.
+  var emitModels = function (t, type, text, cls, extra) {
+    MODEL_KINDS.forEach(function (k) { if (on(k)) emit(t, type, text, cls, extra, k); });
   };
-  var alignText = function (t) {
-    return "Daily: " + biasAt(dTl, t) + " | 4H: " + biasAt(h4Tl, t) + " | 1H: " +
-      (st.aligned || st.active ? (bull() ? "BULLISH" : "BEARISH")
-                               : (bull() ? "BEARISH" : "BULLISH") + " (corrective)");
+  var reset = function (t, status, why) {
+    var keep = { status: status, resetTs: t, resetWhy: why, events: st.events, lastIccEntry: st.lastIccEntry,
+                 prevPair: st.lockHiTs + "/" + st.lockLoTs, latest: st.latest, align: st.align };
+    st = Object.assign(newCycleState(), keep);
   };
-  var latestH = function (hi, t, sinceTs) {
+  var latestSwing = function (list, hi, t, sinceTs) {
     var best = null;
-    for (var i = 0; i < hSw.length && hSw[i].confirmTs <= t; i++) {
-      if (hSw[i].hi === hi && (sinceTs === undefined || hSw[i].ts >= sinceTs)) best = hSw[i];
+    for (var i = 0; i < list.length && list[i].confirmTs <= t; i++) {
+      if (list[i].hi === hi && (sinceTs === undefined || list[i].ts >= sinceTs)) best = list[i];
     }
     return best;
   };
@@ -2958,56 +2979,100 @@ function runIccModel(kind, p, data) {
     }
     return ext;
   };
-  var trigger = function (t, h) {
-    var side = bull() ? "BUY" : "SELL";
-    st.target = structExtreme(t);
-    // A target already behind the trigger (a V-shaped continuation) is no target at all.
-    if (st.target !== null && (bull() ? st.target <= h.c : st.target >= h.c)) st.target = null;
-    if (kind === "icc") {
-      var sw = latestH(!bull(), t);
-      var sl = sw ? (bull() ? sw.bar.l : sw.bar.h) : null;
-      var e = emit(t, "ENTRY", (p.align ? "CORRECTION COMPLETE — All TFs aligned. 1H pullback confirmed. "
-                                        : "CONTINUATION — 1H candle body close confirmed. ") +
-        "ENTRY PLACED. " + side + " Entry: " + fmt(h.c) + " | SL: " + (sl !== null ? fmt(sl) : "pip setting") +
-        " | TP: " + (st.target !== null ? fmt(st.target) : "pip setting"), bull() ? "log-buy" : "log-sell",
-        { act: "entry", dir: st.dir, entry: h.c, sl: sl, tp: st.target });
-      st.lastEntry = { dir: side, price: h.c, ts: t };
-      e.lastEntry = st.lastEntry;
-      reset(t, "RESET", "COMPLETE", "CYCLE COMPLETE — All 3 phases confirmed. Resetting. Scanning for new swing structure.", "log-info");
-    } else {
-      st.phase = "CONTINUATION";
-      st.status = "ACTIVE";
-      st.active = true;
-      st.activeCount = 0;
-      emit(t, "ACTIVE", (p.align ? "CORRECTION COMPLETE — All TFs aligned. 1H pullback confirmed. "
-                                 : "CONTINUATION — 1H closed " + (bull() ? "above " : "below ") + fmt(st.corrLevel) + ". ") +
-        side + " engines ACTIVE on " + tfName(p.entryTf) + ". Target " +
-        (st.target !== null ? fmt(st.target) : "TP1 pips") + ".", bull() ? "log-buy" : "log-sell");
+  var refreshLatest = function (t) {
+    var a = latestSwing(hSw, true, t), b = latestSwing(hSw, false, t);
+    var c = latestSwing(sSw, true, t), d = latestSwing(sSw, false, t);
+    st.latest = { h1Hi: a ? a.bar.h : null, h1Lo: b ? b.bar.l : null, sHi: c ? c.bar.h : null, sLo: d ? d.bar.l : null };
+  };
+  var stopsAt = function () {
+    return { sl1h: bull() ? st.latest.h1Lo : st.latest.h1Hi, slStruct: bull() ? st.latest.sLo : st.latest.sHi };
+  };
+
+  // One model's entry condition on a CONTINUATION 1H close. `fresh` = this is the close that
+  // made continuation.
+  var modelStep = function (k, t, h, fresh) {
+    var sub = st.m[k], side = bull() ? "BUY" : "SELL";
+    if (k === "icc" && sub.entered) return;
+    if (k === "gps" && sub.active) return;
+    var fire = function (how) {
+      if (k === "icc") {
+        sub.entered = true;
+        st.lastIccEntry = { dir: side, price: h.c, ts: t };
+        var s = stopsAt();
+        emit(t, "ENTRY", how + "ENTRY PLACED. " + side + " Entry: " + fmt(h.c) + " | Target: " +
+             (st.target !== null ? fmt(st.target) : "TP1 pips"), bull() ? "log-buy" : "log-sell",
+             { act: "entry", dir: st.dir, entry: h.c, target: st.target, sl1h: s.sl1h, slStruct: s.slStruct,
+               lastEntry: st.lastIccEntry }, k);
+      } else {
+        sub.active = true;
+        emit(t, "ACTIVE", how + side + " engines ACTIVE on " + tfName(p.entryTf) + ". Target " +
+             (st.target !== null ? fmt(st.target) : "TP1 pips") + ".", bull() ? "log-buy" : "log-sell", null, k);
+      }
+    };
+    if (!mods[k].align) {
+      if (fresh) fire("CONTINUATION — 1H candle body close confirmed " + (bull() ? "above " : "below ") + fmt(st.corrLevel) + ". ");
+      return;
+    }
+    var want = bull() ? "BULLISH" : "BEARISH";
+    if (!sub.aligned) {
+      if (st.align.d !== want || st.align.h4 !== want) {
+        if (sub.lastFail !== st.align.d + st.align.h4) {
+          sub.lastFail = st.align.d + st.align.h4;
+          emit(t, "NOTALIGNED", "TF ALIGNMENT CHECK — Daily: " + st.align.d + " | 4H: " + st.align.h4 + " | 1H: " +
+               want + " — NOT ALIGNED. Entry blocked.", "log-warn", null, k);
+        }
+        return;
+      }
+      sub.aligned = true;
+      var pl = latestSwing(hSw, !bull(), t);
+      sub.pullLevel = pl ? pl.val : null;
+      emit(t, "ALIGNED", "ALIGNMENT CONFIRMED — Daily: " + want + " | 4H: " + want + " | 1H: " + want +
+           ". Waiting for pullback to 1H " + (bull() ? "higher low " : "lower high ") +
+           (sub.pullLevel !== null ? fmt(sub.pullLevel) : "(forming)") + ".", "log-info", null, k);
+      return;
+    }
+    var pl2 = latestSwing(hSw, !bull(), t);
+    if (pl2 && !sub.pulled) sub.pullLevel = pl2.val;
+    if (sub.pullLevel === null) return;
+    if (bull() ? h.c < sub.pullLevel : h.c > sub.pullLevel) {
+      emit(t, "PULLBROKEN", "1H closed " + (bull() ? "below the higher low " : "above the lower high ") +
+           fmt(sub.pullLevel) + " — waiting for a new 1H " + (bull() ? "higher low." : "lower high."), "log-warn", null, k);
+      sub.pulled = false;
+      sub.pullLevel = null;
+      return;
+    }
+    if (bull() ? h.l <= sub.pullLevel : h.h >= sub.pullLevel) sub.pulled = true;
+    if (!sub.pulled) return;
+    if (k === "gps" || (bull() ? h.c > h.o : h.c < h.o)) {
+      fire("CORRECTION COMPLETE — All TFs aligned. 1H pullback confirmed. ");
     }
   };
 
   // Walk structure closes and 1H closes in time order; a structure close is handled before a
   // 1H close at the same instant, since that 1H bar sits inside it.
-  var i = 0, j = 0, ps = 0, ph = 0;
+  var i = 0, j = 0, ps = 0;
   while (i < sBars.length || j < hBars.length) {
     var tS = i < sBars.length ? sBars[i].ts + sMs : Infinity;
     var tH = j < hBars.length ? hBars[j].ts + hMs : Infinity;
 
     if (tS <= tH) {
       var b = sBars[i++], t = tS;
-      // Swings that became known with this close.
       var fresh = [];
       while (ps < sSw.length && sSw[ps].confirmTs <= t) fresh.push(sSw[ps++]);
+      refreshLatest(t);
 
       if (st.lockHigh === null) {
-        // Scan: a clean swing high AND swing low, both formed after the last reset.
+        // Lock the swing high and swing low that formed after the last reset. Re-locking the
+        // very pair just used is only allowed after a disrespect, where the close through the
+        // other side is itself the break the other way.
         var shs = null, sls = null;
         for (var q = 0; q < ps; q++) {
-          if (sSw[q].ts < st.resetTs) continue;
+          if (sSw[q].ts < st.resetTs && st.resetWhy !== "DISRESPECT") continue;
           if (sSw[q].hi) shs = sSw[q]; else sls = sSw[q];
         }
         if (shs && sls && shs.val > sls.val) {
-          st.lockHigh = shs.val; st.lockLow = sls.val; st.status = "WAITING";
+          st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
+          st.status = "WAITING";
           emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
                " — NTZ set (" + sName + "). Levels frozen for this cycle.");
           fresh = [];
@@ -3015,13 +3080,13 @@ function runIccModel(kind, p, data) {
       }
       if (st.lockHigh === null) continue;
 
-      // New structure swings during a cycle never move the locked levels.
       for (var f = 0; f < fresh.length; f++) {
         var sw = fresh[f];
         var beyond = st.dir && (bull() ? (sw.hi && sw.val > st.lockHigh) : (!sw.hi && sw.val < st.lockLow));
         if (beyond && st.phase === "INDICATION") {
-          reset(t, "RESET", "INVALIDATED", "INVALIDATED — New swing formed beyond locked level at " + fmt(sw.val) +
-                ". Current cycle cancelled. Rescanning.");
+          emit(t, "INVALIDATED", "INVALIDATED — New swing formed beyond locked level at " + fmt(sw.val) +
+               ". Current cycle cancelled. Rescanning.", "log-warn");
+          reset(t, "RESET", "INVALIDATED");
           break;
         }
         emit(t, "IGNORED|" + sw.ts + (sw.hi ? "H" : "L"), "New swing detected at " + fmt(sw.val) +
@@ -3033,7 +3098,7 @@ function runIccModel(kind, p, data) {
         if (b.c > st.lockHigh || b.c < st.lockLow) {
           st.dir = b.c > st.lockHigh ? "buy" : "sell";
           st.phase = "INDICATION"; st.status = "ACTIVE";
-          st.indBarTs = b.ts; st.indCount = 0;
+          st.indBarTs = b.ts; st.waitCount = 0;
           var lvl = bull() ? st.lockHigh : st.lockLow;
           emit(t, "INDICATION", "INDICATION — " + sName + " closed " + (bull() ? "above" : "below") + " NTZ " +
                fmt(lvl) + ". Break direction: " + (bull() ? "BULLISH" : "BEARISH") + ". Candle body confirmed close " +
@@ -3042,142 +3107,150 @@ function runIccModel(kind, p, data) {
         continue;
       }
 
-      // Disrespect: a body close back through the other side of the locked NTZ.
       if (bull() ? b.c < st.lockLow : b.c > st.lockHigh) {
-        reset(t, "RESET", "DISRESPECT", "LEVEL DISRESPECTED — " + sName + " body closed " + (bull() ? "below " : "above ") +
-              fmt(bull() ? st.lockLow : st.lockHigh) + ", through the locked NTZ in the opposite direction. " +
-              "Cycle INVALIDATED. Resetting.");
+        emit(t, "DISRESPECT", "LEVEL DISRESPECTED — " + sName + " body closed " + (bull() ? "below " : "above ") +
+             fmt(bull() ? st.lockLow : st.lockHigh) + ", through the locked NTZ in the opposite direction. " +
+             "Cycle INVALIDATED. Resetting.", "log-warn");
+        reset(t, "RESET", "DISRESPECT");
+        // The same close may already be the break the other way: re-lock and re-check it.
+        i--; ps -= fresh.length;
         continue;
       }
-      if (st.phase === "INDICATION" && ++st.indCount > p.maxWait) {
-        reset(t, "TIMED OUT", "TIMEOUT", "TIMEOUT — No correction detected after " + p.maxWait + " " + sName +
-              " candles. Cycle cancelled. Rescanning for new swing structure.");
-        continue;
-      }
-      if (st.active && ++st.activeCount >= p.activeWindow) {
-        reset(t, "RESET", "COMPLETE", "CYCLE COMPLETE — engine active window (" + p.activeWindow + " " + sName +
-              " candles) ended. Engines OFF. Resetting.", "log-info");
+      // Max wait applies to every phase after the break, counted from the phase's start, so a
+      // cycle can never sit on stale levels indefinitely.
+      if (++st.waitCount > p.maxWait) {
+        emit(t, "TIMEOUT", "TIMEOUT — " + ({ INDICATION: "No correction detected", CORRECTION: "No continuation",
+                                             CONTINUATION: "Target not reached" })[st.phase] +
+             " after " + p.maxWait + " " + sName + " candles. Cycle cancelled. Rescanning for new swing structure.", "log-warn");
+        reset(t, "TIMED OUT", "TIMEOUT");
       }
       continue;
     }
 
     // ---- 1H close ----
     var h = hBars[j++], t1 = tH;
-    while (ph < hSw.length && hSw[ph].confirmTs <= t1) ph++;
     st.align = { d: biasAt(dTl, t1), h4: biasAt(h4Tl, t1) };
+    refreshLatest(t1);
     if (!st.dir) continue;
 
-    if (st.active) {
-      if (st.target !== null && (bull() ? h.h >= st.target : h.l <= st.target)) {
-        reset(t1, "RESET", "COMPLETE", "CYCLE COMPLETE — target " + fmt(st.target) + " reached. Engines OFF. " +
-              "Scanning for new swing structure.", "log-info");
-      }
-      continue;
-    }
-
     if (st.phase === "INDICATION") {
-      var c0 = latestH(bull(), t1, st.indBarTs);
+      var c0 = latestSwing(hSw, bull(), t1, st.indBarTs);
       if (c0) {
         st.phase = "CORRECTION";
+        st.waitCount = 0;
         st.corrLevel = c0.val;
-        emit(t1, "CORRECTION", "CORRECTION — " + (p.align ? alignText(t1) + " — Waiting for 1H realignment."
-             : "1H turned " + (bull() ? "down (swing high " : "up (swing low ") + fmt(c0.val) +
-               "). Waiting for a 1H close " + (bull() ? "above " : "below ") + "the corrective structure."));
+        emit(t1, "CORRECTION", "CORRECTION — 1H turned " + (bull() ? "down (swing high " : "up (swing low ") +
+             fmt(c0.val) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 +
+             ". Waiting for a 1H close " + (bull() ? "above " : "below ") + "the corrective structure.");
       }
       continue;
     }
 
     if (st.phase === "CORRECTION") {
-      var c1 = latestH(bull(), t1, st.indBarTs);
+      var c1 = latestSwing(hSw, bull(), t1, st.indBarTs);
       if (c1) st.corrLevel = c1.val;                 // follows each new lower high / higher low
       if (!(bull() ? h.c > st.corrLevel : h.c < st.corrLevel)) continue;
-      if (!p.align) { trigger(t1, h); continue; }
-
-      var want = bull() ? "BULLISH" : "BEARISH";
-      if (st.align.d !== want || st.align.h4 !== want) {
-        if (st.lastAlignFail !== st.align.d + st.align.h4) {
-          st.lastAlignFail = st.align.d + st.align.h4;
-          emit(t1, "NOTALIGNED", "TF ALIGNMENT CHECK — Daily: " + st.align.d + " | 4H: " + st.align.h4 + " | 1H: " +
-               want + " — NOT ALIGNED. Entry blocked.", "log-warn");
-        }
-        continue;
-      }
-      st.aligned = true;
       st.phase = "CONTINUATION";
-      var pl = latestH(!bull(), t1);
-      st.pullLevel = pl ? pl.val : null;
-      st.pulled = false;
-      emit(t1, "ALIGNED", "CORRECTION COMPLETE — 1H structure shifted " + want + ". All TFs aligned. CONTINUATION " +
-           "phase triggered. Waiting for pullback to 1H " + (bull() ? "higher low " : "lower high ") +
-           (st.pullLevel !== null ? fmt(st.pullLevel) : "(none yet)") + ".");
+      st.waitCount = 0;
+      st.target = structExtreme(t1);
+      var why = "the " + sName + " extreme since the break";
+      // A target already behind the trigger (a V-shaped continuation) is no target at all.
+      if (st.target === null || (bull() ? st.target <= h.c : st.target >= h.c)) {
+        st.target = h.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
+        why = "TP1 pips — the " + sName + " extreme is not beyond the trigger";
+      }
+      emit(t1, "CONTINUATION", "CONTINUATION — 1H closed " + (bull() ? "above " : "below ") + fmt(st.corrLevel) +
+           ". TP target " + fmt(st.target) + " (" + why + ").", bull() ? "log-buy" : "log-sell");
+      MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t1, h, true); });
       continue;
     }
 
-    if (st.phase === "CONTINUATION" && st.aligned) {
-      var pl2 = latestH(!bull(), t1);
-      if (pl2 && !st.pulled) st.pullLevel = pl2.val;  // most recent 1H swing point
-      if (st.pullLevel === null) continue;
-      if (bull() ? h.c < st.pullLevel : h.c > st.pullLevel) {
-        st.phase = "CORRECTION"; st.aligned = false; st.pulled = false;
-        emit(t1, "PULLBROKEN", "1H closed " + (bull() ? "below the higher low " : "above the lower high ") +
-             fmt(st.pullLevel) + " — 1H structure broken. Back to CORRECTION, waiting for 1H realignment.", "log-warn");
+    if (st.phase === "CONTINUATION") {
+      if (bull() ? h.h >= st.target : h.l <= st.target) {
+        emitModels(t1, "COMPLETE", "CYCLE COMPLETE — TP target hit at " + fmt(st.target) + ". Bot reset.",
+                   "log-buy", { act: "target", target: st.target });
+        reset(t1, "COMPLETE", "COMPLETE");
         continue;
       }
-      if (bull() ? h.l <= st.pullLevel : h.h >= st.pullLevel) st.pulled = true;
-      if (!st.pulled) continue;
-      if (kind === "gps" || (bull() ? h.c > h.o : h.c < h.o)) trigger(t1, h);
+      MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t1, h, false); });
     }
   }
   return st;
 }
 
-function modelParams(kind) {
+function cycleParams() {
   return {
-    structTf: kind === "gps" ? cfg.gpsModelStructTf : cfg.iccModelStructTf,
-    align: kind === "gps" ? cfg.gpsModelAlign : cfg.iccModelAlign,
+    structTf: cfg.iccStructTf === "daily" ? "daily" : "4h",
     n: Math.max(1, cfg.iccSwingStrength || 1),
     src: cfg.iccSwingSource,
     maxWait: Math.max(1, cfg.iccMaxWait || 20),
-    activeWindow: Math.max(1, cfg.gpsModelActiveWindow || 20),
     entryTf: cfg.timeframe
   };
 }
-
 function modelEnabled(kind) { return !!cfg && (kind === "gps" ? cfg.gpsModelOn : cfg.iccModelOn); }
+function modelOpt(kind, name) { return cfg[(kind === "gps" ? "gpsModel" : "iccModel") + name]; }
 
-// Replays both models and handles whatever happened since the previous replay.
+// Replays the shared cycle and handles whatever happened since the previous replay.
 function updateEntryModels() {
   if (!cfg || (!cfg.gpsModelOn && !cfg.iccModelOn)) return;
   var data = { d1: closedBars(d1Store), h4: closedBars(h4Store), h1: closedBars(h1Store) };
-  ["gps", "icc"].forEach(function (kind) {
-    if (!modelEnabled(kind)) return;
-    var sBars = modelParams(kind).structTf === "daily" ? data.d1 : data.h4;
-    if (sBars.length < 3 || data.h1.length < 3) return;           // feeds still loading
-    var st = runIccModel(kind, modelParams(kind), data);
-    var seen = modelSeen[kind];
-    modelState[kind] = st;
+  var p = cycleParams();
+  var sBars = p.structTf === "daily" ? data.d1 : data.h4;
+  if (sBars.length < 3 || data.h1.length < 3) return;             // feeds still loading
+  var mods = {
+    icc: { on: !!cfg.iccModelOn, align: !!cfg.iccModelAlign },
+    gps: { on: !!cfg.gpsModelOn, align: !!cfg.gpsModelAlign }
+  };
+  var st = runIccCycle(p, data, mods);
+  iccCycle = st;
 
-    if (seen === null) {
-      // First read: history is context, never action. Say where the cycle stands.
-      modelSeen[kind] = {};
-      st.events.forEach(function (e) { modelSeen[kind][e.key] = true; });
-      if (isRunning) {
-        log(MODEL_DEFS[kind].tag + " Session start — " + (st.lockHigh !== null
-              ? "Locked NTZ High: " + fmt(st.lockHigh) + " | Locked NTZ Low: " + fmt(st.lockLow)
-              : "no NTZ locked yet (waiting for a clean swing high and swing low)") +
-            " | Current Phase: " + st.phase + (st.dir ? " (" + (st.dir === "buy" ? "BULLISH" : "BEARISH") + ")" : ""),
-            "log-info");
-      }
-      return;
+  if (iccCycleSeen === null) {
+    // First read: history is context, never action. Say where the cycle stands right now.
+    iccCycleSeen = {};
+    st.events.forEach(function (e) { iccCycleSeen[e.key] = true; });
+    if (isRunning) {
+      log("[ICC] Session start — " + (st.lockHigh !== null
+            ? "Locked NTZ High: " + fmt(st.lockHigh) + " | Locked NTZ Low: " + fmt(st.lockLow)
+            : "no NTZ locked yet (waiting for a fresh swing high and swing low)") +
+          " | Current Phase: " + st.phase + (st.dir ? " (" + (st.dir === "buy" ? "BULLISH" : "BEARISH") + ")" : "") +
+          " | " + tfLabel(p.structTf === "daily" ? D1_SECONDS : H4_SECONDS) + " structure, shared by " +
+          [cfg.iccModelOn ? "ICC Entry Model" : null, cfg.gpsModelOn ? "GPS Entry Model" : null]
+            .filter(Boolean).join(" + "), "log-info");
     }
-    st.events.forEach(function (e) {
-      if (seen[e.key]) return;
-      seen[e.key] = true;
-      if (!isRunning) return;
-      log(e.text, e.cls);
-      if (e.act === "entry") placeIccModelEntry(e);
-    });
+    return;
+  }
+  st.events.forEach(function (e) {
+    if (iccCycleSeen[e.key]) return;
+    iccCycleSeen[e.key] = true;
+    if (!isRunning) return;
+    log(e.text, e.cls);
+    if (e.act === "entry") placeIccModelEntry(e);
+    if (e.act === "target" && e.kind === MODEL_KINDS.filter(modelEnabled)[0]) armTrailsAtTarget(e.target);
   });
+}
+
+// The stop for a model entry, per that model's Stop loss setting.
+function modelStop(kind, entry, dir, sl1h, slStruct) {
+  var mode = modelOpt(kind, "SlMode");
+  var sell = dir === "sell";
+  var ok = function (v) { return v !== null && v !== undefined && (sell ? v > entry : v < entry); };
+  if (mode === "h1" && ok(sl1h)) return { sl: sl1h, how: "latest 1H swing" };
+  if (mode === "struct" && ok(slStruct)) return { sl: slStruct, how: "latest structure swing" };
+  var pip = sell ? entry + pipsToPrice(cfg.slPips || 100) : entry - pipsToPrice(cfg.slPips || 100);
+  return { sl: pip, how: mode === "pips" ? "fixed " + (cfg.slPips || 100) + " pips"
+                                          : "fixed pips — no " + (mode === "h1" ? "1H" : "structure") + " swing on the right side" };
+}
+
+// The target for a model entry: the shared structure target, or TP1 pips, or none when the
+// trade is meant to be held past the target under the trail.
+function modelTarget(kind, entry, dir, target) {
+  if (modelOpt(kind, "Trail")) return { tp: null, how: "none — held past the target, trail takes over there" };
+  var sell = dir === "sell";
+  if (modelOpt(kind, "TpStruct") && target !== null && (sell ? target < entry : target > entry)) {
+    return { tp: target, how: "structure target" };
+  }
+  var tp = tpPricesFor(entry, dir)[0];
+  return { tp: tp, how: "TP1 pips" };
 }
 
 // ICC Entry Model order. The event already happened on a closed 1H bar; anything that is
@@ -3193,35 +3266,43 @@ function placeIccModelEntry(e) {
     log("[ICC ENTRY MODEL] NO ORDER SENT — " + side + " signals are switched off under Trade Direction.", "log-warn");
     return;
   }
-  var sell = side === "SELL";
-  var sl = e.sl, tp = e.tp;
-  if (sl === null || (sell ? sl <= e.entry : sl >= e.entry)) {
-    sl = slPriceFor(e.entry, e.dir) || (sell ? e.entry + pipsToPrice(cfg.slPips || 100) : e.entry - pipsToPrice(cfg.slPips || 100));
-    log("[ICC ENTRY MODEL] No usable 1H swing for the stop — using the Stop loss (pips) setting: " + fmt(sl) + ".", "log-warn");
-  }
-  if (tp === null || (sell ? tp >= e.entry : tp <= e.entry)) {
-    tp = tpPricesFor(e.entry, e.dir)[0];
-    log("[ICC ENTRY MODEL] The structure target is not beyond the entry — using Take profit 1 (pips)" +
-        (tp !== null ? ": " + fmt(tp) : " (off)") + ".", "log-warn");
-  }
+  var s = modelStop("icc", e.entry, e.dir, e.sl1h, e.slStruct);
+  var tp = modelTarget("icc", e.entry, e.dir, e.target);
+  log("[ICC ENTRY MODEL] " + side + " " + fmt(e.entry) + " | SL " + fmt(s.sl) + " (" + s.how + ") | TP " +
+      (tp.tp !== null ? fmt(tp.tp) : "none") + " (" + tp.how + ")", e.dir === "sell" ? "log-sell" : "log-buy");
   signalCount++;
-  signalLog.push({ time: nyParts(e.ts).fullLabel, model: "ICC ENTRY MODEL", engine: "ICC ENTRY MODEL", kind: side, entry: e.entry,
-                   sl: sl, tp1: tp === null ? "" : tp, tp2: "", tp3: "", ref: "ICC " + modelParams("icc").structTf.toUpperCase(),
-                   bodyPct: "" });
+  signalLog.push({ time: nyParts(e.ts).fullLabel, model: "ICC ENTRY MODEL", engine: "ICC ENTRY MODEL", kind: side,
+                   entry: e.entry, sl: s.sl, tp1: tp.tp === null ? "" : tp.tp, tp2: "", tp3: "",
+                   ref: "ICC " + cycleParams().structTf.toUpperCase(), bodyPct: "" });
   refreshStatsDisplay();
   beep();
-  submitOrder(null, e.entry, sl, tp, "[ICC ENTRY MODEL] " + side, {
-    dir: e.dir, comment: BOT_TAG + "-ICC", forceLevels: true
+  submitOrder(null, e.entry, s.sl, tp.tp, "[ICC ENTRY MODEL] " + side, {
+    dir: e.dir, comment: BOT_TAG + "-ICC", forceLevels: true, holdForTarget: !!modelOpt("icc", "Trail")
   });
+}
+
+// Price reached the target: any model trade being held past it now belongs to the trail.
+function armTrailsAtTarget(target) {
+  var ids = Object.keys(managedOrders).filter(function (id) {
+    return managedOrders[id].holdForTarget && !managedOrders[id].targetHit;
+  });
+  if (!ids.length) return;
+  ids.forEach(function (id) { managedOrders[id].targetHit = true; });
+  log("[ICC] TP target " + fmt(target) + " reached — trail active on " + ids.join(", ") +
+      " (holding past the target)." + (cfg.autoTrailingOn ? ""
+        : " ⚠️ Auto Trailing is OFF, so nothing is trailing it — turn Auto Trailing on, or manage it manually."),
+      cfg.autoTrailingOn ? "log-info" : "log-warn");
+  if (cfg.autoTrailingOn) { try { manageOpenTrades(); } catch (ex) {} }
 }
 
 // Gate for GPS engine orders while the GPS Entry Model is on. Null = allowed.
 function gpsModelGateReason(sell) {
   if (!cfg || !cfg.gpsModelOn) return null;
-  var st = modelState.gps;
-  if (!st || !st.active) {
-    return "GPS Entry Model: engines WAITING (ICC phase " + (st ? st.phase : "—") + "). GPS engines only " +
-           "trade after ICC continuation.";
+  var st = iccCycle;
+  if (!st || !st.m.gps.active) {
+    return "GPS Entry Model: engines WAITING (ICC phase " + (st ? st.phase : "—") +
+           (st && st.phase === "CONTINUATION" && cfg.gpsModelAlign ? ", waiting for alignment + 1H pullback" : "") +
+           "). GPS engines only trade after ICC continuation.";
   }
   if ((st.dir === "sell") !== sell) {
     return "GPS Entry Model: engines are ACTIVE for " + (st.dir === "sell" ? "SELLS" : "BUYS") + " only.";
@@ -3229,16 +3310,21 @@ function gpsModelGateReason(sell) {
   return null;
 }
 
-// Each model's settings and panel show only while that model is switched on.
+// Each model's settings and panel show only while that model is switched on; the shared
+// cycle settings show while either is.
 function syncModelOptions() {
+  var any = false;
   ["gpsModel", "iccModel"].forEach(function (m) {
-    var on = document.getElementById(m + "On").checked;
-    document.getElementById(m + "Opts").classList.toggle("shown", on);
-    document.getElementById(m + "Panel").classList.toggle("shown", on);
+    var isOn = document.getElementById(m + "On").checked;
+    any = any || isOn;
+    document.getElementById(m + "Opts").classList.toggle("shown", isOn);
+    document.getElementById(m + "Panel").classList.toggle("shown", isOn);
   });
+  document.getElementById("iccCycleOpts").classList.toggle("shown", any);
 }
 
 // The two model panels, refreshed every second with the rest of the Signal State panel.
+// Both read the one shared cycle; only the entry rows differ.
 function renderModelPanels() {
   var set = function (id, v, cls) {
     var el = document.getElementById(id);
@@ -3249,44 +3335,50 @@ function renderModelPanels() {
   var since = function (e) {
     return e ? e.dir + " @ " + fmt(e.price) + "  ·  " + nyParts(e.ts).fullLabel : "none yet";
   };
-  ["icc", "gps"].forEach(function (kind) {
+  if (!isRunning || !cfg) return;
+  var st = iccCycle, p = cycleParams();
+  var sName = p.structTf === "daily" ? "Daily" : "4H";
+  MODEL_KINDS.forEach(function (kind) {
+    if (!modelEnabled(kind)) return;
     var pre = kind === "icc" ? "mIcc" : "mGps";
-    if (!isRunning || !cfg || !modelEnabled(kind)) return;
-    var st = modelState[kind], p = modelParams(kind);
-    var sName = p.structTf === "daily" ? "Daily" : "4H";
     var lbl = document.getElementById(pre + "NtzLabel");
     if (lbl) lbl.textContent = sName + " NTZ high / low (locked)";
+    var alignOn = !!modelOpt(kind, "Align");
     var alignBox = document.getElementById(pre + "AlignBox");
-    if (alignBox) alignBox.style.display = p.align ? "" : "none";
-    if (!st) {
-      set(pre + "Phase", "waiting for " + sName + " / 1H candles", "muted");
-      return;
-    }
-    var bull = st.dir === "buy";
+    if (alignBox) alignBox.style.display = alignOn ? "" : "none";
+    if (!st) { set(pre + "Phase", "waiting for " + sName + " / 1H candles", "muted"); return; }
+
+    var bull = st.dir === "buy", sub = st.m[kind];
     set(pre + "Phase", st.phase, st.phase === "WAITING" ? "muted" : st.phase === "CONTINUATION" ? (bull ? "up" : "down") : "pending");
     set(pre + "Dir", st.dir ? (bull ? "BULLISH" : "BEARISH") : "NONE", st.dir ? (bull ? "up" : "down") : "muted");
-    set(pre + "Ntz", st.lockHigh !== null ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) : "scanning for a swing high + low",
+    set(pre + "Ntz", st.lockHigh !== null ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) : "scanning for a fresh swing high + low",
         st.lockHigh !== null ? "" : "muted");
-    if (p.align) {
+    if (alignOn) {
       var want = st.dir ? (bull ? "BULLISH" : "BEARISH") : null;
       var mark = function (ok) { return ok ? "✅" : "❌"; };
-      var h1ok = !!st.dir && (st.aligned || st.active);
+      var h1ok = st.phase === "CONTINUATION";
       set(pre + "Align", want
           ? "Daily " + mark(st.align.d === want) + " | 4H " + mark(st.align.h4 === want) + " | 1H " + mark(h1ok)
           : "Daily " + st.align.d + " | 4H " + st.align.h4 + " | 1H —",
         want && st.align.d === want && st.align.h4 === want && h1ok ? (bull ? "up" : "down") : "pending");
     }
+    var statusText = st.status === "COMPLETE" ? "COMPLETE — Target Reached" + (modelOpt(kind, "Trail") ? " · trail active if holding" : "")
+                   : st.status;
+    var statusCls = st.status === "COMPLETE" || st.status === "ACTIVE" ? "up" : st.status === "TIMED OUT" ? "down" : "muted";
     if (kind === "icc") {
-      set("mIccStatus", st.status, st.status === "ACTIVE" ? "up" : st.status === "TIMED OUT" ? "down" : "muted");
-      set("mIccLast", since(st.lastEntry), st.lastEntry ? "" : "muted");
+      set("mIccStatus", statusText, statusCls);
+      set("mIccLast", since(st.lastIccEntry), st.lastIccEntry ? "" : "muted");
     } else {
+      set("mGpsStatus", statusText, statusCls);
       var live = engines.filter(function (e) { return e.def.dir === st.dir; })
                         .map(function (e) { return "E" + e.def.id; });
-      set("mGpsEngines", st.active
+      set("mGpsEngines", sub.active
           ? "ACTIVE — " + (bull ? "BUY " : "SELL ") + (live.length ? live.join(" ") : "(no engine on that side is enabled)")
-          : st.aligned ? "WAITING — pullback to 1H " + (bull ? "higher low " : "lower high ") +
-                         (st.pullLevel !== null ? fmt(st.pullLevel) : "(forming)")
-          : "WAITING", st.active ? (bull ? "up" : "down") : "pending");
+          : st.phase === "CONTINUATION" && alignOn
+            ? (sub.aligned ? "WAITING — pullback to 1H " + (bull ? "higher low " : "lower high ") +
+                             (sub.pullLevel !== null ? fmt(sub.pullLevel) : "(forming)")
+                           : "WAITING — Daily / 4H alignment")
+          : "WAITING", sub.active ? (bull ? "up" : "down") : "pending");
       set("mGpsEntryTf", tfName(cfg.timeframe) + (cfg.timeframe === 300 || cfg.timeframe === 900 ? "" : "  (use M5 or M15)"),
           cfg.timeframe === 300 || cfg.timeframe === 900 ? "" : "pending");
       set("mGpsLast", since(gpsModelLastEntry), gpsModelLastEntry ? "" : "muted");
@@ -3295,8 +3387,8 @@ function renderModelPanels() {
 }
 
 function resetEntryModels() {
-  modelState = { gps: null, icc: null };
-  modelSeen = { gps: null, icc: null };
+  iccCycle = null;
+  iccCycleSeen = null;
   gpsModelLastEntry = null;
 }
 
@@ -3388,14 +3480,18 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
       log("[ENGINE " + eng.def.id + "] " + (sell ? "SELL" : "BUY") + " signal fired — NO ORDER SENT — " + gHeld, "log-warn");
       return;
     }
-    var gst = modelState.gps, tgt = gst.target;
-    var tgtOk = tgt !== null && (sell ? tgt < entry : tgt > entry);
-    log("[ENGINE " + eng.def.id + "] " + (sell ? "SELL" : "BUY") + " signal fired — GPS MODEL ACTIVE — ORDER SENT" +
-        (tgtOk ? " · TP = structure target " + fmt(tgt) : " · structure target not beyond entry, TP1 pips used"),
+    var dirS = sell ? "sell" : "buy";
+    var gst = iccCycle;
+    var ms = modelStop("gps", entry, dirS, sell ? gst.latest.h1Hi : gst.latest.h1Lo, sell ? gst.latest.sHi : gst.latest.sLo);
+    var mt = modelTarget("gps", entry, dirS, gst.target);
+    log("[ENGINE " + eng.def.id + "] " + (sell ? "SELL" : "BUY") + " signal fired — GPS MODEL ACTIVE — ORDER SENT · SL " +
+        fmt(ms.sl) + " (" + ms.how + ") · TP " + (mt.tp !== null ? fmt(mt.tp) : "none") + " (" + mt.how + ")",
         sell ? "log-sell" : "log-buy");
     gpsModelLastEntry = { dir: sell ? "SELL" : "BUY", price: entry, ts: Date.now(), engine: eng.def.id };
-    submitOrder(eng, entry, sl, tgtOk ? tgt : tps[0], engineLabel(eng) + " · GPS MODEL",
-                tgtOk ? { tpOverride: true } : {});
+    submitOrder(eng, entry, ms.sl, mt.tp, engineLabel(eng) + " · GPS MODEL", {
+      forceLevels: cfg.gpsModelSlMode !== "pips" || mt.how !== "TP1 pips" || !!cfg.gpsModelTrail,
+      holdForTarget: !!cfg.gpsModelTrail
+    });
     return;
   }
 
@@ -3487,7 +3583,8 @@ function submitOrder(eng, signalPrice, slPrice, tpPrice, reason, opts) {
   entriesToday++;
   setPendingOrder(true);
   pendingManagement.push({ lots: lots, slPrice: useSl ? slPrice : null, tpPrice: useTp ? tpPrice : null,
-                           dir: opts.dir || eng.def.dir, force: !!(opts.forceLevels || opts.tpOverride) });
+                           dir: opts.dir || eng.def.dir, force: !!(opts.forceLevels || opts.tpOverride),
+                           holdForTarget: !!opts.holdForTarget });
 
   var settings = cfg.confirmOrders ? { confirm: true } : {};
   log("ORDER SENT — " + side + " " + lots + " lots " + cfg.instrumentId, sell ? "log-sell" : "log-buy", {
@@ -3497,7 +3594,7 @@ function submitOrder(eng, signalPrice, slPrice, tpPrice, reason, opts) {
       reason,
       (useSl && slPrice ? "SL   " + fmt(slPrice) + "   (" + slPipsOut + " pips)" : "SL   NONE ATTACHED"),
       (useTp && tpPrice ? "TP1  " + fmt(tpPrice) + "   (" + tpPipsOut + " pips)" +
-         (opts.forceLevels || opts.tpOverride ? "  — structure target" : "") : "TP1  none"),
+         (opts.forceLevels || opts.tpOverride ? "  — entry-model level" : "") : "TP1  none"),
       (attachOnOpen ? "Levels sent with the order, as pips" : "Levels attached right after the fill")
     ].join("\n")
   });
@@ -3799,6 +3896,8 @@ function manageOpenTrades() {
 
     // A rejected SL update must not retry on every real-time tick — cool down first.
     if (m.mgmtRetryAt && Date.now() < m.mgmtRetryAt) return;
+    // Trail after TP: the stop stays where it is until price reaches the model's target.
+    if (m.holdForTarget && !m.targetHit) return;
 
     var price = order.closePrice;                    // current exit price for an open trade
     var sellTrade = m.dir === "sell";
@@ -4317,6 +4416,9 @@ Framework.OnOrderOpen = function (newOrder) {
     slPrice: queued ? queued.slPrice : null,
     tpPrice: queued ? queued.tpPrice : null,
     // --- auto-trailing bookkeeping ---
+    // An entry-model trade held past its target is not trailed until the target is reached.
+    holdForTarget: queued ? !!queued.holdForTarget : false,
+    targetHit: false,
     breakevenApplied: false,
     dollarPerPriceUnit: null,   // derived from the broker's own profit figure once it moves
     mgmtRetryAt: 0
@@ -4814,8 +4916,8 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
   "iccOn","iccNtzLookback","iccSwingStrength","iccSwingSource","iccRequireH1",
-  "gpsModelOn","gpsModelStructTf","gpsModelAlign","gpsModelActiveWindow",
-  "iccModelOn","iccModelStructTf","iccModelAlign","iccMaxWait","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
+  "gpsModelOn","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
+  "iccModelOn","iccModelAlign","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccH1Swings","iccCorrectionPct","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
   "maxEntriesPerDay","replayBars"]
@@ -4951,13 +5053,18 @@ function readConfig() {
     iccSwingStrength: Math.min(10, Math.max(1, int("iccSwingStrength", 3))),
     iccSwingSource: document.getElementById("iccSwingSource").value === "wick" ? "wick" : "close",
     // ICC Entry Models. Structure is Daily or 4H only — the 1H is the fixed entry layer.
+    // One shared cycle: the structure TF, swings and Max wait are common to both models.
+    iccStructTf: document.getElementById("iccStructTf").value === "daily" ? "daily" : "4h",
     gpsModelOn: chk("gpsModelOn"),
-    gpsModelStructTf: document.getElementById("gpsModelStructTf").value === "daily" ? "daily" : "4h",
     gpsModelAlign: chk("gpsModelAlign"),
-    gpsModelActiveWindow: Math.max(1, int("gpsModelActiveWindow", 20)),
+    gpsModelTpStruct: chk("gpsModelTpStruct"),
+    gpsModelSlMode: document.getElementById("gpsModelSlMode").value || "pips",
+    gpsModelTrail: chk("gpsModelTrail"),
     iccModelOn: chk("iccModelOn"),
-    iccModelStructTf: document.getElementById("iccModelStructTf").value === "daily" ? "daily" : "4h",
     iccModelAlign: chk("iccModelAlign"),
+    iccModelTpStruct: chk("iccModelTpStruct"),
+    iccModelSlMode: document.getElementById("iccModelSlMode").value || "pips",
+    iccModelTrail: chk("iccModelTrail"),
     iccMaxWait: Math.max(1, int("iccMaxWait", 20)),
     iccRequireH1: chk("iccRequireH1"),
     iccH1Swings: Math.max(2, int("iccH1Swings", 3)),
@@ -5244,10 +5351,11 @@ function startBot() {
           "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
         : "off"),
-      "Models      GPS Entry Model " + (cfg.gpsModelOn
-        ? "ON (" + cfg.gpsModelStructTf.toUpperCase() + (cfg.gpsModelAlign ? ", alignment" : "") + ", engines on " +
-          tfName(cfg.timeframe) + ")" : "off") + "  ·  ICC Entry Model " + (cfg.iccModelOn
-        ? "ON (" + cfg.iccModelStructTf.toUpperCase() + (cfg.iccModelAlign ? ", alignment" : "") + ", 1H entry)" : "off") +
+      "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
+        "GPS Entry Model " + (cfg.gpsModelOn ? "ON (engines on " + tfName(cfg.timeframe) + (cfg.gpsModelAlign ? ", alignment" : "") +
+          ", SL " + cfg.gpsModelSlMode + (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
+        "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (1H entry" + (cfg.iccModelAlign ? ", alignment" : "") +
+          ", SL " + cfg.iccModelSlMode + (cfg.iccModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  swings " + cfg.iccSwingStrength + " bars, " + cfg.iccSwingSource,
       "Levels      SL " + cfg.slPips + "p  ·  TP " + cfg.tp1Pips + "/" + cfg.tp2Pips +
         "/" + cfg.tp3Pips + "p",
@@ -5263,6 +5371,10 @@ function startBot() {
     emaDefaultNotice = false;
   }
 
+  if (((cfg.gpsModelOn && cfg.gpsModelTrail) || (cfg.iccModelOn && cfg.iccModelTrail)) && !cfg.autoTrailingOn) {
+    log("Trail after TP is ON for an entry model, but Auto Trailing is OFF. Those trades are sent with no TP " +
+        "and nothing will trail them past the target — turn Auto Trailing on.", "log-warn");
+  }
   if (cfg.gpsModelOn && cfg.timeframe !== 300 && cfg.timeframe !== 900) {
     log("GPS Entry Model is ON with the bot's Timeframe at " + tfName(cfg.timeframe) + ". The model's " +
         "engines are meant to run on M5 or M15 — set Timeframe to one of those.", "log-warn");
