@@ -229,7 +229,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (304 assertions). |
+| `tests/` | Automated test suite (461 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -302,7 +302,9 @@ It now updates **once per second** via a live ticker, showing:
 - **A countdown** to the current bar's close
 - **Zone age** against its cutoff, and the **active engine**
 - **Session P/L** — closed this session plus what is floating right now
-- **Market trend** on the higher timeframe
+- **Market trend** on the higher timeframe, and the **4H / 1H 50 EMA** with price ABOVE / BELOW
+- **ICC FILTER** — bias, phase, the shared NTZ and 1H structure
+- **ICC Entry Model** and **GPS Entry Model** panels (when on) — phase, cycle status, break direction, locked NTZ, alignment, entry mode / engine status, entry TF and last entry
 - **The active session**, tracked from the forming bar
 - **A pulsing live indicator** with the last update time
 
@@ -563,7 +565,7 @@ TOTAL: 461 pass, 0 fail
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read; the 50 EMA gate on 1H, 4H and Both, computed from 1H/4H bars only; the ICC No Trade Zone, 4H bias on confirmed closes, correction, 1H continuation and its reset, opposite-bias pause, invalidation warning and auto close, and the gates holding the order but not the signal; adopted and manual trades getting SL/TP from settings; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
+Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read; the 50 EMA gate on 1H, 4H and Both, computed from 1H/4H bars only; swing detection on closes (body rule) or wicks at any swing strength, matching Liquid's *Swing Prices* labels; the one shared ICC cycle — swing lock and ignored swings, body-close indication, correction and continuation for entry types 1 and 2, completion at the TP target, disrespect (and the same close starting the opposite cycle), Max wait timeouts in every phase, and invalidation by a new swing — with the ICC Filter, both entry models and alignment ON/OFF all reading identical levels and phases; the filter's opposite-bias pause, invalidation warning and auto close; the ICC Entry Model's market entry, SL and TP options, trail after TP and one trade per cycle, and Aggressive Entry Mode's live-cross trigger, tight stop and two-entry cap; the GPS Entry Model gating engine orders to the break direction with the structure target; history never placing an order; the gates holding the order but not the signal; adopted and manual trades getting SL/TP from settings; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
 
 **Not yet tested against live market data.**
 
@@ -587,7 +589,8 @@ Coverage includes: the full signal sequence with each milestone on its own bar; 
 - Confirm the stop and target land at the pip distances you set
 - Confirm a cross-session setup carries without resetting
 - Confirm the 4H/1H EMA values match a 50 EMA on the 4H/1H chart
-- With ICC on, confirm the 4H NTZ in the panel matches the swing high and its origin low on the 4H chart, and that the bias only changes on a 4H close
+- With ICC (filter or entry models) on, confirm the locked NTZ in the panels matches the swing high and the most recent swing low on the structure chart, that every ICC panel shows the same levels, and that the bias only changes on a structure-TF close
+- With the ICC Entry Model on, confirm in Dry Run that its entry, SL and TP log lines match the entry type you chose (1H continuation check ON / OFF, or Aggressive)
 
 Only switch to **Live Trading** once the timestamps line up. Live mode places real orders.
 
@@ -600,7 +603,8 @@ Only switch to **Live Trading** once the timestamps line up. Live mode places re
 - Hard maximum lot cap; optional cap on entries per day
 - Refuses to start above the indicator's M30 timeframe limit
 - If the broker drops the SL/TP on the opening request, the bot reattaches them and warns loudly if that fails
-- Trend gates: 50 EMA on the 1H/4H, and the ICC 4H structure + 1H continuation filter
+- Trend gates: 50 EMA on the 1H/4H, and the ICC Filter on the shared ICC cycle
+- ICC entry models: one ICC Entry Model trade per cycle (two in Aggressive mode), never from history, never off a 1H candle more than an hour old; every cycle times out after *Max wait* structure candles per phase
 - Refuses to start with every engine switched off, and warns when the stop is set to 0 pips
 
 ---
