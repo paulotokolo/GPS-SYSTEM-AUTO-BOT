@@ -143,8 +143,9 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   check("3: the buy gate is open", sb.trendGateReason(false, 109.5) === null && sb.icc.gps_buy_unlocked);
   check("3: the phase is GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
   feedS(sb, extend(series(CYCLE, T0), [110.5]));
-  check("3: when the cycle completes at its target the filter goes back to scanning (NEUTRAL)",
-    sb.icc.bias === "NEUTRAL" && sb.icc.ntz_high === null && /NEUTRAL/.test(sb.trendGateReason(false, 111)));
+  check("3: when the cycle completes at its target the NEXT NTZ is locked at once (not blank)",
+    sb.icc.bias === "NTZ" && sb.icc.ntz_high !== null && /ICC bias is NTZ/.test(sb.trendGateReason(false, 111)),
+    sb.icc.bias + " " + sb.icc.ntz_high);
 }
 
 // ---------------------------------------------------------------- 4: one NTZ everywhere

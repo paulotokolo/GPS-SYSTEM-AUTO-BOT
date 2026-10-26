@@ -99,9 +99,9 @@ function liveFeed(sb, s) {
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   console.log("===== 1: ONE SHARED CYCLE, BOTH MODELS ON =====");
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
-  check("1: the NTZ locks once, for both models",
-    st.events.filter((e) => e.type === "LOCK").length === 1 &&
-    st.events.some((e) => e.type === "LOCK" && /^\[ICC\] Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(e.text)));
+  check("1: the NTZ locks once per cycle, shared by both models",
+    st.events.find((e) => e.type === "LOCK" && e.kind === null) &&
+    /^\[ICC\] Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st.events.find((e) => e.type === "LOCK").text));
   check("1: later swings inside the NTZ are IGNORED, the lock holds",
     st.events.some((e) => /New swing detected at 103\.00 — IGNORED/.test(e.text)));
   check("1: one INDICATION on the 4H body close above 104",
@@ -120,7 +120,10 @@ function liveFeed(sb, s) {
   check("1: each model logs the brief's completion line",
     st.events.some((e) => e.text === "[ICC ENTRY MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset.") &&
     st.events.some((e) => e.text === "[ICC GPS MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset."));
-  check("1: status COMPLETE, phase WAITING, NTZ cleared", st.status === "COMPLETE" && st.phase === "WAITING" && st.lockHigh === null);
+  check("1: the finished cycle is recorded as COMPLETE, with the ICC entry it took",
+    st.lastCycle && st.lastCycle.why === "COMPLETE" && st.lastCycle.iccEntered === true);
+  check("1: and the NEXT cycle locks straight away — the NTZ is never left blank",
+    st.lockHigh !== null && st.phase === "WAITING" && st.status === "WAITING FOR INDICATION", st.status);
   check("1: the last ICC entry is remembered for the panel", st.lastIccEntry && st.lastIccEntry.price === 109.5);
 }
 
@@ -145,7 +148,7 @@ function liveFeed(sb, s) {
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   check("2: a continuation that never reaches its target or entry times out and resets",
     types(st).includes("TIMEOUT") && st.events.some((e) => /TIMEOUT — Target not reached after 2 4H candles/.test(e.text)) &&
-    st.lockHigh === null);
+    st.lastCycle.why === "TIMEOUT" && st.lastCycle.gpsActive === false);
 }
 
 // ---------------------------------------------------------------- 3: startup + live
@@ -222,7 +225,7 @@ function liveFeed(sb, s) {
   const s = series(g, START - 3 * H4);
   const st = cycle(modelSandbox({ iccMaxWait: 2 }), { d1: [], h4: s.h4, h1: s.h1 });
   check("5: no correction within Max wait is a TIMEOUT",
-    st.events.some((e) => /TIMEOUT — No correction detected after 2 4H candles/.test(e.text)) && st.status === "TIMED OUT");
+    st.events.some((e) => /TIMEOUT — No correction detected after 2 4H candles/.test(e.text)) && st.lastCycle.why === "TIMEOUT");
 }
 {
   const s = series(BASE.slice(0, 7), START);
@@ -389,6 +392,90 @@ const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107,
   check("8b: type 1 enters on a shallow pullback that never re-enters the NTZ", types(st).includes("ENTRY"));
   const st2 = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
   check("8b: type 2 does not enter on that shallow pullback", !types(st2).includes("ENTRY"));
+}
+
+// ---------------------------------------------------------------- 8c: never blank, never stuck
+{
+  // The client's overnight case: the swing high is known, the swing low confirms later.
+  const sb = modelSandbox();
+  const part = series(BASE.slice(0, 3), START);
+  const st1 = cycle(sb, { d1: [], h4: part.h4, h1: part.h1 });
+  check("8c: with only the swing high confirmed, it is shown and the low is pending",
+    st1.lockHigh === null && st1.pendHi === 104 && st1.pendLo === null && st1.status === "SCANNING");
+  const full = series(BASE.slice(0, 4), START);
+  const st2 = cycle(sb, { d1: [], h4: full.h4, h1: full.h1 });
+  check("8c: the moment the swing low confirms, it pairs with the high and the NTZ locks",
+    st2.lockHigh === 104 && st2.lockLow === 101 && st2.status === "WAITING FOR INDICATION", st2.status);
+}
+// After a timeout the most recent swings are the pair that just timed out. It is re-locked
+// at once (not blank), but the same break cannot start a new cycle until price has been back
+// inside.
+const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [104.5, 106, 108, 109],
+               [110, 111, 112, 113], [114, 115, 116, 117], [118, 119, 120, 121], [122, 123, 124, 125]];
+{
+  const sb = modelSandbox({ iccMaxWait: 2 });
+  const s = series(RERUN, START - 6 * H4);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  console.log("\n===== 8c: RE-LOCK AFTER A TIMEOUT =====");
+  st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
+  check("8c: after the timeout the NTZ is re-locked immediately (never blank)",
+    st.lastCycle.why === "TIMEOUT" && st.lockHigh === 104 && st.lockLow === 101);
+  check("8c: it is marked as waiting for price back inside",
+    st.needsFreshBreak === true && st.status === "WAITING FOR INDICATION");
+  check("8c: a close still above the re-used high does NOT start a new cycle", st.phase === "WAITING" && !st.dir);
+}
+{
+  const sb = modelSandbox({ iccMaxWait: 2 });
+  const s = series(RERUN.concat([[120, 110, 105, 103]]), START - 7 * H4);
+  const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("8c: once a newer swing confirms it replaces the re-used pair",
+    st.lockHigh === 125 && st.needsFreshBreak === false, st.lockHigh + " " + st.needsFreshBreak);
+}
+{
+  // The panel: current status and last cycle are separate, so they never contradict.
+  const sb = modelSandbox({ gpsModelOn: true });
+  sb.iccCycle = cycle(sb, { d1: [], ...(() => { const s = more(series(BASE, START), [110.5]); return { h4: s.h4, h1: s.h1 }; })() });
+  sb.engines = [];
+  sb.renderModelPanels();
+  const txt = (id) => sb.document.getElementById(id).textContent;
+  check("8c: panel — cycle status is the CURRENT cycle", txt("mIccStatus") === "WAITING FOR INDICATION", txt("mIccStatus"));
+  check("8c: panel — the finished cycle shows in Last cycle, with its entry",
+    /^COMPLETE — Target Reached · .* · entry taken$/.test(txt("mIccLastCycle")), txt("mIccLastCycle"));
+  check("8c: panel — the NTZ is not blank", !/pending|scanning/.test(txt("mIccNtz")), txt("mIccNtz"));
+}
+
+// ---------------------------------------------------------------- 8d: starting with no GPS engines
+function startWith(iccModel, gpsModel) {
+  const sb = buildSandbox();
+  const el = (id) => sb.document.getElementById(id);
+  el("instrumentId").value = "XAU/USD"; el("timeframe").value = "300"; el("tradingMode").value = "dry";
+  el("enableBuys").checked = true;
+  ["e1", "e2", "e3", "e4", "e5", "e6"].forEach((p) => { el(p + "Enabled").checked = false; });
+  el("iccModelOn").checked = iccModel; el("gpsModelOn").checked = gpsModel;
+  el("iccStructTf").value = "4h"; el("emaTimeframe").value = "4h"; el("iccSwingSource").value = "close";
+  ["sessAsiaTime", "sessLondonTime", "sessNyamTime", "sessNylunchTime"]
+    .forEach((id, i) => { el(id).value = ["2000-0000", "0200-0500", "0930-1200", "1200-1300"][i]; });
+  sb.startBot();
+  const running = sb.isRunning;
+  if (running) sb.stopBot();                       // stop the live timers so the test can exit
+  return { running, logs: sb.__logLines };
+}
+{
+  const a = startWith(true, false);
+  check("8d: ICC Entry Model ON with every GPS engine off: the bot starts", a.running);
+  check("8d: and says it is running the ICC Entry Model on its own",
+    a.logs.some((l) => /All GPS engines are off — running the ICC Entry Model on its own\./.test(l)));
+  check("8d: no misleading 'engines OFF, signals will not match' warning",
+    !a.logs.some((l) => /Settings differ from the signed-off engine config/.test(l)));
+  const b = startWith(false, false);
+  check("8d: no model and no engines: still refuses to start", !b.running &&
+    b.logs.some((l) => /there is nothing to run/.test(l)));
+  const c = startWith(false, true);
+  check("8d: GPS Entry Model alone with no engines: refuses (it trades through the engines)", !c.running &&
+    c.logs.some((l) => /the GPS Entry Model trades through the GPS engines/.test(l)));
+  const d = startWith(true, true);
+  check("8d: both models, no engines: starts for the ICC model, warns the GPS model has nothing to trade",
+    d.running && d.logs.some((l) => /GPS Entry Model is ON but has no engines to trade through/.test(l)));
 }
 
 // ---------------------------------------------------------------- 9: Aggressive Entry Mode

@@ -507,6 +507,7 @@ button:active { transform: scale(0.98); }
       <div class="state-grid">
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mIccPhase">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mIccStatus">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle</span><span class="state-value" id="mIccLastCycle">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mIccDir">&mdash;</span></div>
         <div class="state-box"><span class="state-label" id="mIccNtzLabel">NTZ high / low</span><span class="state-value" id="mIccNtz">&mdash;</span></div>
         <div class="state-box" id="mIccAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mIccAlign">&mdash;</span></div>
@@ -520,6 +521,7 @@ button:active { transform: scale(0.98); }
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mGpsPhase">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Engine status</span><span class="state-value" id="mGpsEngines">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mGpsStatus">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle</span><span class="state-value" id="mGpsLastCycle">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mGpsDir">&mdash;</span></div>
         <div class="state-box"><span class="state-label" id="mGpsNtzLabel">NTZ high / low</span><span class="state-value" id="mGpsNtz">&mdash;</span></div>
         <div class="state-box" id="mGpsAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mGpsAlign">&mdash;</span></div>
@@ -2755,7 +2757,10 @@ function newModelSub() {
 function newCycleState() {
   return {
     phase: "WAITING",           // WAITING / INDICATION / CORRECTION / CONTINUATION
-    status: "WAITING",          // WAITING / ACTIVE / COMPLETE / RESET / TIMED OUT
+    status: "SCANNING",         // SCANNING / WAITING FOR INDICATION / ACTIVE — the current cycle only
+    lastCycle: null,            // how the previous cycle ended: { why, ts, iccEntered, gpsActive, key }
+    needsFreshBreak: false,     // re-locked the pair a cycle just finished on: wait for price back inside
+    pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
     lockHigh: null, lockLow: null, lockHiTs: null, lockLoTs: null,
     dir: null,                  // "buy" / "sell" once indicated
     indBarTs: null, waitCount: 0,
@@ -2765,7 +2770,7 @@ function newCycleState() {
     latest: { h1Hi: null, h1Lo: null, sHi: null, sLo: null },   // swing extremes (wicks) for stops
     m: { icc: newModelSub(), gps: newModelSub() },
     lastIccEntry: null,
-    resetTs: -Infinity, resetWhy: null, prevPair: null,
+    resetWhy: null, prevPair: null,
     events: []
   };
 }
@@ -2800,10 +2805,34 @@ function runIccCycle(p, data, mods) {
   var emitModels = function (t, type, text, cls, extra) {
     MODEL_KINDS.forEach(function (k) { if (on(k)) emit(t, type, text, cls, extra, k); });
   };
+  // A cycle ends: remember how, then re-lock straight away from the most recent swings.
   var reset = function (t, status, why) {
-    var keep = { status: status, resetTs: t, resetWhy: why, events: st.events, lastIccEntry: st.lastIccEntry,
+    var last = { why: why, ts: t, iccEntered: !!st.m.icc.entered, gpsActive: !!st.m.gps.active,
+                 key: st.lockHiTs + "/" + st.lockLoTs + "/" + st.dir + "/" + st.indBarTs };
+    var keep = { resetWhy: why, events: st.events, lastIccEntry: st.lastIccEntry, lastCycle: last,
                  prevPair: st.lockHiTs + "/" + st.lockLoTs, latest: st.latest, align: st.align };
     st = Object.assign(newCycleState(), keep);
+    tryLock(t);
+  };
+  // Lock the most recent confirmed swing high and swing low — no waiting for "fresh" ones,
+  // and as soon as the missing half confirms. If that is the very pair a cycle just finished
+  // on (target hit or timed out), the NTZ is drawn but a new break only counts once price has
+  // been back inside it, or once a newer swing replaces one side — so the same move is never
+  // traded twice.
+  var tryLock = function (t) {
+    var shs = latestSwing(sSw, true, t), sls = latestSwing(sSw, false, t);
+    st.pendHi = shs ? shs.val : null;
+    st.pendLo = sls ? sls.val : null;
+    if (!shs || !sls || !(shs.val > sls.val)) return false;
+    var same = (shs.ts + "/" + sls.ts) === st.prevPair && (st.resetWhy === "COMPLETE" || st.resetWhy === "TIMEOUT");
+    st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
+    st.status = "WAITING FOR INDICATION";
+    st.needsFreshBreak = same;
+    emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
+         " — NTZ set (" + sName + "). " + (same
+           ? "Same levels as the cycle that just ended — a new break counts once price is back inside them."
+           : "Levels frozen for this cycle."));
+    return true;
   };
   var latestSwing = function (list, hi, t, sinceTs) {
     var best = null;
@@ -2905,24 +2934,15 @@ function runIccCycle(p, data, mods) {
       while (ps < sSw.length && sSw[ps].confirmTs <= t) fresh.push(sSw[ps++]);
       refreshLatest(t);
 
-      if (st.lockHigh === null) {
-        // Lock the swing high and swing low that formed after the last reset. Re-locking the
-        // very pair just used is only allowed after a disrespect, where the close through the
-        // other side is itself the break the other way.
-        var shs = null, sls = null;
-        for (var q = 0; q < ps; q++) {
-          if (sSw[q].ts < st.resetTs && st.resetWhy !== "DISRESPECT") continue;
-          if (sSw[q].hi) shs = sSw[q]; else sls = sSw[q];
-        }
-        if (shs && sls && shs.val > sls.val) {
-          st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
-          st.status = "WAITING";
-          emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
-               " — NTZ set (" + sName + "). Levels frozen for this cycle.");
-          fresh = [];
-        }
-      }
+      if (st.lockHigh === null && tryLock(t)) fresh = [];
       if (st.lockHigh === null) continue;
+
+      // A re-used pair is only a placeholder: a newly confirmed swing replaces it.
+      if (st.needsFreshBreak && st.phase === "WAITING" && fresh.length) {
+        st.lockHigh = null;
+        tryLock(t);
+        fresh = [];
+      }
 
       for (var f = 0; f < fresh.length; f++) {
         var sw = fresh[f];
@@ -2939,6 +2959,14 @@ function runIccCycle(p, data, mods) {
       if (st.lockHigh === null) continue;
 
       if (st.phase === "WAITING") {
+        if (st.needsFreshBreak) {
+          if (b.c <= st.lockHigh && b.c >= st.lockLow) {
+            st.needsFreshBreak = false;
+            emit(t, "FRESH", "Price closed back inside the NTZ " + fmt(st.lockLow) + " – " + fmt(st.lockHigh) +
+                 ". A new break of these levels now counts as an indication.");
+          }
+          continue;
+        }
         if (b.c > st.lockHigh || b.c < st.lockLow) {
           st.dir = b.c > st.lockHigh ? "buy" : "sell";
           st.phase = "INDICATION"; st.status = "ACTIVE";
@@ -2957,8 +2985,9 @@ function runIccCycle(p, data, mods) {
              "Cycle INVALIDATED. Resetting.", "log-warn",
              { act: "disrespect", wasDir: st.dir, level: bull() ? st.lockLow : st.lockHigh });
         reset(t, "RESET", "DISRESPECT");
-        // The same close may already be the break the other way: re-lock and re-check it.
-        i--; ps -= fresh.length;
+        // The same close may already be the break the other way: re-check it against the
+        // re-locked levels.
+        i--;
         continue;
       }
       // Max wait applies to every phase after the break, counted from the phase's start, so a
@@ -3334,7 +3363,9 @@ function renderModelPanels() {
     var bull = st.dir === "buy", sub = st.m[kind];
     set(pre + "Phase", st.phase, st.phase === "WAITING" ? "muted" : st.phase === "CONTINUATION" ? (bull ? "up" : "down") : "pending");
     set(pre + "Dir", st.dir ? (bull ? "BULLISH" : "BEARISH") : "NONE", st.dir ? (bull ? "up" : "down") : "muted");
-    set(pre + "Ntz", st.lockHigh !== null ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) : "scanning for a fresh swing high + low",
+    set(pre + "Ntz", st.lockHigh !== null
+        ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) + (st.needsFreshBreak ? "  (waiting for price back inside)" : "")
+        : (st.pendHi !== null ? fmt(st.pendHi) : "high pending") + " / " + (st.pendLo !== null ? fmt(st.pendLo) : "low pending"),
         st.lockHigh !== null ? "" : "muted");
     if (alignOn) {
       var want = st.dir ? (bull ? "BULLISH" : "BEARISH") : null;
@@ -3345,9 +3376,21 @@ function renderModelPanels() {
           : "Daily " + st.align.d + " | 4H " + st.align.h4 + " | 1H —",
         want && st.align.d === want && st.align.h4 === want && h1ok ? (bull ? "up" : "down") : "pending");
     }
-    var statusText = st.status === "COMPLETE" ? "COMPLETE — Target Reached" + (modelOpt(kind, "Trail") ? " · trail active if holding" : "")
-                   : st.status;
-    var statusCls = st.status === "COMPLETE" || st.status === "ACTIVE" ? "up" : st.status === "TIMED OUT" ? "down" : "muted";
+    var statusText = st.status, statusCls = st.status === "ACTIVE" ? "up" : st.status === "SCANNING" ? "muted" : "pending";
+    // How the previous cycle ended — kept apart from the current status so the two never contradict.
+    var lc = st.lastCycle, lastText = "—", lastCls = "muted";
+    if (lc) {
+      var entered = kind === "icc"
+        ? lc.iccEntered || (aggState && aggState.key === lc.key && aggState.entries > 0)
+        : lc.gpsActive;
+      lastText = ({ COMPLETE: "COMPLETE — Target Reached", DISRESPECT: "DISRESPECTED", TIMEOUT: "TIMED OUT",
+                    INVALIDATED: "INVALIDATED" })[lc.why] + " · " + nyParts(lc.ts).fullLabel +
+                 (kind === "icc" ? (entered ? " · entry taken" + (lc.why === "COMPLETE" && modelOpt(kind, "Trail") ? " · trail active if holding" : "")
+                                            : " · no entry this cycle")
+                                 : (entered ? " · engines were active" : " · engines never activated"));
+      lastCls = lc.why === "COMPLETE" ? "up" : "down";
+    }
+    set(pre + "LastCycle", lastText, lastCls);
     if (kind === "icc") {
       set("mIccStatus", statusText, statusCls);
       var lastE = st.lastIccEntry;
@@ -4766,7 +4809,9 @@ function refreshStatePanel(ny) {
       lbl("stIccBiasLabel", "ICC bias (" + sTf + ")");
       lbl("stIccNtzLabel", sTf + " NTZ high / low (shared)");
       t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
-                                          : "scanning for a fresh swing high + low",
+                  : iccCycle ? (iccCycle.pendHi !== null ? fmt(iccCycle.pendHi) : "high pending") + " / " +
+                               (iccCycle.pendLo !== null ? fmt(iccCycle.pendLo) : "low pending")
+                  : "waiting for candles",
         icc.ntz_high !== null ? "" : "muted");
       if (icc.bias !== "BULLISH" && icc.bias !== "BEARISH") t("stH1Struct", "—", "muted");
       else t("stH1Struct", icc.h1_state,
@@ -5216,7 +5261,9 @@ function startBot() {
   if (!cfg.sessions["ASIA"] || !cfg.sessions["LONDON"] || !cfg.sessions["NY AM"]) {
     deviations.push("One of Asia/London/NY AM is disabled (confirmed: all ON)");
   }
-  if (deviations.length) {
+  // Engines being off is the point of an ICC-only run, not a deviation worth shouting about.
+  var anyEngineOn = ENGINE_DEFS.some(function (def) { return cfg.engines[def.key] && cfg.engines[def.key].enabled; });
+  if (deviations.length && (anyEngineOn || !cfg.iccModelOn)) {
     log("⚠️ Settings differ from the signed-off engine config — signals will NOT match the " +
         "indicator: " + deviations.join("; "), "log-warn");
   }
@@ -5231,10 +5278,19 @@ function startBot() {
     if (!ec || !ec.enabled) return false;
     return def.dir === "buy" ? cfg.enableBuys : cfg.enableSells;
   });
-  if (!willRun.length) {
+  // The GPS engines are only needed when something trades through them. The ICC Entry Model
+  // has its own 1H entries and runs with every engine off.
+  var iccOnly = !willRun.length && cfg.iccModelOn;
+  if (!willRun.length && !cfg.iccModelOn) {
     log("Every engine on the enabled side(s) is switched off — there is nothing to run. " +
-        "Turn at least one engine on.", "log-err");
+        "Turn at least one engine on" + (cfg.gpsModelOn ? " (the GPS Entry Model trades through the GPS engines)" : "") +
+        ", or switch on the ICC Entry Model.", "log-err");
     return;
+  }
+  if (iccOnly) {
+    log("All GPS engines are off — running the ICC Entry Model on its own." +
+        (cfg.gpsModelOn ? " The GPS Entry Model is ON but has no engines to trade through, so it will not place anything." : ""),
+        cfg.gpsModelOn ? "log-warn" : "log-info");
   }
   if (!(cfg.slPips > 0)) {
     log("Stop loss is 0 pips — trades will open with NO stop attached. That is uncapped risk on " +
@@ -5254,7 +5310,7 @@ function startBot() {
   // The Pine source gates the whole signal engine behind a 30-minute Timeframe Limit
   // (tf_limit_is_equal_or_more_chart_tf). Above that the indicator produces no signals at
   // all, so the bot must not either — otherwise it would trade setups TradingView never shows.
-  if (cfg.timeframe > 1800) {
+  if (cfg.timeframe > 1800 && !iccOnly) {
     log("Timeframe is above the indicator's 30-minute Timeframe Limit — the GPS indicator " +
         "produces NO signals above M30, so the bot will not run here. Use M30 or lower.", "log-err");
     return;
@@ -5337,9 +5393,9 @@ function startBot() {
       (cfg.tradingMode === "live" ? "LIVE TRADING" : "DRY RUN (no orders)"), "log-info", {
     detail: [
       "Direction   " + sides.join(" + "),
-      "Engines     " + engines.map(function (e) {
+      "Engines     " + (engines.length ? engines.map(function (e) {
         return "E" + e.def.id + " " + e.def.name;
-      }).join("\n            "),
+      }).join("\n            ") : "none — ICC Entry Model only"),
       "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn

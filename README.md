@@ -152,7 +152,7 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
 
 **The shared cycle**
 
-1. **Lock.** The structure-TF swing high and swing low that form after the last reset (closes, *Swing strength* bars each side) become the NTZ and are frozen until the cycle ends. Later swings are logged `IGNORED`.
+1. **Lock.** The most recent confirmed structure-TF swing high and swing low (closes, *Swing strength* bars each side) become the NTZ and are frozen until the cycle ends; later swings are logged `IGNORED`. There is no waiting for "fresh" swings: on Start, and the moment a cycle ends, the most recent pair is locked at once, and if only one half exists yet it is shown with the other *pending* and the pair locks the moment the missing half confirms. The one exception: if the most recent pair is the very pair a cycle just finished on (target hit or timed out), it is drawn but a new break only counts once price has closed back inside it, or once a newer swing replaces one side — so the same move is never traded twice.
 2. **Indication.** A structure-TF candle **body closes** outside the NTZ. Wicks never count.
 3. **Correction** and 4. **Continuation** depend on *1H continuation check* (shared setting, default ON):
 
@@ -165,7 +165,9 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
    The TP target is fixed at continuation: the structure-TF extreme since the break (TP1 pips from the trigger if that extreme is not beyond it).
 5. **Complete.** Price reaches the target: `CYCLE COMPLETE — TP target hit at …. Bot reset.` in each model's log, *Cycle status: COMPLETE — Target Reached*.
 
-**Resets** — the cycle also ends on **disrespect** (a structure-TF body close back through the other side of the NTZ — that same close can start the opposite cycle), **timeout** (any phase lasting longer than *Max wait* structure candles, default 20), or a **new structure swing beyond the locked level** before the correction. After a reset the next NTZ is the next fresh swing high and swing low; the pair just used is never re-locked (except after a disrespect).
+**Resets** — the cycle also ends on **disrespect** (a structure-TF body close back through the other side of the NTZ — that same close can start the opposite cycle), **timeout** (any phase lasting longer than *Max wait* structure candles, default 20), or a **new structure swing beyond the locked level** before the correction. After any reset the next NTZ is locked straight away (see *Lock*).
+
+*Cycle status* is only ever the current cycle — `SCANNING` (no swing pair yet), `WAITING FOR INDICATION` (NTZ locked, no break) or `ACTIVE` — and a separate *Last cycle* box shows how the previous one ended (COMPLETE — Target Reached / DISRESPECTED / TIMED OUT / INVALIDATED), when, and whether that model entered it, so the panel never contradicts itself.
 
 The cycle is replayed from history on every update, so on Start the phase is wherever the cycle already is — it never shows WAITING just because the bot started.
 
@@ -178,7 +180,7 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | Stop loss | **Fixed pip stop** | or the latest 1H swing high/low, or the latest structure swing high/low (wick); falls back to pips if the swing is not on the right side |
 | Trail after TP | OFF | ON: no TP is placed; the trade is not trailed until price reaches the target, then **Auto Trailing** takes over and the bot moves on |
 
-**ICC Entry Model** — the continuation 1H close (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades — only the 1H candle that just closed.
+**ICC Entry Model** runs without the GPS engines: with it ON the bot starts even with every engine switched off (only the GPS Entry Model, which trades through the engines, needs at least one). The continuation 1H close (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades — only the 1H candle that just closed.
 
 **ICC Entry Model — Aggressive Entry Mode** (toggle, default OFF). Same shared cycle; only the trigger changes. After the indication, once price is back **inside** the NTZ the model is armed, and the entry fires the moment **live** price crosses back through the broken level (above the NTZ high on a bullish cycle, below the low on a bearish one) — no candle close, no structure confirmation, no pullback wait, and **alignment has no effect** (use Standard for alignment). SL sits inside the 1H swing range: the midpoint of the latest 1H swing high and swing low, or halfway to the pullback's low if that midpoint is not below the entry (the dip inside the NTZ stands in for a 1H swing not yet confirmed). TP is the structure target; Trail after TP works as in Standard. If price goes back inside before the TP it re-arms — **max 2 entries per cycle**. Orders are tagged `GPSBOT-ICCA`; the panel's *Entry mode* row shows ARMED / waiting and entries used.
 
@@ -229,7 +231,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (461 assertions). |
+| `tests/` | Automated test suite (477 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -558,9 +560,9 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           67 pass   0 fail
-test_models        76 pass   0 fail
+test_models        92 pass   0 fail
 ----------------------------------------
-TOTAL: 461 pass, 0 fail
+TOTAL: 477 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
