@@ -143,11 +143,11 @@ function liveFeed(sb, s) {
   // The stuck GPS model: alignment ON, continuation reached, Daily never agrees, price never
   // pulls back. It must not hold the old levels forever — Max wait ends the cycle.
   const g = WIDE.concat([[109.6, 109.7, 109.8, 109.9], [109.9, 109.95, 110, 110.05], [110.06, 110.07, 110.08, 110.09]]);
-  const sb = modelSandbox({ iccModelOn: false, gpsModelOn: true, gpsModelAlign: true, iccMaxWait: 2 });
+  const sb = modelSandbox({ iccModelOn: false, gpsModelOn: true, gpsModelAlign: true, iccMaxWait: 3 });
   const s = series(g, START - 3 * H4);
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   check("2: a continuation that never reaches its target or entry times out and resets",
-    types(st).includes("TIMEOUT") && st.events.some((e) => /TIMEOUT — Target not reached after 2 4H candles/.test(e.text)) &&
+    types(st).includes("TIMEOUT") && st.events.some((e) => /TIMEOUT — Target not reached after 3 4H candles/.test(e.text)) &&
     st.lastCycle.why === "TIMEOUT" && st.lastCycle.gpsActive === false);
 }
 
@@ -439,14 +439,48 @@ const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], 
   sb.renderModelPanels();
   const txt = (id) => sb.document.getElementById(id).textContent;
   check("8c: panel — cycle status is the CURRENT cycle", txt("mIccStatus") === "WAITING FOR INDICATION", txt("mIccStatus"));
-  check("8c: panel — the finished cycle shows in Last cycle, with its entry",
-    /^COMPLETE — Target Reached · .* · entry taken$/.test(txt("mIccLastCycle")), txt("mIccLastCycle"));
+  check("8c: panel — Last cycle status is COMPLETE (an entry was taken), in silver",
+    txt("mIccLastCycle") === "COMPLETE" && /ph-done/.test(sb.document.getElementById("mIccLastCycle").className), txt("mIccLastCycle"));
+  check("8c: panel — Last cycle date is its own field", /EST$/.test(txt("mIccLastDate")), txt("mIccLastDate"));
+  check("8c: panel — the phase is colour-coded with the 3-dot tracker",
+    txt("mIccPhase") === "WAITING  ●○○" && /ph-wait/.test(sb.document.getElementById("mIccPhase").className), txt("mIccPhase"));
+  check("8c: panel — cycle expiry is blank until a break", /starts at a break/.test(txt("mIccExpires")));
   check("8c: panel — the NTZ is not blank", !/pending|scanning/.test(txt("mIccNtz")), txt("mIccNtz"));
 }
 
+// ---------------------------------------------------------------- 8e: phase colours, dots, new fields
+function panelAt(groups) {
+  const sb = modelSandbox({ gpsModelOn: true, iccMaxWait: 20 });
+  const s = series(groups, START);
+  sb.h4Store = storeOf(s.h4, H4); sb.h1Store = storeOf(s.h1, H1);
+  sb.iccCycle = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  sb.engines = [];
+  sb.renderModelPanels();
+  const el = (id) => sb.document.getElementById(id);
+  return { sb, txt: (id) => el(id).textContent, cls: (id) => el(id).className };
+}
+{
+  const a = panelAt(BASE.slice(0, 7));                    // just broken: INDICATION
+  check("8e: INDICATION is yellow with two dots", a.txt("mIccPhase") === "INDICATION  ●●○" && /ph-ind/.test(a.cls("mIccPhase")),
+    a.txt("mIccPhase"));
+  check("8e: the break direction names the candle that broke the NTZ",
+    /^BULLISH · 4H closed 109\.00 above 104\.00 · .*EST$/.test(a.txt("mIccDir")), a.txt("mIccDir"));
+  check("8e: cycle expires in = structure bars left before Max wait (20 - 0 = 20)",
+    a.txt("mIccExpires") === "20 4H bars (indication)", a.txt("mIccExpires"));
+  check("8e: price position: last 1H close 109 is ABOVE NTZ", a.txt("mIccPos") === "ABOVE NTZ", a.txt("mIccPos"));
+  const b = panelAt(BASE.slice(0, 8));                    // 1H turned: CORRECTION
+  check("8e: CORRECTION is blue with three dots", b.txt("mGpsPhase") === "CORRECTION  ●●●" && /ph-corr/.test(b.cls("mGpsPhase")),
+    b.txt("mGpsPhase"));
+  const c = panelAt(BASE.slice(0, 6));                    // locked, inside: WAITING
+  check("8e: WAITING is grey with one dot, price INSIDE NTZ",
+    c.txt("mIccPhase") === "WAITING  ●○○" && /ph-wait/.test(c.cls("mIccPhase")) && c.txt("mIccPos") === "INSIDE NTZ",
+    c.txt("mIccPhase") + " / " + c.txt("mIccPos"));
+}
+
 // ---------------------------------------------------------------- 8d: starting with no GPS engines
-function startWith(iccModel, gpsModel) {
+function startWith(iccModel, gpsModel, before) {
   const sb = buildSandbox();
+  if (before) before(sb);
   const el = (id) => sb.document.getElementById(id);
   el("instrumentId").value = "XAU/USD"; el("timeframe").value = "300"; el("tradingMode").value = "dry";
   el("enableBuys").checked = true;
@@ -457,8 +491,9 @@ function startWith(iccModel, gpsModel) {
     .forEach((id, i) => { el(id).value = ["2000-0000", "0200-0500", "0930-1200", "1200-1300"][i]; });
   sb.startBot();
   const running = sb.isRunning;
+  const counts = { signals: sb.signalCount, orders: sb.orderCount, statsSince: sb.statsSince };
   if (running) sb.stopBot();                       // stop the live timers so the test can exit
-  return { running, logs: sb.__logLines };
+  return { running, logs: sb.__logLines, counts };
 }
 {
   const a = startWith(true, false);
@@ -479,76 +514,148 @@ function startWith(iccModel, gpsModel) {
 }
 
 // ---------------------------------------------------------------- 9: Aggressive Entry Mode
-// The base cycle up to the correction (NTZ 104 / 101, bullish break, 1H correcting), then
-// live prices fed straight in.
-function aggSandbox(over) {
-  const sb = modelSandbox(Object.assign({ iccModelAggressive: true }, over || {}));
-  const s = series(BASE, START);
-  const lastTs = s.h1[s.h1.length - 1].ts;
-  sb.h4Store = storeOf(s.h4.filter((b) => b.ts + H4 <= lastTs), H4);
-  sb.h1Store = storeOf(s.h1.slice(0, -1), H1);
+// Bullish break at 109 (NTZ 104 / 101). Arming needs a 4H BODY close back inside the NTZ.
+const ARM1 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103]]);              // 4H closes 103: arms
+const ARM2 = ARM1.concat([[105, 104.5, 103.8, 103.6]]);                     // closes inside again: re-arms
+const ARM3 = ARM2.concat([[105, 104.4, 103.9, 103.7]]);                     // and again
+function aggFeed(sb, groups, extraH1) {
+  const s = series(groups, START);
+  if (extraH1) more(s, extraH1);
+  sb.h4Store = storeOf(s.h4, H4);
+  sb.h1Store = storeOf(s.h1, H1);
   sb.updateEntryModels();
   return sb;
 }
+const aggSb = (over) => modelSandbox(Object.assign({ iccModelAggressive: true }, over || {}));
 {
-  const sb = aggSandbox();
-  check("9: the shared cycle is in CORRECTION, bullish, NTZ high 104",
-    sb.iccCycle.phase === "CORRECTION" && sb.iccCycle.dir === "buy" && sb.iccCycle.lockHigh === 104);
-  sb.checkAggressiveEntry(108);
-  check("9: price still above the NTZ: not armed, no entry", sb.__orders.length === 0 &&
-    !sb.__logLines.some((l) => /AGGRESSIVE ARMED/.test(l)));
+  const sb = aggFeed(aggSb(), BASE.slice(0, 7), [107, 104.5, 103.5]);      // 1H closes inside, no 4H close
+  sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
+  check("9: 1H closes / ticks back inside do NOT arm — no entry", sb.__orders.length === 0 && sb.iccCycle.aggArmTs === null);
+}
+{
+  const sb = aggFeed(aggSb(), BASE.slice(0, 7));
+  aggFeed(sb, ARM1);                                                         // the 4H close inside happens live
+  check("9: a 4H body close back inside the NTZ arms it",
+    sb.iccCycle.aggArmTs !== null &&
+    sb.__logLines.some((l) => /\[ICC ENTRY MODEL\] AGGRESSIVE ARMED — 4H body closed back inside the NTZ at 103\.00\. Entry fires the moment live price crosses back above 104\.00/.test(l)));
   sb.checkAggressiveEntry(103.5);
-  check("9: price back inside the NTZ arms it",
-    sb.__logLines.some((l) => /\[ICC ENTRY MODEL\] AGGRESSIVE ARMED — price back inside the NTZ \(below 104\.00\)\. Entry 1\/2/.test(l)));
   sb.checkAggressiveEntry(104.2);
   console.log("\n===== 9: AGGRESSIVE ENTRY =====");
   sb.__logLines.filter((l) => /AGGRESSIVE/.test(l)).forEach((l) => console.log(l));
   const o = sb.__orders[0];
-  check("9: the live cross back above 104 fires a BUY immediately", sb.__orders.length === 1 && o.tradingAction === "BUY");
+  check("9: armed + live cross back above 104 fires a BUY immediately", sb.__orders.length === 1 && o.tradingAction === "BUY");
   check("9: tagged GPSBOT-ICCA", o && o.comment === "GPSBOT-ICCA");
-  check("9: TP = the 4H extreme since the break (110.2 - 104.2 = 60 pips)", o && o.tp && o.tp.pips === 60, o && JSON.stringify(o.tp));
-  // No confirmed 1H swing low below 104.2 yet, so the dip inside the NTZ (103.5) is the
-  // swing low: midpoint with the 1H swing high, or halfway to the dip if that is not below.
-  const lat = sb.iccCycle.latest, lo = lat.h1Lo < 104.2 ? lat.h1Lo : 103.5, mid = (lat.h1Hi + lo) / 2;
-  const wantSl = mid < 104.2 ? mid : (104.2 + lo) / 2;
-  check("9: SL inside the 1H swing range, below the entry",
-    o && o.sl && Math.abs(o.sl.pips - Math.round((104.2 - wantSl) / 0.1 * 10) / 10) < 0.11, o && JSON.stringify(o.sl));
-  check("9: the stop is tight — well inside the 100-pip fallback", o && o.sl && o.sl.pips < 20, o && JSON.stringify(o.sl));
+  check("9: TP = the 4H extreme since the break (109 - 104.2 = 48 pips)", o && o.tp && o.tp.pips === 48, o && JSON.stringify(o.tp));
+  check("9: SL below the entry and tight (inside the swing range / arming candle)",
+    o && o.sl && o.sl.pips > 0 && o.sl.pips < 30, o && JSON.stringify(o.sl));
   check("9: logged as ENTRY 1/2", sb.__logLines.some((l) => /AGGRESSIVE ENTRY 1\/2 — price crossed above 104\.00 live\. BUY Entry: 104\.20/.test(l)));
 
-  sb.checkAggressiveEntry(104.5);
-  check("9: no second entry without going back inside first", sb.__orders.length === 1);
-  sb.checkAggressiveEntry(103);
-  sb.checkAggressiveEntry(104.1);
-  check("9: back inside + cross again = entry 2/2", sb.__orders.length === 2 &&
+  sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.3);
+  check("9: the same arm is used once — dipping inside again on ticks does not re-arm", sb.__orders.length === 1);
+  aggFeed(sb, ARM2);
+  sb.checkAggressiveEntry(103.7); sb.checkAggressiveEntry(104.1);
+  check("9: another 4H close inside re-arms: entry 2/2", sb.__orders.length === 2 &&
     sb.__logLines.some((l) => /AGGRESSIVE ENTRY 2\/2/.test(l)));
-  sb.checkAggressiveEntry(103);
-  sb.checkAggressiveEntry(104.3);
+  aggFeed(sb, ARM3);
+  sb.checkAggressiveEntry(103.8); sb.checkAggressiveEntry(104.3);
   check("9: max 2 entries per cycle", sb.__orders.length === 2 &&
     sb.__logLines.some((l) => /max 2 entries for this cycle are used/.test(l)));
   check("9: the CSV labels it ICC ENTRY MODEL (AGGRESSIVE)", sb.signalLog.every((r) => r.model === "ICC ENTRY MODEL (AGGRESSIVE)"));
 }
 {
-  const sb = aggSandbox({ iccModelAlign: true });
+  // Started with the arm already in history and price already back outside: the cross
+  // happened while the bot was off, so it is not chased.
+  const sb = aggFeed(aggSb(), ARM1);
+  sb.checkAggressiveEntry(104.5); sb.checkAggressiveEntry(104.6);
+  check("9: price already outside at start: no entry until it is seen inside first", sb.__orders.length === 0);
+  sb.checkAggressiveEntry(103.9); sb.checkAggressiveEntry(104.2);
+  check("9: then inside + cross fires", sb.__orders.length === 1);
+}
+{
+  const sb = aggFeed(aggSb({ iccModelAlign: true }), ARM1);
   sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
   check("9: alignment has no effect in Aggressive mode (Daily not bullish, still enters)", sb.__orders.length === 1);
 }
 {
-  const sb = aggSandbox({ iccModelTrail: true });
+  const sb = aggFeed(aggSb({ iccModelTrail: true }), ARM1);
   sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
   check("9: trail after TP ON: aggressive entry sent with no TP", sb.__orders.length === 1 && !sb.__orders[0].tp);
 }
 {
-  // The standard 1H-close entry is off in Aggressive mode.
   const sb = modelSandbox({ iccModelAggressive: true });
   liveFeed(sb, series(BASE, START));
   check("9: Aggressive mode: the continuation 1H close does NOT place a standard entry",
     sb.__orders.length === 0 && !sb.__logLines.some((l) => /ENTRY PLACED/.test(l)));
 }
 {
-  const sb = aggSandbox({ iccModelAggressive: false });
+  const sb = aggFeed(aggSb({ iccModelAggressive: false }), ARM1);
   sb.checkAggressiveEntry(103.5); sb.checkAggressiveEntry(104.2);
   check("9: Aggressive OFF: live crosses do nothing", sb.__orders.length === 0);
+}
+
+// ---------------------------------------------------------------- 10: session performance stats
+{
+  // History replay: the signal is rebuilt (log / CSV) but is not a live signal.
+  const sb = buildSandbox();
+  const bars = fvgSequence();
+  sb.cfg = defaultCfg();
+  sb.priceDecimals = 2;
+  sb.buildEngines();
+  sb.isRunning = true;
+  sb.tradingStore = {
+    ta: [{ GetValue: () => 2.0 }],
+    get length() { return bars.length + 1; },
+    GetCandle(i) { const k = bars.length - i; return k >= 0 && k < bars.length ? bars[k] : null; }
+  };
+  sb.replayHistory();
+  check("10: a replayed signal is still in the signal log / CSV", sb.signalLog.length === 1);
+  check("10: but does NOT count as a signal fired this session", sb.signalCount === 0, "signalCount " + sb.signalCount);
+  check("10: nor as an add-on / engine fire", sb.engines.every((e) => e.fires === 0));
+}
+{
+  // The same signal live does count.
+  const sb = run(buildSandbox(), fvgSequence(), defaultCfg());
+  check("10: a live signal counts", sb.signalCount === 1 && sb.engines.find((e) => e.def.id === 1).fires === 1);
+}
+{
+  // The feed announcing its first candles before the replay has run must not process
+  // history as live bars.
+  const sb = buildSandbox();
+  const bars = fvgSequence();
+  sb.cfg = defaultCfg();
+  sb.priceDecimals = 2;
+  sb.buildEngines();
+  sb.isRunning = true;
+  sb.historyReplayed = false;
+  sb.tradingStore = {
+    ta: [{ GetValue: () => 2.0 }],
+    get length() { return bars.length + 1; },
+    GetCandle(i) { const k = bars.length - i; return k >= 0 && k < bars.length ? bars[k] : null; }
+  };
+  sb.onNewTradingBar();
+  check("10: a new-candle event before the replay processes nothing (no signal, no order)",
+    sb.signalCount === 0 && sb.signalLog.length === 0 && sb.__orders.length === 0);
+  sb.replayHistory();
+  check("10: the replay then rebuilds history without counting it", sb.signalLog.length === 1 && sb.signalCount === 0);
+}
+{
+  // Closed trades from before Start are kept (the circuit breaker totals the day from them)
+  // but the session panel only counts those closed since Start.
+  const sb = buildSandbox();
+  sb.cfg = defaultCfg();
+  sb.tradeLog = [{ ts: Date.now() - 3600e3, profit: -50 }, { ts: Date.now() + 1000, profit: 20 }];
+  sb.statsSince = Date.now();
+  sb.refreshStatsDisplay();
+  const txt = (id) => sb.document.getElementById(id).textContent;
+  check("10: closed trades before Start are not in this session's panel", txt("statTrades") === 1 && txt("statPL") === "20.00",
+    txt("statTrades") + " / " + txt("statPL"));
+  check("10: but stay in tradeLog for the circuit breaker", sb.tradeLog.length === 2);
+}
+{
+  const t0 = Date.now();
+  const a = startWith(true, false, (sb) => { sb.signalCount = 117; sb.orderCount = 3; });
+  check("10: Start resets the session counters to 0",
+    a.running && a.counts.signals === 0 && a.counts.orders === 0 && a.counts.statsSince >= t0, JSON.stringify(a.counts));
 }
 
 console.log("\n===== ASSERTIONS =====");

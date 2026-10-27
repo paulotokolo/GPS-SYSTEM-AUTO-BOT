@@ -91,7 +91,7 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
     sb.icc.ntz_high === 104 && sb.icc.ntz_low === 101 &&
     sb.iccCycle.lockHigh === 104 && sb.iccCycle.lockLow === 101, sb.icc.ntz_high + "/" + sb.icc.ntz_low);
   check("1: no break yet = bias NTZ", sb.icc.bias === "NTZ", sb.icc.bias);
-  check("1: the phase is INDICATION", sb.icc.phase === "INDICATION", sb.icc.phase);
+  check("1: no break yet = phase WAITING (INDICATION only after a structure close outside)", sb.icc.phase === "WAITING", sb.icc.phase);
   check("1: buys are held inside the NTZ", /ICC bias is NTZ/.test(sb.trendGateReason(false, 102)));
   check("1: and sells too", /ICC bias is NTZ/.test(sb.trendGateReason(true, 102)));
   check("1: the master gates are both shut", !sb.icc.gps_buy_unlocked && !sb.icc.gps_sell_unlocked);
@@ -124,12 +124,21 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   feedS(sb, series(CYCLE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 105, 105.5, 106]]), T0));
   check("2: check OFF: after a 1H close back inside and back out, the buy is open",
     sb.trendGateReason(false, 106) === null && sb.icc.gps_buy_unlocked);
-  check("2: and the phase reads GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
+  check("2: and the phase reads CONTINUATION, GPS armed", sb.icc.phase === "CONTINUATION" && sb.icc.armed, sb.icc.phase);
 }
 {
   const sb = iccSandbox({ iccPauseOpposite: false });
   feedS(sb, series(CYCLE.slice(0, 7), T0));
   check("2: with 'Pause on opposite bias' OFF a sell is not blocked by ICC", sb.trendGateReason(true, 109) === null);
+}
+
+{
+  // The client's report: CORRECTION must never show without an INDICATION first. After the
+  // break but before any correction the filter reads INDICATION, not CORRECTION.
+  const sb = iccSandbox();
+  feedS(sb, series(CYCLE.slice(0, 7), T0));
+  check("2: just after the break the filter phase is INDICATION (it used to say CORRECTION)",
+    sb.iccCycle.phase === "INDICATION" && sb.icc.phase === "INDICATION", sb.icc.phase);
 }
 
 // ---------------------------------------------------------------- 3: CORRECTION -> CONTINUATION -> COMPLETE
@@ -141,7 +150,7 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   feedS(sb, series(CYCLE, T0));
   check("3: the cycle's continuation confirms the 1H", sb.icc.h1_confirmed === true && sb.icc.h1_state === "CONFIRMED");
   check("3: the buy gate is open", sb.trendGateReason(false, 109.5) === null && sb.icc.gps_buy_unlocked);
-  check("3: the phase is GPS ARMED", sb.icc.phase === "GPS ARMED", sb.icc.phase);
+  check("3: the phase is CONTINUATION, GPS armed", sb.icc.phase === "CONTINUATION" && sb.icc.armed, sb.icc.phase);
   feedS(sb, extend(series(CYCLE, T0), [110.5]));
   check("3: when the cycle completes at its target the NEXT NTZ is locked at once (not blank)",
     sb.icc.bias === "NTZ" && sb.icc.ntz_high !== null && /ICC bias is NTZ/.test(sb.trendGateReason(false, 111)),

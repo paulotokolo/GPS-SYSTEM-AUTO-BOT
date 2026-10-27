@@ -165,9 +165,11 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
    The TP target is fixed at continuation: the structure-TF extreme since the break (TP1 pips from the trigger if that extreme is not beyond it).
 5. **Complete.** Price reaches the target: `CYCLE COMPLETE — TP target hit at …. Bot reset.` in each model's log, *Cycle status: COMPLETE — Target Reached*.
 
-**Resets** — the cycle also ends on **disrespect** (a structure-TF body close back through the other side of the NTZ — that same close can start the opposite cycle), **timeout** (any phase lasting longer than *Max wait* structure candles, default 20), or a **new structure swing beyond the locked level** before the correction. After any reset the next NTZ is locked straight away (see *Lock*).
+**Resets** — the cycle also ends on **disrespect** (a structure-TF body close back through the other side of the NTZ — that same close can start the opposite cycle), **timeout** (any phase reaching *Max wait* structure candles without progressing, default 20), or a **new structure swing beyond the locked level** before the correction. After any reset the next NTZ is locked straight away (see *Lock*).
 
-*Cycle status* is only ever the current cycle — `SCANNING` (no swing pair yet), `WAITING FOR INDICATION` (NTZ locked, no break) or `ACTIVE` — and a separate *Last cycle* box shows how the previous one ended (COMPLETE — Target Reached / DISRESPECTED / TIMED OUT / INVALIDATED), when, and whether that model entered it, so the panel never contradicts itself.
+**Panel.** Each ICC section has a coloured header bar (ICC Filter teal, ICC Entry Model purple, GPS Entry Model navy). The phase is colour-coded with a 3-dot progress tracker — WAITING grey ●○○, INDICATION yellow ●●○, CORRECTION blue ●●●, CONTINUATION green ●●● — and WAITING means no structure close has broken the NTZ yet; the break direction names the candle that broke it. *NTZ levels (live / locked)*, *Price position* (INSIDE / ABOVE / BELOW NTZ, live) and *Cycle expires in* (structure bars left before *Max wait* ends the phase; the timer starts at a break) sit alongside.
+
+*Cycle status* is only ever the current cycle — `SCANNING` (no swing pair yet), `WAITING FOR INDICATION` (NTZ locked, no break) or `ACTIVE` — and separate *Last cycle status* / *Last cycle date* boxes show how the previous one ended — COMPLETE (silver; "· no entry" in grey if that model never entered it), DISRESPECTED / TIMED OUT / INVALIDATED (red) — so the panel never contradicts itself.
 
 The cycle is replayed from history on every update, so on Start the phase is wherever the cycle already is — it never shows WAITING just because the bot started.
 
@@ -182,7 +184,7 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 
 **ICC Entry Model** runs without the GPS engines: with it ON the bot starts even with every engine switched off (only the GPS Entry Model, which trades through the engines, needs at least one). The continuation 1H close (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades — only the 1H candle that just closed.
 
-**ICC Entry Model — Aggressive Entry Mode** (toggle, default OFF). Same shared cycle; only the trigger changes. After the indication, once price is back **inside** the NTZ the model is armed, and the entry fires the moment **live** price crosses back through the broken level (above the NTZ high on a bullish cycle, below the low on a bearish one) — no candle close, no structure confirmation, no pullback wait, and **alignment has no effect** (use Standard for alignment). SL sits inside the 1H swing range: the midpoint of the latest 1H swing high and swing low, or halfway to the pullback's low if that midpoint is not below the entry (the dip inside the NTZ stands in for a 1H swing not yet confirmed). TP is the structure target; Trail after TP works as in Standard. If price goes back inside before the TP it re-arms — **max 2 entries per cycle**. Orders are tagged `GPSBOT-ICCA`; the panel's *Entry mode* row shows ARMED / waiting and entries used.
+**ICC Entry Model — Aggressive Entry Mode** (toggle, default OFF). Same shared cycle; only the trigger changes. After the indication the model **arms only when a structure-TF candle body (4H or Daily, whichever the cycle uses) closes back inside the NTZ** — a tick, a wick or a 1H close back inside never arms it — and the entry fires the moment **live** price crosses back out through the broken level (above the NTZ high on a bullish cycle, below the low on a bearish one) — no candle close, no structure confirmation, no pullback wait, and **alignment has no effect** (use Standard for alignment). SL sits inside the 1H swing range: the midpoint of the latest 1H swing high and swing low, or halfway to the arming candle's low (high on sells) if that midpoint is not below the entry. TP is the structure target; Trail after TP works as in Standard. Each arm is used once; another structure-TF close back inside re-arms it — **max 2 entries per cycle**. Live price has to be seen inside after an arm before a cross counts, so a bot started with price already outside never chases a cross that happened while it was off. Orders are tagged `GPSBOT-ICCA`; the panel's *Entry mode* row shows ARMED / waiting and entries used.
 
 **GPS Entry Model** — at continuation (alignment OFF) or the pullback touch (alignment ON) the GPS engines switch **on**, in the break direction only, on the bot's *Timeframe* (M5 or M15), until the cycle ends. Until then every engine signal logs `NO ORDER SENT — GPS Entry Model: engines WAITING`.
 
@@ -231,7 +233,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (477 assertions). |
+| `tests/` | Automated test suite (496 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -293,6 +295,10 @@ The original source contained no add-on logic at all, so the bot-side add-on fea
 Also confirmed as already correct: the `America/New_York` timezone, killzone boxes tracking full wick high/low, `_box.get(0)` being the most recently closed session, disabled killzones being excluded from the signal loop entirely, `ta.atr(14)`, and the whole engine running on `barstate.isconfirmed` (bar close only).
 
 ---
+
+## Performance (this session)
+
+Every counter starts at 0 when the bot goes live and only counts live activity. The start-up history replay rebuilds the signal log and CSV (that is what the TradingView comparison needs) but never adds to *Signals fired* or the add-on count, and live bar processing only begins once that replay has run — so history can never be counted, or traded, as live. Closed trades from before Start stay in the trade history the daily circuit breaker totals the day from; the panel just counts the ones closed since Start (or since *Reset stats*, which no longer wipes that history).
 
 ## Real-time signal state
 
@@ -559,10 +565,10 @@ test_trend         17 pass   0 fail
 test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
-test_icc           67 pass   0 fail
-test_models        92 pass   0 fail
+test_icc           68 pass   0 fail
+test_models       110 pass   0 fail
 ----------------------------------------
-TOTAL: 477 pass, 0 fail
+TOTAL: 496 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

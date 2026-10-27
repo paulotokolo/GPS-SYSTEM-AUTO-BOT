@@ -157,6 +157,7 @@ function run(sandbox, bars, cfg) {
   sandbox.activeSession = null;
   sandbox.barIndex = 0;
   sandbox.lastProcessedTs = null;
+  sandbox.historyReplayed = true;      // these tests feed bars live, as if the replay had run
   sandbox.isRunning = true;
   sandbox.replaying = false;
   sandbox.priceDecimals = 2;

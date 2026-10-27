@@ -335,6 +335,18 @@ button:active { transform: scale(0.98); }
 .model-opts.shown { display: block; }
 .model-panel { display: none; margin-bottom: 10px; }
 .model-panel.shown { display: block; }
+.state-value.ph-wait { color: #9aa39a; }
+.state-value.ph-ind  { color: #ffd54f; }
+.state-value.ph-corr { color: #64b5f6; }
+.state-value.ph-cont { color: var(--green); }
+.state-value.ph-inval { color: var(--red); }
+.state-value.ph-done { color: #d6d9dc; }
+.model-panel-title.sec-filter { background: #0A3A3A; }
+.model-panel-title.sec-gps    { background: #0A1628; }
+.model-panel-title.sec-icc    { background: #1A0D2E; }
+.model-panel-title.sec-filter, .model-panel-title.sec-gps, .model-panel-title.sec-icc {
+  padding: 5px 8px; border-radius: 6px; border-bottom: none; margin-top: 4px;
+}
 .model-panel-title {
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--green-soft);
   margin: 0 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--line-soft);
@@ -494,36 +506,44 @@ button:active { transform: scale(0.98); }
       <div class="state-box"><span class="state-label">4H EMA</span><span class="state-value" id="stEma4h">&mdash;</span></div>
       <div class="state-box"><span class="state-label">1H EMA</span><span class="state-value" id="stEma1h">&mdash;</span></div>
     </div>
-    <div class="model-panel-title">ICC Filter</div>
+    <div class="model-panel-title sec-filter">ICC Filter</div>
     <div class="state-grid" style="margin-bottom:10px;">
       <div class="state-box"><span class="state-label" id="stIccBiasLabel">ICC bias (4H)</span><span class="state-value" id="stIccBias">&mdash;</span></div>
       <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="stIccPhase">&mdash;</span></div>
-      <div class="state-box"><span class="state-label" id="stIccNtzLabel">4H NTZ high / low (shared)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
+      <div class="state-box"><span class="state-label" id="stIccNtzLabel">NTZ levels (live)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
       <div class="state-box"><span class="state-label">1H structure</span><span class="state-value" id="stH1Struct">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Price position</span><span class="state-value" id="stIccPos">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Cycle expires in</span><span class="state-value" id="stIccExpires">&mdash;</span></div>
     </div>
 
     <div class="model-panel" id="iccModelPanel">
-      <div class="model-panel-title">ICC Entry Model</div>
+      <div class="model-panel-title sec-icc">ICC Entry Model</div>
       <div class="state-grid">
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mIccPhase">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mIccStatus">&mdash;</span></div>
-        <div class="state-box"><span class="state-label">Last cycle</span><span class="state-value" id="mIccLastCycle">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle status</span><span class="state-value" id="mIccLastCycle">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle date</span><span class="state-value" id="mIccLastDate">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Price position</span><span class="state-value" id="mIccPos">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Cycle expires in</span><span class="state-value" id="mIccExpires">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mIccDir">&mdash;</span></div>
-        <div class="state-box"><span class="state-label" id="mIccNtzLabel">NTZ high / low</span><span class="state-value" id="mIccNtz">&mdash;</span></div>
+        <div class="state-box"><span class="state-label" id="mIccNtzLabel">NTZ levels (locked)</span><span class="state-value" id="mIccNtz">&mdash;</span></div>
         <div class="state-box" id="mIccAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mIccAlign">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Entry mode</span><span class="state-value" id="mIccMode">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last entry</span><span class="state-value" id="mIccLast">&mdash;</span></div>
       </div>
     </div>
     <div class="model-panel" id="gpsModelPanel">
-      <div class="model-panel-title">GPS Entry Model</div>
+      <div class="model-panel-title sec-gps">GPS Entry Model</div>
       <div class="state-grid">
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mGpsPhase">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Engine status</span><span class="state-value" id="mGpsEngines">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mGpsStatus">&mdash;</span></div>
-        <div class="state-box"><span class="state-label">Last cycle</span><span class="state-value" id="mGpsLastCycle">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle status</span><span class="state-value" id="mGpsLastCycle">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Last cycle date</span><span class="state-value" id="mGpsLastDate">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Price position</span><span class="state-value" id="mGpsPos">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Cycle expires in</span><span class="state-value" id="mGpsExpires">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Break direction</span><span class="state-value" id="mGpsDir">&mdash;</span></div>
-        <div class="state-box"><span class="state-label" id="mGpsNtzLabel">NTZ high / low</span><span class="state-value" id="mGpsNtz">&mdash;</span></div>
+        <div class="state-box"><span class="state-label" id="mGpsNtzLabel">NTZ levels (locked)</span><span class="state-value" id="mGpsNtz">&mdash;</span></div>
         <div class="state-box" id="mGpsAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mGpsAlign">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Entry TF</span><span class="state-value" id="mGpsEntryTf">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last entry</span><span class="state-value" id="mGpsLast">&mdash;</span></div>
@@ -536,7 +556,7 @@ button:active { transform: scale(0.98); }
       <div class="state-box"><span class="state-label">Active engine</span><span class="state-value" id="stEngine">&mdash;</span></div>
       <div class="state-box"><span class="state-label" id="stZoneAgeLabel">Zone age</span><span class="state-value" id="stZoneAge">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Session P/L</span><span class="state-value" id="stSessionPL">&mdash;</span></div>
-      <div class="state-box"><span class="state-label">Add-ons used (E2 / E5)</span><span class="state-value" id="stAddons">0 buy  ·  0 sell</span></div>
+      <div class="state-box"><span class="state-label">Add-on entries used</span><span class="state-value" id="stAddons">0 buy  ·  0 sell</span></div>
       <div class="state-box"><span class="state-label">Live price (forming bar)</span><span class="state-value" id="stLivePrice">&mdash;</span></div>
     </div>
     <div class="live-bar" style="margin-top:10px;">
@@ -1309,9 +1329,11 @@ var replaying = false;        // true while rebuilding state from history — su
 var pendingOrder = false;     // guards against overlapping SendOrder calls
 var barIndex = 0;             // monotonic Pine-style bar counter
 var lastProcessedTs = null;   // newest bar timestamp already fed through the engine
+var historyReplayed = false;  // live bars are only processed once the start-up replay has run
 var entriesToday = 0;
 var entriesDayKey = "";
 var signalCount = 0, orderCount = 0;
+var statsSince = 0;           // the performance panel counts closed trades from here (Start / Reset)
 var signalLog = [];           // every fired signal, for CSV export
 var tradeLog = [];            // closed trades, for the P/L tile
 var managedOrders = {};       // orderId -> { direction, entryPrice, lots }
@@ -2570,11 +2592,12 @@ function refreshTrendGates(price) {
   icc.gps_buy_unlocked  = trendGateReason(false, price) === null;
   icc.gps_sell_unlocked = trendGateReason(true, price) === null;
 
-  if (!cfg.iccOn) { icc.phase = "OFF"; return; }
-  if (icc.bias === "NEUTRAL") { icc.phase = "—"; return; }
-  if (icc.bias === "NTZ") { icc.phase = "INDICATION"; return; }
-  var armed = icc.bias === "BULLISH" ? icc.gps_buy_unlocked : icc.gps_sell_unlocked;
-  icc.phase = armed ? "GPS ARMED" : icc.h1_confirmed ? "CONTINUATION" : "CORRECTION";
+  // The phase is the shared cycle's own: WAITING until a structure close breaks the NTZ,
+  // then INDICATION / CORRECTION / CONTINUATION exactly as the cycle has them.
+  if (!cfg.iccOn) { icc.phase = "OFF"; icc.armed = false; return; }
+  icc.phase = iccCycle && iccCycle.dir ? iccCycle.phase : "WAITING";
+  icc.armed = icc.phase === "CONTINUATION" &&
+    (icc.bias === "BULLISH" ? icc.gps_buy_unlocked : icc.bias === "BEARISH" ? icc.gps_sell_unlocked : false);
 }
 
 // The NTZ disrespected against an open position. Always a warning; a close only if asked for.
@@ -2760,6 +2783,8 @@ function newCycleState() {
     status: "SCANNING",         // SCANNING / WAITING FOR INDICATION / ACTIVE — the current cycle only
     lastCycle: null,            // how the previous cycle ended: { why, ts, iccEntered, gpsActive, key }
     needsFreshBreak: false,     // re-locked the pair a cycle just finished on: wait for price back inside
+    indClose: null, indTs: null,// the structure close that made the indication, for the panel
+    aggArmTs: null, aggDip: null,// Aggressive mode: last structure-TF close back inside the NTZ
     pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
     lockHigh: null, lockLow: null, lockHiTs: null, lockLoTs: null,
     dir: null,                  // "buy" / "sell" once indicated
@@ -2971,6 +2996,7 @@ function runIccCycle(p, data, mods) {
           st.dir = b.c > st.lockHigh ? "buy" : "sell";
           st.phase = "INDICATION"; st.status = "ACTIVE";
           st.indBarTs = b.ts; st.waitCount = 0;
+          st.indClose = b.c; st.indTs = t;
           var lvl = bull() ? st.lockHigh : st.lockLow;
           emit(t, "INDICATION", "INDICATION — " + sName + " closed " + (bull() ? "above" : "below") + " NTZ " +
                fmt(lvl) + ". Break direction: " + (bull() ? "BULLISH" : "BEARISH") + ". Candle body confirmed close " +
@@ -2992,11 +3018,23 @@ function runIccCycle(p, data, mods) {
       }
       // Max wait applies to every phase after the break, counted from the phase's start, so a
       // cycle can never sit on stale levels indefinitely.
-      if (++st.waitCount > p.maxWait) {
+      if (++st.waitCount >= p.maxWait) {
         emit(t, "TIMEOUT", "TIMEOUT — " + ({ INDICATION: "No correction detected", CORRECTION: "No continuation",
                                              CONTINUATION: "Target not reached" })[st.phase] +
              " after " + p.maxWait + " " + sName + " candles. Cycle cancelled. Rescanning for new swing structure.", "log-warn");
         reset(t, "TIMED OUT", "TIMEOUT");
+        continue;
+      }
+      // Aggressive Entry Mode arms only on a structure-TF candle BODY closing back inside the
+      // NTZ — not a tick, not a wick, not a 1H close. That is what makes the correction real.
+      if (b.c <= st.lockHigh && b.c >= st.lockLow) {
+        st.aggArmTs = t;
+        st.aggDip = bull() ? b.l : b.h;
+        if (mods.icc && mods.icc.on && mods.icc.aggressive) {
+          emit(t, "AGGARM", "AGGRESSIVE ARMED — " + sName + " body closed back inside the NTZ at " + fmt(b.c) +
+               ". Entry fires the moment live price crosses back " + (bull() ? "above " : "below ") +
+               fmt(bull() ? st.lockHigh : st.lockLow) + ".", "log-info", null, "icc");
+        }
       }
       continue;
     }
@@ -3198,15 +3236,14 @@ function armTrailsAtTarget(target) {
 //  back through the broken NTZ level in the break direction — no candle close, no structure
 //  confirmation, no pullback wait, no alignment.
 //
-//    Armed  — after the indication, price is back inside the NTZ (below the broken high on a
-//             bullish cycle, above the broken low on a bearish one).
-//    Fire   — armed, and live price crosses back through that level.
-//    Again  — if price goes back inside before the TP is hit it re-arms. Max 2 per cycle.
+//    Armed  — after the indication, a STRUCTURE-TF candle body closes back inside the NTZ
+//             (4H or Daily, whichever the cycle uses). A tick, a wick or a 1H close never arms.
+//    Fire   — armed, and live price crosses back out through the broken level.
+//    Again  — another structure-TF close back inside re-arms it. Max 2 per cycle.
 //
 //  SL sits inside the latest 1H swing range (the midpoint of the 1H swing high and low), or
-//  halfway to the 1H swing on the far side if the midpoint is not beyond the entry. TP is the
-//  structure target. This runs on the live price every second; it is runtime state, so it
-//  only ever arms from price actually being inside the NTZ while the bot is running.
+//  halfway to the arming candle's low (high on sells) if the midpoint is not beyond the entry.
+//  TP is the structure target.
 // =====================================================================================
 var AGGRESSIVE_MAX_ENTRIES = 2;
 var aggState = null;               // { key, armed, entries, lastEntry, maxLogged }
@@ -3228,9 +3265,9 @@ function liveStructTarget(st) {
   return ext;
 }
 
-// `dip` is the furthest price reached inside the NTZ before the cross — the pullback's own
-// low (high on sells). A live cross usually comes before the 1H has confirmed a swing on
-// that side (that takes Swing strength bars), so the dip stands in for it.
+// `dip` is the arming structure candle's low (high on sells) — the pullback's own extreme. A
+// live cross usually comes before the 1H has confirmed a swing on that side (that takes
+// Swing strength bars), so the dip stands in for it.
 function aggressiveStop(st, entry, dip) {
   var bull = st.dir === "buy", hi = st.latest.h1Hi, lo = st.latest.h1Lo;
   var below = function (v) { return v !== null && v !== undefined && (bull ? v < entry : v > entry); };
@@ -3246,7 +3283,10 @@ function aggressiveStop(st, entry, dip) {
   return modelStop("icc", entry, st.dir, null, null);
 }
 
-// Called every second with the live price.
+// Called every second with the live price. Arming comes from the replay (a structure-TF body
+// close back inside the NTZ); this only fires the entry on the live cross back out. Each arm
+// is used once, and live price has to have been inside since that arm — so a bot started
+// with price already outside never fires on a cross that happened while it was off.
 function checkAggressiveEntry(price) {
   if (!isRunning || !cfg || !cfg.iccModelOn || !cfg.iccModelAggressive || price === null) return;
   var st = iccCycle;
@@ -3254,36 +3294,28 @@ function checkAggressiveEntry(price) {
   if (!live) { aggState = null; return; }
 
   var key = aggCycleKey(st);
-  if (!aggState || aggState.key !== key) aggState = { key: key, armed: false, entries: 0, maxLogged: false };
+  if (!aggState || aggState.key !== key) aggState = { key: key, entries: 0, usedArmTs: null, seenInsideFor: null, maxLogged: false };
   var bull = st.dir === "buy", level = bull ? st.lockHigh : st.lockLow;
-  var inside = bull ? price < level : price > level;
+  var inside = bull ? price <= level : price >= level;
   var tag = "[ICC ENTRY MODEL] AGGRESSIVE";
+  var armed = st.aggArmTs !== null && st.aggArmTs !== aggState.usedArmTs;
 
   if (aggState.entries >= AGGRESSIVE_MAX_ENTRIES) {
-    if (inside && !aggState.maxLogged) {
+    if (armed && !aggState.maxLogged) {
       aggState.maxLogged = true;
-      log(tag + " — price back inside the NTZ, but the max " + AGGRESSIVE_MAX_ENTRIES + " entries for this cycle " +
-          "are used. No more entries until the next cycle.", "log-info");
+      log(tag + " — armed again, but the max " + AGGRESSIVE_MAX_ENTRIES + " entries for this cycle are used. " +
+          "No more entries until the next cycle.", "log-info");
     }
     return;
   }
-  if (inside) {
-    if (aggState.armed) aggState.dip = bull ? Math.min(aggState.dip, price) : Math.max(aggState.dip, price);
-    if (!aggState.armed) {
-      aggState.armed = true;
-      aggState.dip = price;
-      log(tag + " ARMED — price back inside the NTZ (" + (bull ? "below " : "above ") + fmt(level) + "). Entry " +
-          (aggState.entries + 1) + "/" + AGGRESSIVE_MAX_ENTRIES + " fires the moment price crosses back " +
-          (bull ? "above " : "below ") + fmt(level) + ".", "log-info");
-    }
-    return;
-  }
-  if (!aggState.armed) return;                  // never fires without first being inside
+  if (!armed) return;
+  if (inside) { aggState.seenInsideFor = st.aggArmTs; return; }
+  if (aggState.seenInsideFor !== st.aggArmTs) return;
 
-  aggState.armed = false;
+  aggState.usedArmTs = st.aggArmTs;
   aggState.entries++;
   var side = bull ? "BUY" : "SELL";
-  var sl = aggressiveStop(st, price, aggState.dip);
+  var sl = aggressiveStop(st, price, st.aggDip);
   var tgt = liveStructTarget(st);
   var tp = modelTarget("icc", price, st.dir, tgt);
   iccLastAggEntry = { dir: side, price: price, ts: Date.now() };
@@ -3335,6 +3367,43 @@ function syncModelOptions() {
   document.getElementById("iccCycleOpts").classList.toggle("shown", any);
 }
 
+// ---- Shared panel views: phase colour + 3-dot cycle progress, last cycle, expiry, position.
+var PHASE_DOTS = { WAITING: "●○○", INDICATION: "●●○", CORRECTION: "●●●", CONTINUATION: "●●●" };
+var PHASE_CLS = { WAITING: "ph-wait", INDICATION: "ph-ind", CORRECTION: "ph-corr", CONTINUATION: "ph-cont" };
+function phaseView(phase) {
+  return { text: phase + (PHASE_DOTS[phase] ? "  " + PHASE_DOTS[phase] : ""), cls: PHASE_CLS[phase] || "muted" };
+}
+function cycleTfName() { return cfg && cfg.iccStructTf === "daily" ? "Daily" : "4H"; }
+// The structure close that broke the NTZ — so a phase after WAITING always shows its cause.
+function breakView(st) {
+  if (!st || !st.dir) return { text: "NONE", cls: "muted" };
+  var bull = st.dir === "buy";
+  return { text: (bull ? "BULLISH" : "BEARISH") + (st.indClose !== null ? " · " + cycleTfName() + " closed " + fmt(st.indClose) +
+           (bull ? " above " : " below ") + fmt(bull ? st.lockHigh : st.lockLow) + " · " + nyParts(st.indTs).fullLabel : ""),
+           cls: bull ? "up" : "down" };
+}
+function lastCycleView(lc, entered) {
+  if (!lc) return { status: "—", date: "—", cls: "muted" };
+  var word = ({ COMPLETE: "COMPLETE", DISRESPECT: "DISRESPECTED", TIMEOUT: "TIMED OUT", INVALIDATED: "INVALIDATED" })[lc.why];
+  var done = lc.why === "COMPLETE";
+  return { status: word + (done && !entered ? " · no entry" : ""), date: nyParts(lc.ts).fullLabel,
+           cls: done ? (entered ? "ph-done" : "ph-wait") : "ph-inval" };
+}
+// Structure bars left before Max wait ends the cycle. The timer only runs after a break.
+function expiresView(st) {
+  if (!st || !st.dir) return { text: "— (starts at a break)", cls: "muted" };
+  var left = Math.max(0, cycleParams().maxWait - st.waitCount);
+  return { text: left + " " + cycleTfName() + " bar" + (left === 1 ? "" : "s") + " (" + st.phase.toLowerCase() + ")",
+           cls: left <= 3 ? "ph-inval" : "" };
+}
+function positionView(st) {
+  var px = livePrice();
+  if (!st || st.lockHigh === null || px === null) return { text: "—", cls: "muted" };
+  if (px > st.lockHigh) return { text: "ABOVE NTZ", cls: "up" };
+  if (px < st.lockLow) return { text: "BELOW NTZ", cls: "down" };
+  return { text: "INSIDE NTZ", cls: "ph-wait" };
+}
+
 // The two model panels, refreshed every second with the rest of the Signal State panel.
 // Both read the one shared cycle; only the entry rows differ.
 function renderModelPanels() {
@@ -3354,15 +3423,20 @@ function renderModelPanels() {
     if (!modelEnabled(kind)) return;
     var pre = kind === "icc" ? "mIcc" : "mGps";
     var lbl = document.getElementById(pre + "NtzLabel");
-    if (lbl) lbl.textContent = sName + " NTZ high / low (locked)";
+    if (lbl) lbl.textContent = "NTZ levels (locked)";
     var alignOn = !!modelOpt(kind, "Align");
     var alignBox = document.getElementById(pre + "AlignBox");
     if (alignBox) alignBox.style.display = alignOn ? "" : "none";
     if (!st) { set(pre + "Phase", "waiting for " + sName + " / 1H candles", "muted"); return; }
 
     var bull = st.dir === "buy", sub = st.m[kind];
-    set(pre + "Phase", st.phase, st.phase === "WAITING" ? "muted" : st.phase === "CONTINUATION" ? (bull ? "up" : "down") : "pending");
-    set(pre + "Dir", st.dir ? (bull ? "BULLISH" : "BEARISH") : "NONE", st.dir ? (bull ? "up" : "down") : "muted");
+    var ph = phaseView(st.dir ? st.phase : "WAITING");
+    set(pre + "Phase", ph.text, ph.cls);
+    var bv = breakView(st);
+    set(pre + "Dir", bv.text, bv.cls);
+    var ex = expiresView(st), pv = positionView(st);
+    set(pre + "Expires", ex.text, ex.cls);
+    set(pre + "Pos", pv.text, pv.cls);
     set(pre + "Ntz", st.lockHigh !== null
         ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) + (st.needsFreshBreak ? "  (waiting for price back inside)" : "")
         : (st.pendHi !== null ? fmt(st.pendHi) : "high pending") + " / " + (st.pendLo !== null ? fmt(st.pendLo) : "low pending"),
@@ -3378,19 +3452,13 @@ function renderModelPanels() {
     }
     var statusText = st.status, statusCls = st.status === "ACTIVE" ? "up" : st.status === "SCANNING" ? "muted" : "pending";
     // How the previous cycle ended — kept apart from the current status so the two never contradict.
-    var lc = st.lastCycle, lastText = "—", lastCls = "muted";
-    if (lc) {
-      var entered = kind === "icc"
-        ? lc.iccEntered || (aggState && aggState.key === lc.key && aggState.entries > 0)
-        : lc.gpsActive;
-      lastText = ({ COMPLETE: "COMPLETE — Target Reached", DISRESPECT: "DISRESPECTED", TIMEOUT: "TIMED OUT",
-                    INVALIDATED: "INVALIDATED" })[lc.why] + " · " + nyParts(lc.ts).fullLabel +
-                 (kind === "icc" ? (entered ? " · entry taken" + (lc.why === "COMPLETE" && modelOpt(kind, "Trail") ? " · trail active if holding" : "")
-                                            : " · no entry this cycle")
-                                 : (entered ? " · engines were active" : " · engines never activated"));
-      lastCls = lc.why === "COMPLETE" ? "up" : "down";
-    }
-    set(pre + "LastCycle", lastText, lastCls);
+    var lc = st.lastCycle;
+    var entered = !!lc && (kind === "icc"
+      ? lc.iccEntered || (aggState && aggState.key === lc.key && aggState.entries > 0)
+      : lc.gpsActive);
+    var lv2 = lastCycleView(lc, entered);
+    set(pre + "LastCycle", lv2.status + (lc && lc.why === "COMPLETE" && entered && modelOpt(kind, "Trail") ? " · trail active if holding" : ""), lv2.cls);
+    set(pre + "LastDate", lv2.date, lc ? "" : "muted");
     if (kind === "icc") {
       set("mIccStatus", statusText, statusCls);
       var lastE = st.lastIccEntry;
@@ -3399,12 +3467,13 @@ function renderModelPanels() {
       if (!cfg.iccModelAggressive) {
         set("mIccMode", "STANDARD — 1H close" + (alignOn ? " + alignment" : ""), "");
       } else {
-        var used = aggState && aggState.key === aggCycleKey(st) ? aggState.entries : 0;
-        var armed = aggState && aggState.key === aggCycleKey(st) && aggState.armed;
+        var mine = aggState && aggState.key === aggCycleKey(st);
+        var used = mine ? aggState.entries : 0;
+        var armed = st.dir && st.aggArmTs !== null && !(mine && aggState.usedArmTs === st.aggArmTs);
         set("mIccMode", "AGGRESSIVE — " + (!st.dir || st.status !== "ACTIVE" ? "waiting for a break"
               : used >= AGGRESSIVE_MAX_ENTRIES ? "max entries used"
               : armed ? "ARMED, fires on cross of " + fmt(bull ? st.lockHigh : st.lockLow)
-              : "waiting for price back inside NTZ") + " · " + used + "/" + AGGRESSIVE_MAX_ENTRIES,
+              : "waiting for a " + sName + " close back inside the NTZ") + " · " + used + "/" + AGGRESSIVE_MAX_ENTRIES,
             armed ? (bull ? "up" : "down") : "pending");
       }
     } else {
@@ -3470,8 +3539,13 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
   var sl    = slPriceFor(entry, dir);
   var tps   = tpPricesFor(entry, dir);
 
-  eng.fires++;
-  signalCount++;
+  // The session counters only count what happens live. A replayed signal still goes into the
+  // log and the CSV (that is what the TradingView comparison needs), but not into the
+  // performance panel or the add-on count.
+  if (!replaying) {
+    eng.fires++;
+    signalCount++;
+  }
   signalLog.push({
     time: ny.fullLabel,
     model: cfg.gpsModelOn ? "GPS ENTRY MODEL" : "GPS",
@@ -4516,6 +4590,12 @@ function onNewTradingBar() {
   trackFloatingOrders();
   if (cfg.autoTrailingOn) manageOpenTrades();
 
+  // The feed can announce its first candles before the start-up replay has run. Processing
+  // them here would treat every historical bar as live — counting replayed signals as this
+  // session's, and in Live mode trying to trade them. The replay handles history; this only
+  // handles bars that close after it.
+  if (!historyReplayed) return;
+
   var n = tradingStore.length;
   if (n < 4) return;
 
@@ -4562,6 +4642,7 @@ function replayHistory() {
     // cleared here whatever happens, and the panel is refreshed straight away so it shows
     // live values rather than the dashes it was left holding.
     replaying = false;
+    historyReplayed = true;
     try { refreshStatePanel(null); } catch (e) {}
   }
 
@@ -4797,17 +4878,19 @@ function refreshStatePanel(ny) {
     emaTab("stEma1h", icc.ema_1h, "1H");
 
     if (!cfg.iccOn) {
-      ["stIccBias", "stIccPhase", "stIccNtz", "stH1Struct"].forEach(function (id) { t(id, "ICC off", "muted"); });
+      ["stIccBias", "stIccPhase", "stIccNtz", "stH1Struct", "stIccPos", "stIccExpires"].forEach(function (id) { t(id, "ICC off", "muted"); });
     } else {
-      t("stIccBias", icc.bias,
-        icc.bias === "BULLISH" ? "up" : icc.bias === "BEARISH" ? "down" : icc.bias === "NTZ" ? "pending" : "muted");
-      t("stIccPhase", icc.phase === "GPS ARMED"
-          ? "GPS ARMED — " + (icc.bias === "BULLISH" ? "BUY" : "SELL") : icc.phase,
-        icc.phase === "GPS ARMED" ? (icc.bias === "BULLISH" ? "up" : "down")
-        : icc.phase === "—" ? "muted" : "pending");
+      var fb = breakView(iccCycle);
+      t("stIccBias", iccCycle && iccCycle.dir ? fb.text : icc.bias,
+        icc.bias === "BULLISH" ? "up" : icc.bias === "BEARISH" ? "down" : "ph-wait");
+      var fph = phaseView(icc.phase);
+      t("stIccPhase", fph.text + (icc.armed ? " · GPS ARMED" : ""), fph.cls);
+      var fex = expiresView(iccCycle), fpv = positionView(iccCycle);
+      t("stIccExpires", fex.text, fex.cls);
+      t("stIccPos", fpv.text, fpv.cls);
       var sTf = cfg.iccStructTf === "daily" ? "Daily" : "4H";
       lbl("stIccBiasLabel", "ICC bias (" + sTf + ")");
-      lbl("stIccNtzLabel", sTf + " NTZ high / low (shared)");
+      lbl("stIccNtzLabel", "NTZ levels (live)");
       t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
                   : iccCycle ? (iccCycle.pendHi !== null ? fmt(iccCycle.pendHi) : "high pending") + " / " +
                                (iccCycle.pendLo !== null ? fmt(iccCycle.pendLo) : "low pending")
@@ -4879,7 +4962,10 @@ function stopUiTicker() {
 
 function refreshStatsDisplay() {
   var net = 0, closed = 0;
-  tradeLog.forEach(function (t) { if (typeof t.profit === "number") { net += t.profit; closed++; } });
+  tradeLog.forEach(function (t) {
+    if (typeof t.profit !== "number" || (typeof t.ts === "number" && t.ts < statsSince)) return;
+    net += t.profit; closed++;
+  });
   var g = function (id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
   g("statSignals", signalCount);
   g("statOrders", orderCount);
@@ -5329,6 +5415,7 @@ function startBot() {
   activeSession = null;
   barIndex = 0;
   lastProcessedTs = null;
+  historyReplayed = false;
   managedOrders = {};
   pendingManagement = [];
   entriesToday = 0;
@@ -5355,6 +5442,12 @@ function startBot() {
   resetEntryModels();
   sessionPLKey = null;
   sessionPLSince = Date.now();
+  // Performance (this session) starts from zero every time the bot goes live. Closed trades
+  // stay in tradeLog — the daily circuit breaker totals the day from it, and a restart must
+  // not wipe the day's losses — the panel just only counts the ones closed since now.
+  signalCount = 0;
+  orderCount = 0;
+  statsSince = Date.now();
 
   tradingStore = new FXB.CandleStore({
     ta: [ new FXB.ta.ATR({ period: 14 }) ],
@@ -5546,7 +5639,9 @@ Framework.OnLoad = function () {
   });
   document.getElementById("exportCsvBtn").addEventListener("click", exportSignalsCsv);
   document.getElementById("resetStatsBtn").addEventListener("click", function () {
-    tradeLog = []; signalLog = []; signalCount = 0; orderCount = 0;
+    signalLog = []; signalCount = 0; orderCount = 0;
+    statsSince = Date.now();                        // tradeLog stays: the circuit breaker needs it
+    engines.forEach(function (e) { e.fires = 0; });
     refreshStatsDisplay();
     log("Stats reset.", "log-info");
   });
