@@ -703,6 +703,12 @@ button:active { transform: scale(0.98); }
     </small>
     <div class="row"><label>Enable GPS Entry Model</label><input type="checkbox" id="gpsModelOn"></div>
     <div class="model-opts" id="gpsModelOpts">
+      <div class="row"><label>FVG entry timeframe</label>
+        <select id="gpsModelEntryTf"><option value="300">5M</option><option value="900" selected>15M</option></select>
+      </div>
+      <div class="row"><label>Max entries per cycle</label><input type="number" id="gpsModelMaxEntries" value="2" step="1" min="1" max="10"></div>
+      <div class="row"><label>Volume lookback (candles)</label><input type="number" id="gpsModelVolLookback" value="20" step="1" min="1"></div>
+      <div class="row"><label>Volume multiplier</label><input type="number" id="gpsModelVolMult" value="1.5" step="0.1" min="0.1"></div>
       <div class="row"><label>Require all timeframe alignment</label><input type="checkbox" id="gpsModelAlign"></div>
       <div class="row"><label>TP = structure swing high/low</label><input type="checkbox" id="gpsModelTpStruct" checked></div>
       <div class="row"><label>Stop loss</label>
@@ -713,9 +719,15 @@ button:active { transform: scale(0.98); }
         </select>
       </div>
       <div class="row"><label>Trail after TP (hold past target)</label><input type="checkbox" id="gpsModelTrail"></div>
-      <small class="hint">GPS engines stay off until continuation, then trade the break direction only on the
-        bot&rsquo;s <b>Timeframe</b> (set it to M5 or M15) until the cycle ends. Fixed pip stop =
-        the normal Stop loss (pips) setting.</small>
+      <small class="hint">
+        The <b>ICC FVG engine</b> &mdash; its own entry system, separate from the six standard GPS
+        engines. Dormant until ICC continuation; then on the FVG entry timeframe it tracks every FVG
+        in the break direction, and enters when price taps back <b>into</b> an FVG and a candle
+        closes back <b>out</b> of it on a volume spike (above the multiplier &times; the average of
+        the lookback). A newer FVG forming beyond a tracked one (below it on buys, above on sells)
+        replaces it. After <b>Max entries per cycle</b> it stops and waits for the TP target.
+        Fixed pip stop = the normal Stop loss (pips) setting.
+      </small>
     </div>
     <div class="row"><label>Enable ICC Entry Model</label><input type="checkbox" id="iccModelOn"></div>
     <div class="model-opts" id="iccModelOpts">
@@ -2631,12 +2643,14 @@ function updateTrendFilters() {
   icc.ema_4h = emaOfBars(b4, cfg.trendEmaLen);
   icc.ema_1h = emaOfBars(b1, cfg.trendEmaLen);
   try { updateEntryModels(); } catch (e) {}      // the shared ICC cycle (filter + models)
+  try { updateGpsFvgEngine(); } catch (e) {}     // the GPS Entry Model's FVG engine
   if (cfg.iccOn) mapIccFromCycle();
   refreshTrendGates(livePrice());
 }
 
 function pollTrendStores() {
-  var key = [h4Store ? h4Store.length : 0, h1Store ? h1Store.length : 0, d1Store ? d1Store.length : 0].join("/");
+  var key = [h4Store ? h4Store.length : 0, h1Store ? h1Store.length : 0, d1Store ? d1Store.length : 0,
+             gpsFvgStore ? gpsFvgStore.length : 0].join("/");
   var b4 = h4Store && h4Store.length > 1 ? h4Store.GetCandle(1) : null;
   var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
   key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
@@ -2780,7 +2794,7 @@ function biasAt(tl, t) {
 }
 
 function newModelSub() {
-  return { aligned: false, pullLevel: null, pulled: false, active: false, entered: false };
+  return { aligned: false, pullLevel: null, pulled: false, active: false, activeTs: null, entered: false };
 }
 function newCycleState() {
   return {
@@ -2789,6 +2803,7 @@ function newCycleState() {
     lastCycle: null,            // how the previous cycle ended: { why, ts, iccEntered, gpsActive, key }
     needsFreshBreak: false,     // re-locked the pair a cycle just finished on: wait for price back inside
     indClose: null, indTs: null,// the structure close that made the indication, for the panel
+    contBarTs: null,            // open time of the 1H candle whose close made continuation
     aggArmTs: null, aggDip: null,// Aggressive mode: last structure-TF close back inside the NTZ
     pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
     lockHigh: null, lockLow: null, lockHiTs: null, lockLoTs: null,
@@ -2908,7 +2923,9 @@ function runIccCycle(p, data, mods) {
                lastEntry: st.lastIccEntry }, k);
       } else {
         sub.active = true;
-        emit(t, "ACTIVE", how + side + " engines ACTIVE on " + tfName(p.entryTf) + ". Target " +
+        sub.activeTs = t;
+        emit(t, "ACTIVE", how + "ICC FVG engine ACTIVE on " + entryTfLabel(p.entryTf) + " — tracking " +
+             (bull() ? "bullish" : "bearish") + " FVGs. Target " +
              (st.target !== null ? fmt(st.target) : "TP1 pips") + ".", bull() ? "log-buy" : "log-sell", null, k);
       }
     };
@@ -3078,6 +3095,7 @@ function runIccCycle(p, data, mods) {
       if (!(bull() ? h.c > st.corrLevel : h.c < st.corrLevel)) continue;
       st.phase = "CONTINUATION";
       st.waitCount = 0;
+      st.contBarTs = h.ts;
       st.target = structExtreme(t1);
       var why = "the " + sName + " extreme since the break";
       // A target already behind the trigger (a V-shaped continuation) is no target at all.
@@ -3114,7 +3132,7 @@ function cycleParams() {
     // 1H continuation check ON = entry type 1 (the 1H flips back, no NTZ re-entry needed);
     // OFF = entry type 2 (price must come back into the NTZ, then close back out of it).
     contMode: cfg.iccRequireH1 === false ? "ntz" : "h1",
-    entryTf: cfg.timeframe
+    entryTf: gpsEntryTf()
   };
 }
 function modelEnabled(kind) { return !!cfg && (kind === "gps" ? cfg.gpsModelOn : cfg.iccModelOn); }
@@ -3337,19 +3355,164 @@ function checkAggressiveEntry(price) {
   });
 }
 
-// Gate for GPS engine orders while the GPS Entry Model is on. Null = allowed.
-function gpsModelGateReason(sell) {
-  if (!cfg || !cfg.gpsModelOn) return null;
+// =====================================================================================
+//  GPS ENTRY MODEL — ICC FVG ENGINE
+//
+//  A standalone entry engine for ICC continuation. It does not use the six standard GPS
+//  engines (no sweeps, kill zones, add-ons or rolling references) and they do not use it.
+//
+//    Dormant  — until the shared ICC cycle reaches continuation (and, with alignment ON,
+//               Daily/4H agree and price pulls back to the latest 1H swing).
+//    Tracking — on the chosen entry TF (5M or 15M) it tracks every FVG in the break direction
+//               formed since the continuation candle opened: bullish (low above the high two
+//               bars back) on a bullish cycle, bearish on a bearish one.
+//    Entry    — price comes back INTO an FVG, then a candle CLOSES back out of it in the
+//               break direction on a volume spike (volume above Volume multiplier x the
+//               average of the previous Volume lookback candles). Entry at that close.
+//               A tap that exits without the volume does not count: the FVG stays live and
+//               needs price back inside before the next exit can.
+//    Replace  — a new bullish FVG forming entirely BELOW a tracked one replaces it (a
+//               bearish one entirely ABOVE, on sells). Nothing else retires an FVG except
+//               its own entry.
+//    Max      — after Max entries per cycle the engine stops tracking and the cycle runs to
+//               its TP target (TP monitoring), then resets with the shared cycle.
+//
+//  Like the cycle, it is replayed from the candle store on every update; only entries on
+//  candles that close after the engine went active, and that just closed, are traded.
+// =====================================================================================
+var gpsFvgStore = null;
+var gpsFvg = null;                 // last run for the live cycle: { key, fvgs, entries, mode }
+var gpsFvgSeen = null;             // event keys already logged / acted on
+
+function gpsEntryTf() { return cfg && +cfg.gpsModelEntryTf === 300 ? 300 : 900; }
+function entryTfLabel(sec) { return sec === 300 ? "5M" : "15M"; }
+
+function runFvgEngine(st, bars, p) {
+  var bull = st.dir === "buy", tfMs = p.tfSec * 1000, tfName_ = entryTfLabel(p.tfSec);
+  var key = aggCycleKey(st);
+  var out = { key: key, fvgs: [], entries: 0, mode: "TRACKING", events: [] };
+  var emit = function (t, type, text, cls, extra) {
+    var e = { ts: t, key: "gpsfvg|" + key + "|" + type + "|" + t, type: type,
+              text: "[ICC GPS MODEL] " + text, cls: cls || "log-info" };
+    if (extra) for (var k in extra) e[k] = extra[k];
+    out.events.push(e);
+    return e;
+  };
+  var volume = function (i) {
+    if (i < p.volLen || typeof bars[i].v !== "number") return null;
+    var sum = 0, n = 0;
+    for (var k = i - p.volLen; k < i; k++) if (typeof bars[k].v === "number") { sum += bars[k].v; n++; }
+    if (!n || !(sum > 0)) return null;
+    return bars[i].v / (sum / n);
+  };
+  var zone = function (z) { return fmt(z.bot) + "–" + fmt(z.top); };
+  var side = bull ? "BUY" : "SELL", word = bull ? "bullish" : "bearish";
+
+  for (var i = 2; i < bars.length; i++) {
+    var b = bars[i], t = b.ts + tfMs;
+    if (bars[i - 2].ts < st.contBarTs) continue;
+
+    // Existing FVGs first: a tap, then a close back out of it.
+    if (out.mode === "TRACKING") {
+      for (var f = 0; f < out.fvgs.length; f++) {
+        var z = out.fvgs[f];
+        if (bull ? b.l <= z.top : b.h >= z.bot) z.tapped = true;
+        if (!z.tapped || !(bull ? b.c > z.top : b.c < z.bot)) continue;
+        z.tapped = false;                              // this exit is used, with or without volume
+        if (t <= st.m.gps.activeTs) continue;          // before the engine was live
+        var ratio = volume(i);
+        if (ratio === null || ratio <= p.volMult) {
+          emit(t, "NOVOL|" + z.id, word.toUpperCase() + " FVG " + zone(z) + ": price tapped in and closed back out at " +
+               fmt(b.c) + " without the volume (" + (ratio === null ? "n/a" : ratio.toFixed(2) + "×") + " vs " +
+               p.volMult + "× needed) — no entry, still tracking.");
+          continue;
+        }
+        out.entries++;
+        emit(t, "ENTRY", "FVG ENTRY " + out.entries + "/" + p.max + " — " + tfName_ + " " + word + " FVG " + zone(z) +
+             ": price tapped in and closed back out at " + fmt(b.c) + " on " + ratio.toFixed(2) + "× volume. " + side + ".",
+             bull ? "log-buy" : "log-sell", { act: "fvgentry", dir: st.dir, entry: b.c, n: out.entries });
+        out.fvgs.splice(f, 1);
+        if (out.entries >= p.max) {
+          out.mode = "TP MONITORING";
+          out.fvgs = [];
+          emit(t, "MAX", "MAX ENTRIES (" + p.max + ") reached — FVG tracking stopped. TP monitoring until the target" +
+               (st.target !== null ? " " + fmt(st.target) : "") + ".");
+        }
+        break;                                         // one entry per candle
+      }
+    }
+
+    // Then any FVG this candle completes.
+    if (out.mode !== "TRACKING") continue;
+    var a = bars[i - 2];
+    var nz = bull ? (b.l > a.h ? { bot: a.h, top: b.l } : null) : (b.h < a.l ? { bot: b.h, top: a.l } : null);
+    if (!nz) continue;
+    nz.id = a.ts; nz.tapped = false;
+    var kept = [];
+    out.fvgs.forEach(function (old) {
+      var replaced = bull ? nz.top < old.bot : nz.bot > old.top;
+      if (replaced) {
+        emit(t, "REPLACED|" + old.id, word.toUpperCase() + " FVG " + zone(old) + " replaced by the new FVG " + zone(nz) +
+             (bull ? " below it." : " above it."));
+      } else kept.push(old);
+    });
+    out.fvgs = kept.concat([nz]);
+    emit(t, "FVG|" + nz.id, "Tracking " + word + " " + tfName_ + " FVG " + zone(nz) + ".");
+  }
+  return out;
+}
+
+// Replays the FVG engine for the live cycle and acts on anything new.
+function updateGpsFvgEngine() {
+  if (!cfg || !cfg.gpsModelOn) return;
   var st = iccCycle;
-  if (!st || !st.m.gps.active) {
-    return "GPS Entry Model: engines WAITING (ICC phase " + (st ? st.phase : "—") +
-           (st && st.phase === "CONTINUATION" && cfg.gpsModelAlign ? ", waiting for alignment + 1H pullback" : "") +
-           "). GPS engines only trade after ICC continuation.";
+  if (!st || !st.dir || !st.m.gps.active || st.contBarTs === null) { gpsFvg = null; return; }
+  var bars = closedBars(gpsFvgStore);
+  var p = { tfSec: gpsEntryTf(), max: Math.max(1, cfg.gpsModelMaxEntries || 2),
+            volLen: Math.max(1, cfg.gpsModelVolLookback || 20), volMult: cfg.gpsModelVolMult > 0 ? cfg.gpsModelVolMult : 1.5 };
+  if (bars.length < p.volLen + 3) return;                     // feed still loading
+  var r = runFvgEngine(st, bars, p);
+  gpsFvg = r;
+  if (gpsFvgSeen === null) {                                   // first read: history, never action
+    gpsFvgSeen = {};
+    r.events.forEach(function (e) { gpsFvgSeen[e.key] = true; });
+    return;
   }
-  if ((st.dir === "sell") !== sell) {
-    return "GPS Entry Model: engines are ACTIVE for " + (st.dir === "sell" ? "SELLS" : "BUYS") + " only.";
+  r.events.forEach(function (e) {
+    if (gpsFvgSeen[e.key]) return;
+    gpsFvgSeen[e.key] = true;
+    if (!isRunning) return;
+    log(e.text, e.cls);
+    if (e.act === "fvgentry") placeGpsModelEntry(e, p);
+  });
+}
+
+function placeGpsModelEntry(e, p) {
+  var side = e.dir === "sell" ? "SELL" : "BUY", tag = "[ICC GPS MODEL]";
+  if (Date.now() - e.ts > 2 * p.tfSec * 1000) {
+    log(tag + " NO ORDER SENT — that FVG entry candle closed too long ago (the feed caught up late). Not chasing it.", "log-warn");
+    return;
   }
-  return null;
+  if (side === "BUY" ? !cfg.enableBuys : !cfg.enableSells) {
+    log(tag + " NO ORDER SENT — " + side + " signals are switched off under Trade Direction.", "log-warn");
+    return;
+  }
+  var st = iccCycle;
+  var s = modelStop("gps", e.entry, e.dir, e.dir === "sell" ? st.latest.h1Hi : st.latest.h1Lo,
+                    e.dir === "sell" ? st.latest.sHi : st.latest.sLo);
+  var tp = modelTarget("gps", e.entry, e.dir, st.target);
+  log(tag + " " + side + " " + fmt(e.entry) + " | SL " + fmt(s.sl) + " (" + s.how + ") | TP " +
+      (tp.tp !== null ? fmt(tp.tp) : "none") + " (" + tp.how + ")", e.dir === "sell" ? "log-sell" : "log-buy");
+  gpsModelLastEntry = { dir: side, price: e.entry, ts: e.ts };
+  signalCount++;
+  signalLog.push({ time: nyParts(e.ts).fullLabel, model: "GPS ENTRY MODEL", engine: "ICC FVG ENGINE", kind: side,
+                   entry: e.entry, sl: s.sl, tp1: tp.tp === null ? "" : tp.tp, tp2: "", tp3: "",
+                   ref: "ICC " + cycleParams().structTf.toUpperCase() + " FVG " + e.n, bodyPct: "" });
+  refreshStatsDisplay();
+  beep();
+  submitOrder(null, e.entry, s.sl, tp.tp, tag + " FVG " + side + " " + e.n + "/" + p.max, {
+    dir: e.dir, comment: BOT_TAG + "-GPSM", forceLevels: true, holdForTarget: !!cfg.gpsModelTrail
+  });
 }
 
 // Each model's settings and panel show only while that model is switched on; the shared
@@ -3477,23 +3640,27 @@ function renderModelPanels() {
       }
     } else {
       set("mGpsStatus", statusText, statusCls);
-      var live = engines.filter(function (e) { return e.def.dir === st.dir; })
-                        .map(function (e) { return "E" + e.def.id; });
+      var g = gpsFvg && gpsFvg.key === aggCycleKey(st) ? gpsFvg : null, maxE = Math.max(1, cfg.gpsModelMaxEntries || 2);
       set("mGpsEngines", sub.active
-          ? "ACTIVE — " + (bull ? "BUY " : "SELL ") + (live.length ? live.join(" ") : "(no engine on that side is enabled)")
+          ? (g && g.mode === "TP MONITORING"
+              ? "TP MONITORING — " + g.entries + "/" + maxE + " entries used, waiting for the target"
+              : "ACTIVE — tracking " + (g ? g.fvgs.length : 0) + " " + (bull ? "bullish" : "bearish") + " FVG" +
+                (g && g.fvgs.length === 1 ? "" : "s") + " · entries " + (g ? g.entries : 0) + "/" + maxE)
+          : !st.dir || st.phase !== "CONTINUATION" ? "DORMANT — waiting for ICC continuation"
           : st.phase === "CONTINUATION" && alignOn
             ? (sub.aligned ? "WAITING — pullback to 1H " + (bull ? "higher low " : "lower high ") +
                              (sub.pullLevel !== null ? fmt(sub.pullLevel) : "(forming)")
                            : "WAITING — Daily / 4H alignment")
           : "WAITING", sub.active ? (bull ? "up" : "down") : "pending");
-      set("mGpsEntryTf", tfName(cfg.timeframe) + (cfg.timeframe === 300 || cfg.timeframe === 900 ? "" : "  (use M5 or M15)"),
-          cfg.timeframe === 300 || cfg.timeframe === 900 ? "" : "pending");
+      set("mGpsEntryTf", entryTfLabel(gpsEntryTf()) + " (FVG engine)", "");
       set("mGpsLast", since(gpsModelLastEntry), gpsModelLastEntry ? "" : "muted");
     }
   });
 }
 
 function resetEntryModels() {
+  gpsFvg = null;
+  gpsFvgSeen = null;
   aggState = null;
   iccLastAggEntry = null;
   iccCycle = null;
@@ -3547,7 +3714,7 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
   }
   signalLog.push({
     time: ny.fullLabel,
-    model: cfg.gpsModelOn ? "GPS ENTRY MODEL" : "GPS",
+    model: "GPS",
     engine: "Engine " + eng.def.id + ": " + eng.def.name,
     kind: sell ? "SELL" : "BUY",
     entry: entry,
@@ -3583,29 +3750,6 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
   var held = trendGateReason(sell, entry);
   if (held) {
     log("NO ORDER SENT — " + held + " (" + engTag(eng) + (sell ? "SELL" : "BUY") + ")", "log-warn");
-    return;
-  }
-
-  // GPS Entry Model: engines only trade after ICC continuation, in the break direction, and
-  // every entry they take aims at the structure target.
-  if (cfg.gpsModelOn) {
-    var gHeld = gpsModelGateReason(sell);
-    if (gHeld) {
-      log("[ENGINE " + eng.def.id + "] " + (sell ? "SELL" : "BUY") + " signal fired — NO ORDER SENT — " + gHeld, "log-warn");
-      return;
-    }
-    var dirS = sell ? "sell" : "buy";
-    var gst = iccCycle;
-    var ms = modelStop("gps", entry, dirS, sell ? gst.latest.h1Hi : gst.latest.h1Lo, sell ? gst.latest.sHi : gst.latest.sLo);
-    var mt = modelTarget("gps", entry, dirS, gst.target);
-    log("[ENGINE " + eng.def.id + "] " + (sell ? "SELL" : "BUY") + " signal fired — GPS MODEL ACTIVE — ORDER SENT · SL " +
-        fmt(ms.sl) + " (" + ms.how + ") · TP " + (mt.tp !== null ? fmt(mt.tp) : "none") + " (" + mt.how + ")",
-        sell ? "log-sell" : "log-buy");
-    gpsModelLastEntry = { dir: sell ? "SELL" : "BUY", price: entry, ts: Date.now(), engine: eng.def.id };
-    submitOrder(eng, entry, ms.sl, mt.tp, engineLabel(eng) + " · GPS MODEL", {
-      forceLevels: cfg.gpsModelSlMode !== "pips" || mt.how !== "TP1 pips" || !!cfg.gpsModelTrail,
-      holdForTarget: !!cfg.gpsModelTrail
-    });
     return;
   }
 
@@ -5047,7 +5191,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
   "iccOn","iccSwingStrength","iccSwingSource","iccRequireH1",
-  "gpsModelOn","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
+  "gpsModelOn","gpsModelEntryTf","gpsModelMaxEntries","gpsModelVolLookback","gpsModelVolMult","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
   "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
@@ -5186,6 +5330,10 @@ function readConfig() {
     // One shared cycle: the structure TF, swings and Max wait are common to both models.
     iccStructTf: normStructTf(document.getElementById("iccStructTf").value),
     gpsModelOn: chk("gpsModelOn"),
+    gpsModelEntryTf: document.getElementById("gpsModelEntryTf").value === "300" ? 300 : 900,
+    gpsModelMaxEntries: Math.min(10, Math.max(1, int("gpsModelMaxEntries", 2))),
+    gpsModelVolLookback: Math.max(1, int("gpsModelVolLookback", 20)),
+    gpsModelVolMult: Math.max(0.1, num("gpsModelVolMult", 1.5)),
     gpsModelAlign: chk("gpsModelAlign"),
     gpsModelTpStruct: chk("gpsModelTpStruct"),
     gpsModelSlMode: document.getElementById("gpsModelSlMode").value || "pips",
@@ -5348,7 +5496,7 @@ function startBot() {
   }
   // Engines being off is the point of an ICC-only run, not a deviation worth shouting about.
   var anyEngineOn = ENGINE_DEFS.some(function (def) { return cfg.engines[def.key] && cfg.engines[def.key].enabled; });
-  if (deviations.length && (anyEngineOn || !cfg.iccModelOn)) {
+  if (deviations.length && (anyEngineOn || !(cfg.iccModelOn || cfg.gpsModelOn))) {
     log("⚠️ Settings differ from the signed-off engine config — signals will NOT match the " +
         "indicator: " + deviations.join("; "), "log-warn");
   }
@@ -5363,19 +5511,22 @@ function startBot() {
     if (!ec || !ec.enabled) return false;
     return def.dir === "buy" ? cfg.enableBuys : cfg.enableSells;
   });
-  // The GPS engines are only needed when something trades through them. The ICC Entry Model
-  // has its own 1H entries and runs with every engine off.
-  var iccOnly = !willRun.length && cfg.iccModelOn;
-  if (!willRun.length && !cfg.iccModelOn) {
+  // The standard GPS engines are only needed if nothing else trades. Both entry models have
+  // their own entries (the ICC Entry Model on the 1H, the GPS Entry Model's FVG engine) and
+  // run with every standard engine off.
+  var iccOnly = !willRun.length && (cfg.iccModelOn || cfg.gpsModelOn);
+  if (!willRun.length && !iccOnly) {
     log("Every engine on the enabled side(s) is switched off — there is nothing to run. " +
-        "Turn at least one engine on" + (cfg.gpsModelOn ? " (the GPS Entry Model trades through the GPS engines)" : "") +
-        ", or switch on the ICC Entry Model.", "log-err");
+        "Turn at least one engine on, or switch on the ICC Entry Model or the GPS Entry Model.", "log-err");
     return;
   }
   if (iccOnly) {
-    log("All GPS engines are off — running the ICC Entry Model on its own." +
-        (cfg.gpsModelOn ? " The GPS Entry Model is ON but has no engines to trade through, so it will not place anything." : ""),
-        cfg.gpsModelOn ? "log-warn" : "log-info");
+    log("All standard GPS engines are off — running the ICC entry model(s) on their own.", "log-info");
+  }
+  if (willRun.length && cfg.gpsModelOn) {
+    log("⚠️ The GPS Entry Model (ICC FVG engine) and the standard GPS engines are BOTH on. They are " +
+        "independent: the standard engines still trade their own signals. Switch the standard engines " +
+        "off if you only want the ICC FVG entries.", "log-warn");
   }
   if (!(cfg.slPips > 0)) {
     log("Stop loss is 0 pips — trades will open with NO stop attached. That is uncapped risk on " +
@@ -5467,6 +5618,12 @@ function startBot() {
   Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: H1_SECONDS }, h1Store);
   // Daily feed — only the entry models use it (Daily structure, and Daily alignment).
   d1Store = null;
+  // The GPS Entry Model's own entry-TF feed (5M or 15M) for its FVG engine.
+  gpsFvgStore = null;
+  if (cfg.gpsModelOn) {
+    gpsFvgStore = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
+    Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: gpsEntryTf() }, gpsFvgStore);
+  }
   if (cfg.gpsModelOn || cfg.iccModelOn || cfg.iccOn) {
     d1Store = new FXB.CandleStore({ OnNewCandle: onTrendCandle });
     Framework.RequestCandles({ instrumentId: cfg.instrumentId, timeframe: D1_SECONDS }, d1Store);
@@ -5487,7 +5644,7 @@ function startBot() {
       "Direction   " + sides.join(" + "),
       "Engines     " + (engines.length ? engines.map(function (e) {
         return "E" + e.def.id + " " + e.def.name;
-      }).join("\n            ") : "none — ICC Entry Model only"),
+      }).join("\n            ") : "none — entry models only"),
       "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn
@@ -5497,7 +5654,9 @@ function startBot() {
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
         : "off"),
       "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "same shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
-        "GPS Entry Model " + (cfg.gpsModelOn ? "ON (engines on " + tfName(cfg.timeframe) + (cfg.gpsModelAlign ? ", alignment" : "") +
+        "GPS Entry Model " + (cfg.gpsModelOn ? "ON (ICC FVG engine on " + entryTfLabel(gpsEntryTf()) + ", max " +
+          cfg.gpsModelMaxEntries + " entries, volume > " + cfg.gpsModelVolMult + "× " + cfg.gpsModelVolLookback +
+          "-bar avg" + (cfg.gpsModelAlign ? ", alignment" : "") +
           ", SL " + cfg.gpsModelSlMode + (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (" + (cfg.iccModelAggressive ? "AGGRESSIVE live-cross entry"
           : "1H entry" + (cfg.iccModelAlign ? ", alignment" : "")) +
@@ -5521,10 +5680,6 @@ function startBot() {
   if (((cfg.gpsModelOn && cfg.gpsModelTrail) || (cfg.iccModelOn && cfg.iccModelTrail)) && !cfg.autoTrailingOn) {
     log("Trail after TP is ON for an entry model, but Auto Trailing is OFF. Those trades are sent with no TP " +
         "and nothing will trail them past the target — turn Auto Trailing on.", "log-warn");
-  }
-  if (cfg.gpsModelOn && cfg.timeframe !== 300 && cfg.timeframe !== 900) {
-    log("GPS Entry Model is ON with the bot's Timeframe at " + tfName(cfg.timeframe) + ". The model's " +
-        "engines are meant to run on M5 or M15 — set Timeframe to one of those.", "log-warn");
   }
 
   // Says openly whether the clock allows trading right now, so a bot that is running but

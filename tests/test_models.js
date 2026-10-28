@@ -296,7 +296,7 @@ const dailyBull = [
     types(st, "icc").includes("PULLBROKEN") && st.phase === "CONTINUATION" && !types(st, "icc").includes("ENTRY"));
 }
 
-// ---------------------------------------------------------------- 7: GPS engines through the gate
+// ---------------------------------------------------------------- 7: GPS Entry Model — ICC FVG engine
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
 function fvgSequence() {
@@ -317,46 +317,148 @@ function fvgSequence() {
   bars.push(flat(t0 + 6 * M5, 2004));
   return bars;
 }
-const gpsCfg = (over) => defaultCfg(Object.assign({ gpsModelOn: true, iccModelOn: false, gpsModelTpStruct: true,
-                                                    gpsModelSlMode: "pips", gpsModelTrail: false }, over || {}));
-const activeCycle = (dir, target) => ({ phase: "CONTINUATION", dir, target, m: { gps: { active: true }, icc: {} },
-                                        latest: { h1Hi: 2010, h1Lo: 1995, sHi: 2030, sLo: 1980 } });
+const M15 = 15 * 60e3;
+// 15M candles [o, h, l, c, v] from `start`.
+const cand = (rows, start) => rows.map(([o, h, l, c, v], i) => ({ ts: start + i * M15, o, h, l, c, v }));
+// A bullish cycle that is in CONTINUATION with the FVG engine live from bar 2's close.
+function liveCycle(start, over) {
+  return Object.assign({ dir: "buy", phase: "CONTINUATION", status: "ACTIVE", lockHigh: 100, lockLow: 95,
+    lockHiTs: 1, lockLoTs: 2, indBarTs: 3, contBarTs: start, target: 120, aggArmTs: null,
+    latest: { h1Hi: 104, h1Lo: 99, sHi: 110, sLo: 96 },
+    m: { gps: { active: true, activeTs: start + 3 * M15 }, icc: {} } }, over || {});
+}
+const FVP = { tfSec: 900, max: 2, volLen: 3, volMult: 1.5 };
+// bar2 completes a bullish FVG 101–102; bar4 taps in; bar5 exits on normal volume (no entry);
+// bar6 taps again; bar7 exits on 3x volume = ENTRY at 103.4.
+const FVG_ROWS = [
+  [100, 101, 99.5, 100.8, 100], [100.8, 103, 100.7, 102.8, 100], [102.8, 104, 102.0, 103.8, 100],
+  [103.8, 104.5, 103.5, 104.2, 100], [104.2, 104.3, 101.5, 101.8, 100], [101.8, 102.6, 101.6, 102.5, 100],
+  [102.5, 102.7, 101.7, 101.9, 100], [101.9, 103.5, 101.8, 103.4, 300]
+];
 {
-  const sb = buildSandbox();
-  run(sb, fvgSequence(), gpsCfg());
-  check("7: no cycle / engines WAITING: the GPS buy is logged but not ordered",
-    sb.signalLog.length === 1 && sb.__orders.length === 0 &&
-    sb.__logLines.some((l) => /\[ENGINE 1\] BUY signal fired — NO ORDER SENT — GPS Entry Model: engines WAITING/.test(l)));
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const r = sb.runFvgEngine(liveCycle(T), cand(FVG_ROWS, T), FVP);
+  console.log("\n===== 7: ICC FVG ENGINE =====");
+  r.events.forEach((e) => console.log(e.text));
+  check("7: a bullish FVG on the entry TF is tracked", r.events.some((e) => /Tracking bullish 15M FVG 101\.00–102\.00/.test(e.text)));
+  check("7: a tap + exit WITHOUT the volume is not an entry, the FVG stays live",
+    r.events.some((e) => /closed back out at 102\.50 without the volume \(1\.00× vs 1\.5× needed\) — no entry, still tracking/.test(e.text)));
+  const entry = r.events.find((e) => e.type === "ENTRY");
+  check("7: tap back in, then a close back out on a volume spike = ENTRY at that close", !!entry && entry.entry === 103.4,
+    entry && entry.text);
+  check("7: logged with the FVG, the price and the volume ratio",
+    !!entry && /FVG ENTRY 1\/2 — 15M bullish FVG 101\.00–102\.00: price tapped in and closed back out at 103\.40 on 3\.00× volume\. BUY/.test(entry.text));
+  check("7: the FVG used for the entry is retired (others stay tracked)",
+    r.entries === 1 && !r.fvgs.some((z) => z.bot === 101 && z.top === 102) && r.fvgs.length === 1);
 }
 {
-  const sb = buildSandbox();
-  sb.iccCycle = activeCycle("buy", 2050);
-  run(sb, fvgSequence(), gpsCfg());
-  const o = sb.__orders[0], entry = sb.signalLog[0].entry;
-  check("7: engines ACTIVE for buys: the GPS buy is ordered", sb.__orders.length === 1);
-  check("7: TP = the shared structure target", o && Math.abs(o.tp.pips - (2050 - entry) / 0.1) < 0.11, o && JSON.stringify(o.tp));
-  check("7: SL = the fixed pip stop by default", o && o.sl.pips === 100);
-  check("7: logged as GPS MODEL ACTIVE — ORDER SENT", sb.__logLines.some((l) => /GPS MODEL ACTIVE — ORDER SENT/.test(l)));
-  check("7: CSV row labelled GPS ENTRY MODEL", sb.signalLog[0].model === "GPS ENTRY MODEL");
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const r = sb.runFvgEngine(liveCycle(T, { m: { gps: { active: true, activeTs: T + 8 * M15 }, icc: {} } }), cand(FVG_ROWS, T), FVP);
+  check("7: no entry from a candle that closed before the engine went active", !r.events.some((e) => e.type === "ENTRY"));
 }
 {
-  const sb = buildSandbox();
-  sb.iccCycle = activeCycle("buy", 2050);
-  run(sb, fvgSequence(), gpsCfg({ gpsModelSlMode: "h1" }));
-  const o = sb.__orders[0], entry = sb.signalLog[0].entry;
-  check("7: SL option 1H swing uses the shared latest 1H swing low", o && Math.abs(o.sl.pips - (entry - 1995) / 0.1) < 0.11,
-    o && JSON.stringify(o.sl));
+  // Max entries 1: after the entry the engine stops tracking and waits for the target.
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const more = FVG_ROWS.concat([[103.4, 104, 103.3, 103.9, 100], [103.9, 105, 103.8, 104.9, 100], [104.9, 106, 104.5, 105.8, 100]]);
+  const r = sb.runFvgEngine(liveCycle(T), cand(more, T), Object.assign({}, FVP, { max: 1 }));
+  check("7: max entries reached -> TP MONITORING, no new FVGs tracked",
+    r.mode === "TP MONITORING" && r.fvgs.length === 0 && r.events.some((e) => /MAX ENTRIES \(1\) reached — FVG tracking stopped\. TP monitoring until the target 120\.00/.test(e.text)) &&
+    !r.events.some((e) => /Tracking bullish 15M FVG 104\.00–104\.50/.test(e.text)));
 }
 {
-  const sb = buildSandbox();
-  sb.iccCycle = activeCycle("sell", 1900);
-  run(sb, fvgSequence(), gpsCfg());
-  check("7: engines ACTIVE for sells: a buy is not ordered", sb.__orders.length === 0);
+  // Replacement: after the entry a new FVG 104–104.5 is tracked; price drops and a new bullish
+  // FVG 102.3–102.5 forms entirely BELOW it, which replaces it. Then a tap + volume exit of the
+  // lower one is entry 2/2.
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const rows = FVG_ROWS.concat([
+    [103.4, 104, 103.3, 103.9, 100], [103.9, 105, 103.8, 104.9, 100], [104.9, 106, 104.5, 105.8, 100],   // FVG 104–104.5
+    [105.8, 105.9, 102.0, 102.2, 100], [102.2, 102.3, 100.0, 100.2, 100], [100.2, 101.0, 100.1, 100.9, 100],
+    [102.6, 103, 102.5, 102.9, 100],                                                                    // FVG 102.3–102.5? (b14.l 102.5 > b12.h 102.3)
+    [102.9, 103, 102.4, 102.45, 100], [102.45, 103.5, 102.4, 103.3, 400]
+  ]);
+  const r = sb.runFvgEngine(liveCycle(T), cand(rows, T), FVP);
+  r.events.filter((e) => /REPLACED|ENTRY|MAX/.test(e.type)).forEach((e) => console.log(e.text));
+  check("7: a new bullish FVG below a tracked one replaces it",
+    r.events.some((e) => /BULLISH FVG 104\.00–104\.50 replaced by the new FVG 102\.30–102\.50 below it/.test(e.text)));
+  check("7: the lower FVG then gives entry 2/2", r.events.some((e) => e.type === "ENTRY" && e.n === 2 && e.entry === 103.3));
 }
 {
+  // Bearish mirror: a bearish FVG, tap from below, close back below on volume = SELL.
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const rows = [[100, 100.5, 99, 99.2, 100], [99.2, 99.3, 97, 97.2, 100], [97.2, 98, 96, 96.2, 100],   // FVG 98–99
+                [96.2, 96.5, 95.5, 95.8, 100], [95.8, 98.6, 95.7, 98.4, 100], [98.4, 98.5, 96.0, 96.4, 400]];
+  const r = sb.runFvgEngine(liveCycle(T, { dir: "sell" }), cand(rows, T), FVP);
+  const e = r.events.find((x) => x.type === "ENTRY");
+  check("7: bearish: tap into a bearish FVG and close back below on volume = SELL", !!e && e.dir === "sell" && e.entry === 96.4,
+    e && e.text);
+}
+
+// The engine wired up: dormant until continuation, live orders only off the candle that just closed.
+function fvgSandbox(over) {
+  const sb = modelSandbox(Object.assign({ iccModelOn: false, gpsModelOn: true, gpsModelEntryTf: 900, gpsModelMaxEntries: 2,
+                                          gpsModelVolLookback: 3, gpsModelVolMult: 1.5 }, over || {}));
+  return sb;
+}
+{
+  const sb = fvgSandbox();
+  sb.iccCycle = liveCycle(0, { phase: "CORRECTION", m: { gps: { active: false, activeTs: null }, icc: {} } });
+  sb.updateGpsFvgEngine();
+  check("7: before continuation the engine is dormant (nothing tracked)", sb.gpsFvg === null);
+}
+{
+  const sb = fvgSandbox();
+  const T0 = Math.floor(Date.now() / M15) * M15 - FVG_ROWS.length * M15;
+  sb.iccCycle = liveCycle(T0);
+  const bars = cand(FVG_ROWS, T0);
+  sb.gpsFvgStore = storeOf(bars.slice(0, -1), M15);
+  sb.updateGpsFvgEngine();                                   // start-up read
+  check("7: the start-up read places nothing", sb.__orders.length === 0);
+  sb.gpsFvgStore = storeOf(bars, M15);
+  sb.updateGpsFvgEngine();                                   // the volume exit candle closes live
+  const o = sb.__orders[0];
+  check("7: the live FVG entry places a market BUY tagged GPSBOT-GPSM",
+    sb.__orders.length === 1 && o.tradingAction === "BUY" && o.comment === "GPSBOT-GPSM", o && JSON.stringify(o));
+  check("7: TP = the shared structure target (120 - 103.4 = 166 pips)", o && o.tp && o.tp.pips === 166, o && JSON.stringify(o.tp));
+  check("7: SL = the fixed pip stop by default", o && o.sl && o.sl.pips === 100);
+  check("7: CSV row labelled GPS ENTRY MODEL / ICC FVG ENGINE",
+    sb.signalLog.length === 1 && sb.signalLog[0].model === "GPS ENTRY MODEL" && sb.signalLog[0].engine === "ICC FVG ENGINE");
+  sb.updateGpsFvgEngine();
+  check("7: a re-read does not trade the same candle twice", sb.__orders.length === 1);
+}
+{
+  // Panel: DORMANT -> ACTIVE (tracking FVGs, entries used) -> TP MONITORING.
+  const sb = fvgSandbox();
+  sb.engines = [];
+  const T0 = Math.floor(Date.now() / M15) * M15 - FVG_ROWS.length * M15;
+  const base = { waitCount: 0, lastCycle: null, needsFreshBreak: false, indClose: null, indTs: null, align: { d: "NTZ", h4: "NTZ" } };
+  const txt = () => sb.document.getElementById("mGpsEngines").textContent;
+  sb.iccCycle = liveCycle(T0, Object.assign({}, base, { phase: "CORRECTION", m: { gps: { active: false }, icc: {} } }));
+  sb.renderModelPanels();
+  check("7: panel — DORMANT before continuation", txt() === "DORMANT — waiting for ICC continuation", txt());
+  sb.iccCycle = liveCycle(T0, base);
+  sb.gpsFvgStore = storeOf(cand(FVG_ROWS, T0), M15);
+  sb.updateGpsFvgEngine();
+  sb.renderModelPanels();
+  check("7: panel — ACTIVE, tracking FVGs, entries used", txt() === "ACTIVE — tracking 1 bullish FVG · entries 1/2", txt());
+  sb.cfg.gpsModelMaxEntries = 1;
+  sb.gpsFvgSeen = null;
+  sb.updateGpsFvgEngine();
+  sb.renderModelPanels();
+  check("7: panel — TP MONITORING once max entries are used", /^TP MONITORING — 1\/1 entries used/.test(txt()), txt());
+  check("7: panel — entry TF shows the FVG engine timeframe",
+    sb.document.getElementById("mGpsEntryTf").textContent === "15M (FVG engine)");
+}
+{
+  // The six standard engines are independent of the GPS Entry Model now.
   const sb = buildSandbox();
-  run(sb, fvgSequence(), gpsCfg({ gpsModelOn: false }));
-  check("7: GPS model OFF: the engines trade as normal", sb.__orders.length === 1);
+  run(sb, fvgSequence(), defaultCfg({ gpsModelOn: true, iccModelOn: false }));
+  check("7: with the GPS Entry Model ON the standard engines still trade their own signals",
+    sb.__orders.length === 1 && sb.__orders[0].comment === "GPSBOT-E1");
 }
 
 // ---------------------------------------------------------------- 8: Daily structure
@@ -547,19 +649,17 @@ function startWith(iccModel, gpsModel, before) {
 {
   const a = startWith(true, false);
   check("8d: ICC Entry Model ON with every GPS engine off: the bot starts", a.running);
-  check("8d: and says it is running the ICC Entry Model on its own",
-    a.logs.some((l) => /All GPS engines are off — running the ICC Entry Model on its own\./.test(l)));
+  check("8d: and says it is running the entry model(s) on their own",
+    a.logs.some((l) => /All standard GPS engines are off — running the ICC entry model\(s\) on their own\./.test(l)));
   check("8d: no misleading 'engines OFF, signals will not match' warning",
     !a.logs.some((l) => /Settings differ from the signed-off engine config/.test(l)));
   const b = startWith(false, false);
   check("8d: no model and no engines: still refuses to start", !b.running &&
     b.logs.some((l) => /there is nothing to run/.test(l)));
   const c = startWith(false, true);
-  check("8d: GPS Entry Model alone with no engines: refuses (it trades through the engines)", !c.running &&
-    c.logs.some((l) => /the GPS Entry Model trades through the GPS engines/.test(l)));
+  check("8d: GPS Entry Model alone with no standard engines: starts (its FVG engine is its own)", c.running);
   const d = startWith(true, true);
-  check("8d: both models, no engines: starts for the ICC model, warns the GPS model has nothing to trade",
-    d.running && d.logs.some((l) => /GPS Entry Model is ON but has no engines to trade through/.test(l)));
+  check("8d: both models, no standard engines: starts", d.running);
 }
 
 // ---------------------------------------------------------------- 9: Aggressive Entry Mode
