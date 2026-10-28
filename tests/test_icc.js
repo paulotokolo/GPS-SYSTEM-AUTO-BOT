@@ -13,7 +13,9 @@ const T0 = Date.UTC(2025, 0, 6, 0, 0, 0);
 function storeOf(bars, formingClose) {
   const last = bars[bars.length - 1];
   const tf = bars.length > 1 ? bars[1].ts - bars[0].ts : H4;
-  const forming = { ts: (last ? last.ts : T0) + tf, o: 1, h: 1e9, l: -1e9, c: formingClose || 999999, v: 1 };
+  // The forming candle so far: from the last close to `formingClose` (live price), no wicks.
+  const lc = last ? last.c : 100, fc = formingClose || lc;
+  const forming = { ts: (last ? last.ts : T0) + tf, o: lc, h: Math.max(lc, fc), l: Math.min(lc, fc), c: fc, v: 1 };
   const all = bars.concat([forming]);
   return {
     get length() { return all.length; },
