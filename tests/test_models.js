@@ -239,8 +239,23 @@ function liveFeed(sb, s) {
     { ts: s.h4[6].ts + 2 * H4, o: 113, h: 113, l: 110, c: 111, v: 1 }
   ]);
   const st = cycle(modelSandbox(), { d1: [], h4, h1: s.h1.concat(risingH1) });
-  check("5: a new 4H swing beyond the locked high before any correction INVALIDATES the cycle",
-    st.events.some((e) => /INVALIDATED — New swing formed beyond locked level at 113\.00/.test(e.text)));
+  check("5: a new 4H swing beyond the locked high does NOT end the cycle (client rule: only opposite close or max bars)",
+    !types(st).includes("INVALIDATED") && st.dir === "buy" && st.lockHigh === 104 && st.lockLow === 101,
+    st.dir + " " + st.lockHigh + "/" + st.lockLow);
+  check("5: it is logged as ignored, levels stay locked",
+    st.events.some((e) => /New swing detected at 113\.00 — IGNORED\. Active cycle in progress\. Levels remain locked/.test(e.text)));
+}
+{
+  // The client's Gold case: bullish break, in CORRECTION, and a new 4H swing high forms above
+  // the locked high during the correction move. The cycle must stay in CORRECTION.
+  const g = BASE.slice(0, 8).concat([[111, 112, 113, 114], [113.5, 112.5, 112, 111.5]]);
+  const s = series(g, START);
+  const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
+  check("5: a new swing high during CORRECTION leaves the cycle alive in CORRECTION",
+    !types(st).includes("INVALIDATED") && st.phase !== "WAITING" && st.dir === "buy" && st.lockHigh === 104,
+    st.phase + " " + st.dir);
+  check("5: the only cycle-ending events left are disrespect, timeout and completion",
+    st.events.filter((e) => ["INVALIDATED"].includes(e.type)).length === 0);
 }
 {
   // After completion the next NTZ comes from swings that formed after the reset — the old

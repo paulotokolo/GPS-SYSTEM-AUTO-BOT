@@ -2710,9 +2710,9 @@ function resetTrendFilters() {
 //    CONTINUATION  — a 1H candle closes beyond the latest corrective 1H swing.
 //    COMPLETE      — price reaches the TP target: the structure-TF extreme since the break.
 //
-//  Ends early on: disrespect (a structure-TF close back through the other side of the NTZ),
-//  timeout (any phase lasting longer than Max wait structure candles), or a new structure
-//  swing beyond the locked level before the correction.
+//  Ends early on exactly two things: disrespect (a structure-TF candle BODY closing through
+//  the opposite side of the locked NTZ) or timeout (a phase reaching Max wait structure
+//  candles). New swings — even beyond the locked level — never end a cycle.
 //
 //  "Require all timeframe alignment" never changes the NTZ or the phase. It is purely each
 //  model's entry condition during CONTINUATION: Daily and 4H must agree, then price must
@@ -2969,19 +2969,13 @@ function runIccCycle(p, data, mods) {
         fresh = [];
       }
 
+      // A new swing never ends a cycle — not even one beyond the locked level. Only a body
+      // close through the opposite side of the NTZ (below) or Max wait can.
       for (var f = 0; f < fresh.length; f++) {
         var sw = fresh[f];
-        var beyond = st.dir && (bull() ? (sw.hi && sw.val > st.lockHigh) : (!sw.hi && sw.val < st.lockLow));
-        if (beyond && st.phase === "INDICATION") {
-          emit(t, "INVALIDATED", "INVALIDATED — New swing formed beyond locked level at " + fmt(sw.val) +
-               ". Current cycle cancelled. Rescanning.", "log-warn");
-          reset(t, "RESET", "INVALIDATED");
-          break;
-        }
         emit(t, "IGNORED|" + sw.ts + (sw.hi ? "H" : "L"), "New swing detected at " + fmt(sw.val) +
              " — IGNORED. Active cycle in progress. Levels remain locked.");
       }
-      if (st.lockHigh === null) continue;
 
       if (st.phase === "WAITING") {
         if (st.needsFreshBreak) {
