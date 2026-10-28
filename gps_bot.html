@@ -743,7 +743,7 @@ button:active { transform: scale(0.98); }
     </div>
     <div class="model-opts" id="iccCycleOpts">
       <div class="row"><label>ICC structure timeframe</label>
-        <select id="iccStructTf"><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
+        <select id="iccStructTf"><option value="1h">1H</option><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
       </div>
       <div class="row"><label>1H continuation check</label><input type="checkbox" id="iccRequireH1" checked></div>
       <small class="hint">
@@ -2605,7 +2605,7 @@ function handleIccInvalidation(newBias, level) {
   var against = newBias === "BULLISH" ? "sell" : "buy";
   var ids = Object.keys(managedOrders).filter(function (id) { return managedOrders[id].dir === against; });
   if (!ids.length) return;
-  log("ICC INVALIDATION WARNING — " + tfLabel(cfg.iccStructTf === "daily" ? D1_SECONDS : H4_SECONDS) +
+  log("ICC INVALIDATION WARNING — " + tfLabel(structSec(cfg.iccStructTf)) +
       " candle closed " + (newBias === "BULLISH" ? "above " : "below ") +
       fmt(level) + " against open " + against + " position" + (ids.length > 1 ? "s" : "") +
       " (" + ids.join(", ") + "). Review trade immediately.", "log-warn");
@@ -2737,6 +2737,11 @@ var gpsModelLastEntry = null;      // GPS-model order sent this session
 
 // The brief's own wording: "Daily", "4H", "1H".
 function tfLabel(seconds) { return seconds >= D1_SECONDS ? "Daily" : seconds >= H4_SECONDS ? "4H" : "1H"; }
+// The ICC structure timeframe: "1h", "4h" (default) or "daily". The cycle logic is the same
+// on all three; only which candles the NTZ, indication, disrespect and Max wait read changes.
+function normStructTf(tf) { return tf === "daily" || tf === "1h" ? tf : "4h"; }
+function structSec(tf) { tf = normStructTf(tf); return tf === "daily" ? D1_SECONDS : tf === "1h" ? H1_SECONDS : H4_SECONDS; }
+function structOf(tf, d1, h4, h1) { tf = normStructTf(tf); return tf === "daily" ? d1 : tf === "1h" ? h1 : h4; }
 
 // Every confirmed swing in a bar series, in the order they became known.
 function swingList(bars, tfMs, n, src) {
@@ -2803,8 +2808,8 @@ function newCycleState() {
 // Replays the shared cycle across the loaded history. `p` = shared settings, `mods` = the
 // enabled models and each one's alignment toggle.
 function runIccCycle(p, data, mods) {
-  var sBars = p.structTf === "daily" ? data.d1 : data.h4;
-  var sSec = p.structTf === "daily" ? D1_SECONDS : H4_SECONDS;
+  var sBars = structOf(p.structTf, data.d1, data.h4, data.h1);
+  var sSec = structSec(p.structTf);
   var sMs = sSec * 1000, hMs = H1_SECONDS * 1000;
   var sName = tfLabel(sSec);
   var n = p.n, src = p.src;
@@ -3102,7 +3107,7 @@ function runIccCycle(p, data, mods) {
 
 function cycleParams() {
   return {
-    structTf: cfg.iccStructTf === "daily" ? "daily" : "4h",
+    structTf: normStructTf(cfg.iccStructTf),
     n: Math.max(1, cfg.iccSwingStrength || 1),
     src: cfg.iccSwingSource,
     maxWait: Math.max(1, cfg.iccMaxWait || 20),
@@ -3120,7 +3125,7 @@ function updateEntryModels() {
   if (!cfg || (!cfg.gpsModelOn && !cfg.iccModelOn && !cfg.iccOn)) return;
   var data = { d1: closedBars(d1Store), h4: closedBars(h4Store), h1: closedBars(h1Store) };
   var p = cycleParams();
-  var sBars = p.structTf === "daily" ? data.d1 : data.h4;
+  var sBars = structOf(p.structTf, data.d1, data.h4, data.h1);
   if (sBars.length < 3 || data.h1.length < 3) return;             // feeds still loading
   var mods = {
     icc: { on: !!cfg.iccModelOn, align: !!cfg.iccModelAlign, aggressive: !!cfg.iccModelAggressive },
@@ -3138,7 +3143,7 @@ function updateEntryModels() {
             ? "Locked NTZ High: " + fmt(st.lockHigh) + " | Locked NTZ Low: " + fmt(st.lockLow)
             : "no NTZ locked yet (waiting for a fresh swing high and swing low)") +
           " | Current Phase: " + st.phase + (st.dir ? " (" + (st.dir === "buy" ? "BULLISH" : "BEARISH") + ")" : "") +
-          " | " + tfLabel(p.structTf === "daily" ? D1_SECONDS : H4_SECONDS) + " structure, shared by " +
+          " | " + tfLabel(structSec(p.structTf)) + " structure, shared by " +
           [cfg.iccOn ? "ICC Filter" : null, cfg.iccModelOn ? "ICC Entry Model" : null,
            cfg.gpsModelOn ? "GPS Entry Model" : null]
             .filter(Boolean).join(" + "), "log-info");
@@ -3250,7 +3255,7 @@ function aggCycleKey(st) { return st.lockHiTs + "/" + st.lockLoTs + "/" + st.dir
 function liveStructTarget(st) {
   if (st.target !== null) return st.target;
   var p = cycleParams();
-  var bars = closedBars(p.structTf === "daily" ? d1Store : h4Store), ext = null, bull = st.dir === "buy";
+  var bars = closedBars(structOf(p.structTf, d1Store, h4Store, h1Store)), ext = null, bull = st.dir === "buy";
   for (var i = 0; i < bars.length; i++) {
     if (bars[i].ts < st.indBarTs) continue;
     var v = bull ? hv(bars[i], p.src) : lv(bars[i], p.src);
@@ -3367,7 +3372,7 @@ var PHASE_CLS = { WAITING: "ph-wait", INDICATION: "ph-ind", CORRECTION: "ph-corr
 function phaseView(phase) {
   return { text: phase + (PHASE_DOTS[phase] ? "  " + PHASE_DOTS[phase] : ""), cls: PHASE_CLS[phase] || "muted" };
 }
-function cycleTfName() { return cfg && cfg.iccStructTf === "daily" ? "Daily" : "4H"; }
+function cycleTfName() { return tfLabel(structSec(cfg && cfg.iccStructTf)); }
 // The structure close that broke the NTZ — so a phase after WAITING always shows its cause.
 function breakView(st) {
   if (!st || !st.dir) return { text: "NONE", cls: "muted" };
@@ -3412,7 +3417,7 @@ function renderModelPanels() {
   };
   if (!isRunning || !cfg) return;
   var st = iccCycle, p = cycleParams();
-  var sName = p.structTf === "daily" ? "Daily" : "4H";
+  var sName = tfLabel(structSec(p.structTf));
   MODEL_KINDS.forEach(function (kind) {
     if (!modelEnabled(kind)) return;
     var pre = kind === "icc" ? "mIcc" : "mGps";
@@ -4882,7 +4887,7 @@ function refreshStatePanel(ny) {
       var fex = expiresView(iccCycle), fpv = positionView(iccCycle);
       t("stIccExpires", fex.text, fex.cls);
       t("stIccPos", fpv.text, fpv.cls);
-      var sTf = cfg.iccStructTf === "daily" ? "Daily" : "4H";
+      var sTf = tfLabel(structSec(cfg.iccStructTf));
       lbl("stIccBiasLabel", "ICC bias (" + sTf + ")");
       lbl("stIccNtzLabel", "NTZ levels (live)");
       t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
@@ -5179,7 +5184,7 @@ function readConfig() {
     iccSwingSource: document.getElementById("iccSwingSource").value === "wick" ? "wick" : "close",
     // ICC Entry Models. Structure is Daily or 4H only — the 1H is the fixed entry layer.
     // One shared cycle: the structure TF, swings and Max wait are common to both models.
-    iccStructTf: document.getElementById("iccStructTf").value === "daily" ? "daily" : "4h",
+    iccStructTf: normStructTf(document.getElementById("iccStructTf").value),
     gpsModelOn: chk("gpsModelOn"),
     gpsModelAlign: chk("gpsModelAlign"),
     gpsModelTpStruct: chk("gpsModelTpStruct"),

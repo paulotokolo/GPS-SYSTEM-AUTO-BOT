@@ -369,6 +369,40 @@ const activeCycle = (dir, target) => ({ phase: "CONTINUATION", dir, target, m: {
   check("8: and indicates on a Daily close", st.events.some((e) => /Daily closed above NTZ 104\.00/.test(e.text)));
 }
 
+// ---------------------------------------------------------------- 8a: 1H structure timeframe
+// The whole cycle on 1H candles: swing high 104 / swing low 101 lock, a 1H close at 106 is the
+// indication, the 1H swing high 110 starts the correction, a close at 110.5 above the lower
+// high 109 is the continuation.
+const H1CYCLE = [100, 104, 101, 102, 103, 102.5, 106, 108, 110, 108.5, 107.5, 109, 108, 110.5];
+function h1Bars(closes, start) {
+  let prev = closes[0];
+  return closes.map((c, i) => { const o = prev; prev = c; return { ts: start + i * H1, o, h: Math.max(o, c) + 1, l: Math.min(o, c) - 1, c, v: 1 }; });
+}
+{
+  const sb = modelSandbox({ iccStructTf: "1h", gpsModelOn: true });
+  const h1 = h1Bars(H1CYCLE, END - H1CYCLE.length * H1);
+  const st = cycle(sb, { d1: [], h4: [], h1 });
+  console.log("\n===== 8a: 1H STRUCTURE =====");
+  st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
+  check("8a: 1H structure locks the 1H swing high / low", st.events.some((e) => e.type === "LOCK" &&
+    /Swing high locked: 104\.00 \| Swing low locked: 101\.00 — NTZ set \(1H\)/.test(e.text)));
+  check("8a: and indicates on a 1H close", st.events.some((e) => /INDICATION — 1H closed above NTZ 104\.00/.test(e.text)));
+  check("8a: correction and continuation run the same way", types(st).includes("CORRECTION") && types(st).includes("CONTINUATION"));
+  const entry = st.events.find((e) => e.type === "ENTRY");
+  check("8a: the ICC Entry Model enters on the 1H continuation close", !!entry && entry.entry === 110.5, entry && entry.entry);
+  check("8a: the GPS Entry Model's engines switch on at the same close",
+    st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
+  check("8a: the setting is kept as '1h' (not folded back to 4H)", sb.cycleParams().structTf === "1h");
+  check("8a: panels name the timeframe 1H", sb.cycleTfName() === "1H");
+}
+{
+  // Max wait counts 1H bars on 1H structure.
+  const sb = modelSandbox({ iccStructTf: "1h", iccMaxWait: 2 });
+  const h1 = h1Bars([100, 104, 101, 102, 103, 102.5, 106, 107, 108, 109, 110], END - 11 * H1);
+  const st = cycle(sb, { d1: [], h4: [], h1 });
+  check("8a: Max wait counts 1H bars", st.events.some((e) => /TIMEOUT — No correction detected after 2 1H candles/.test(e.text)));
+}
+
 // ---------------------------------------------------------------- 8b: entry type 2
 // After the break at 109 (NTZ 104 / 101): 1H closes 107, 105, 103.5 (back INSIDE the NTZ),
 // 103, then 104.5 (back OUT above 104), 106, 107, 108.
