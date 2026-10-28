@@ -2882,8 +2882,22 @@ function runIccCycle(p, data, mods) {
     emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
          " — NTZ set (" + sName + "). " + (same
            ? "Same levels as the cycle that just ended — a new break counts once price is back inside them."
-           : "Levels frozen for this cycle."));
+           : "They follow newer swings until a break, then freeze for the cycle."));
     return true;
+  };
+  // A newer swing replaces the NTZ while waiting for a break. A pair that is not a range
+  // (the new low above the high) keeps the current levels until one that is confirms.
+  var reLock = function (t) {
+    var shs = latestSwing(sSw, true, t), sls = latestSwing(sSw, false, t);
+    if (!shs || !sls || !(shs.val > sls.val)) return;
+    if (shs.ts === st.lockHiTs && sls.ts === st.lockLoTs) return;
+    var was = fmt(st.lockHigh) + " / " + fmt(st.lockLow);
+    st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
+    st.lockHiWick = shs.bar.h; st.lockLoWick = sls.bar.l;
+    st.pendHi = shs.val; st.pendLo = sls.val;
+    st.needsFreshBreak = false;
+    emit(t, "RELOCK", "NTZ UPDATED — new " + sName + " swing confirmed. Swing high: " + fmt(st.lockHigh) +
+         " | Swing low: " + fmt(st.lockLow) + " (was " + was + "). No break yet, so the NTZ follows the most recent swings.");
   };
   var latestSwing = function (list, hi, t, sinceTs) {
     var best = null;
@@ -2990,10 +3004,11 @@ function runIccCycle(p, data, mods) {
       if (st.lockHigh === null && tryLock(t)) fresh = [];
       if (st.lockHigh === null) continue;
 
-      // A re-used pair is only a placeholder: a newly confirmed swing replaces it.
-      if (st.needsFreshBreak && st.phase === "WAITING" && fresh.length) {
-        st.lockHigh = null;
-        tryLock(t);
+      // Until the break, the NTZ always follows the most recent swing high and swing low:
+      // a newly confirmed swing re-locks it, and this same close is then checked against
+      // the new levels. Once the cycle is active, levels stay frozen (below).
+      if (st.phase === "WAITING" && fresh.length) {
+        reLock(t);
         fresh = [];
       }
 
@@ -3595,6 +3610,13 @@ function positionView(st) {
 
 // The two model panels, refreshed every second with the rest of the Signal State panel.
 // Both read the one shared cycle; only the entry rows differ.
+// "NTZ levels (latest) · 4H swings (3, close)": latest until a break, locked after it, and
+// which swings it comes from, so it can be matched to the chart's Swing Prices indicator.
+function ntzLabel(st) {
+  var p = cycleParams();
+  return "NTZ levels (" + (st && st.dir ? "locked" : "latest") + ") · " + tfLabel(structSec(p.structTf)) +
+         " swings (" + p.n + ", " + (p.src === "wick" ? "wick" : "close") + ")";
+}
 function renderModelPanels() {
   var set = function (id, v, cls) {
     var el = document.getElementById(id);
@@ -3612,7 +3634,7 @@ function renderModelPanels() {
     if (!modelEnabled(kind)) return;
     var pre = kind === "icc" ? "mIcc" : "mGps";
     var lbl = document.getElementById(pre + "NtzLabel");
-    if (lbl) lbl.textContent = "NTZ levels (locked)";
+    if (lbl) lbl.textContent = ntzLabel(st);
     var alignOn = !!modelOpt(kind, "Align");
     var alignBox = document.getElementById(pre + "AlignBox");
     if (alignBox) alignBox.style.display = alignOn ? "" : "none";
@@ -5060,7 +5082,7 @@ function refreshStatePanel(ny) {
       t("stIccPos", fpv.text, fpv.cls);
       var sTf = tfLabel(structSec(cfg.iccStructTf));
       lbl("stIccBiasLabel", "ICC bias (" + sTf + ")");
-      lbl("stIccNtzLabel", "NTZ levels (live)");
+      lbl("stIccNtzLabel", ntzLabel(iccCycle));
       t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
                   : iccCycle ? (iccCycle.pendHi !== null ? fmt(iccCycle.pendHi) : "high pending") + " / " +
                                (iccCycle.pendLo !== null ? fmt(iccCycle.pendLo) : "low pending")

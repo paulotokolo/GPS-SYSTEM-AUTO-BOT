@@ -152,7 +152,7 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
 
 **The shared cycle**
 
-1. **Lock.** The most recent confirmed structure-TF swing high and swing low (closes, *Swing strength* bars each side) become the NTZ and are frozen until the cycle ends; later swings are logged `IGNORED`. There is no waiting for "fresh" swings: on Start, and the moment a cycle ends, the most recent pair is locked at once, and if only one half exists yet it is shown with the other *pending* and the pair locks the moment the missing half confirms. The one exception: if the most recent pair is the very pair a cycle just finished on (target hit or timed out), it is drawn but a new break only counts once price has closed back inside it, or once a newer swing replaces one side — so the same move is never traded twice.
+1. **Lock.** The most recent confirmed structure-TF swing high and swing low (*Swing strength* bars each side, measured on *Swing source*) become the NTZ. **Until the break, the NTZ always follows the most recent swings**: each newly confirmed swing high or low replaces its side at once (logged `NTZ UPDATED`, panel label *NTZ levels (latest)*) and that same close is checked against the new levels, so a close already outside them is the indication. From the indication on, the levels are frozen until the cycle ends (*NTZ levels (locked)*); later swings are logged `IGNORED`. The panel label also names where the swings come from (e.g. *1H swings (7, wick)*) — to match Liquid's *Swing Prices (n)* labels, set the structure timeframe to the chart's timeframe, *Swing strength* to n and *Swing source* to Wick. There is no waiting for "fresh" swings: on Start, and the moment a cycle ends, the most recent pair is locked at once, and if only one half exists yet it is shown with the other *pending* and the pair locks the moment the missing half confirms. The one exception: if the most recent pair is the very pair a cycle just finished on (target hit or timed out), it is drawn but a new break only counts once price has closed back inside it, or once a newer swing replaces one side — so the same move is never traded twice.
 2. **Indication.** A structure-TF candle **body closes** outside the NTZ. Wicks never count.
 3. **Correction** and 4. **Continuation** depend on *1H continuation check* (shared setting, default ON):
 
@@ -253,7 +253,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (526 assertions). |
+| `tests/` | Automated test suite (535 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -586,9 +586,9 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           68 pass   0 fail
-test_models       140 pass   0 fail
+test_models       149 pass   0 fail
 ----------------------------------------
-TOTAL: 526 pass, 0 fail
+TOTAL: 535 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
@@ -617,7 +617,7 @@ Coverage includes: the full signal sequence with each milestone on its own bar; 
 - Confirm the stop and target land at the pip distances you set
 - Confirm a cross-session setup carries without resetting
 - Confirm the 4H/1H EMA values match a 50 EMA on the 4H/1H chart
-- With ICC (filter or entry models) on, confirm the locked NTZ in the panels matches the swing high and the most recent swing low on the structure chart, that every ICC panel shows the same levels, and that the bias only changes on a structure-TF close
+- With ICC (filter or entry models) on, confirm that before a break the NTZ in the panels is the most recent swing high and swing low on the structure chart (and updates as new swings confirm), that it freezes once broken, that every ICC panel shows the same levels, and that the bias only changes on a structure-TF close
 - With the ICC Entry Model on, confirm in Dry Run that its entry, SL and TP log lines match the entry type you chose (1H continuation check ON / OFF, or Aggressive)
 
 Only switch to **Live Trading** once the timestamps line up. Live mode places real orders.

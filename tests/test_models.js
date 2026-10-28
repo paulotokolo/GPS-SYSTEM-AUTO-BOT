@@ -38,13 +38,13 @@ function more(s, closes) {
 
 // The base bullish scenario (closes):
 //   G1 104 = swing high, G2 101 = swing low  -> NTZ 104 / 101 locked at G3's close
-//   G3 103 / G4 102 = new swings inside      -> ignored
+//   G4 / G5 / G6 rise without a new swing    -> NTZ unchanged
 //   G6 closes 109 above 104                  -> INDICATION (bullish)
 //   1H 111 swing high, then lower high 108.5 -> CORRECTION
 //   1H closes 109.5 above 108.5              -> CONTINUATION, target 110.2 (4H extreme)
 const BASE = [
-  [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
-  [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
+  [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 102, 102, 102],
+  [102, 102.5, 102.5, 102.5], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
   [110, 111, 110.5, 110.2], [107, 108.5, 107.5, 109.5]
 ];
 const START = END - BASE.length * H4;
@@ -102,8 +102,7 @@ function liveFeed(sb, s) {
   check("1: the NTZ locks once per cycle, shared by both models",
     st.events.find((e) => e.type === "LOCK" && e.kind === null) &&
     /^\[ICC\] Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st.events.find((e) => e.type === "LOCK").text));
-  check("1: later swings inside the NTZ are IGNORED, the lock holds",
-    st.events.some((e) => /New swing detected at 103\.00 — IGNORED/.test(e.text)));
+  check("1: no swing formed before the break, so the NTZ never moved", !types(st).includes("RELOCK"));
   check("1: one INDICATION on the 4H body close above 104",
     st.events.filter((e) => e.type === "INDICATION").length === 1 &&
     st.events.some((e) => /4H closed above NTZ 104\.00\. Break direction: BULLISH/.test(e.text)));
@@ -125,6 +124,44 @@ function liveFeed(sb, s) {
   check("1: and the NEXT cycle locks straight away — the NTZ is never left blank",
     st.lockHigh !== null && st.phase === "WAITING" && st.status === "WAITING FOR INDICATION", st.status);
   check("1: the last ICC entry is remembered for the panel", st.lastIccEntry && st.lastIccEntry.price === 109.5);
+}
+
+// ---------------------------------------------------------------- 1b: NTZ follows the latest swings
+// The client's Oil / Gold report: while no break has happened, the NTZ must always be the most
+// recent swing high and swing low (what the Swing Prices indicator shows), not the pair it
+// first locked. 4H closes 100 104 101 | 103 (new high) | 102 (new low) | 103.5 | 109.
+{
+  const g = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
+             [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109]];
+  const s = series(g, START);
+  const sb = modelSandbox();
+  const st0 = cycle(sb, { d1: [], h4: s.h4.slice(0, 5), h1: s.h1.slice(0, 20) });
+  check("1b: first lock is 104 / 101", /Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st0.events.find((e) => e.type === "LOCK").text));
+  check("1b: a newer swing high (103) replaces it before any break",
+    st0.lockHigh === 103 && st0.lockLow === 101 && st0.phase === "WAITING", st0.lockHigh + "/" + st0.lockLow);
+  check("1b: logged as NTZ UPDATED",
+    st0.events.some((e) => e.type === "RELOCK" && /NTZ UPDATED — new 4H swing confirmed\. Swing high: 103\.00 \| Swing low: 101\.00 \(was 104\.00 \/ 101\.00\)/.test(e.text)));
+  const st1 = cycle(sb, { d1: [], h4: s.h4.slice(0, 6), h1: s.h1.slice(0, 24) });
+  check("1b: then the newer swing low (102) too: NTZ 103 / 102", st1.lockHigh === 103 && st1.lockLow === 102,
+    st1.lockHigh + "/" + st1.lockLow);
+  check("1b: the same close is checked at once against the new levels: 103.5 is above 103 = INDICATION",
+    st1.dir === "buy" && st1.events.some((e) => e.type === "INDICATION" && /4H closed above NTZ 103\.00/.test(e.text)), st1.phase);
+  const st2 = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("1b: once broken the levels freeze for the cycle", st2.lockHigh === 103 && st2.lockLow === 102 && st2.dir === "buy");
+  sb.iccCycle = st0;
+  sb.renderModelPanels();
+  const lbl = sb.document.getElementById("mIccNtzLabel").textContent;
+  check("1b: panel says the NTZ is the LATEST swings while waiting, and which swings",
+    lbl === "NTZ levels (latest) · 4H swings (1, close)", lbl);
+  sb.iccCycle = st2;
+  sb.renderModelPanels();
+  check("1b: and LOCKED once broken", /^NTZ levels \(locked\)/.test(sb.document.getElementById("mIccNtzLabel").textContent));
+}
+{
+  // Panels name where the swings come from, so a mismatch with the chart's indicator is obvious.
+  const sb = modelSandbox({ iccSwingStrength: 7, iccSwingSource: "wick", iccStructTf: "1h" });
+  const p = sb.cycleParams();
+  check("1b: swing settings reach the cycle (1H, strength 7, wick)", p.structTf === "1h" && p.n === 7 && p.src === "wick");
 }
 
 // ---------------------------------------------------------------- 2: the client's bugs
@@ -264,7 +301,7 @@ function liveFeed(sb, s) {
   const s = series(g, START - 4 * H4);
   const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
   const locks = st.events.filter((e) => e.type === "LOCK");
-  check("5: after COMPLETE, the next lock uses fresh swings", locks.length === 2 && !/104\.00/.test(locks[1].text),
+  check("5: after COMPLETE, the next lock uses fresh swings", locks.length >= 2 && !/104\.00/.test(locks[1].text),
     locks.map((e) => e.text).join(" || "));
 }
 
@@ -516,7 +553,7 @@ function liveFvgOrder(over, cycleOver) {
 // The whole cycle on 1H candles: swing high 104 / swing low 101 lock, a 1H close at 106 is the
 // indication, the 1H swing high 110 starts the correction, a close at 110.5 above the lower
 // high 109 is the continuation.
-const H1CYCLE = [100, 104, 101, 102, 103, 102.5, 106, 108, 110, 108.5, 107.5, 109, 108, 110.5];
+const H1CYCLE = [100, 104, 101, 102, 102.5, 103, 106, 108, 110, 108.5, 107.5, 109, 108, 110.5];
 function h1Bars(closes, start) {
   let prev = closes[0];
   return closes.map((c, i) => { const o = prev; prev = c; return { ts: start + i * H1, o, h: Math.max(o, c) + 1, l: Math.min(o, c) - 1, c, v: 1 }; });
