@@ -707,26 +707,31 @@ button:active { transform: scale(0.98); }
         <select id="gpsModelEntryTf"><option value="300">5M</option><option value="900" selected>15M</option></select>
       </div>
       <div class="row"><label>Max entries per cycle</label><input type="number" id="gpsModelMaxEntries" value="2" step="1" min="1" max="10"></div>
-      <div class="row"><label>Volume lookback (candles)</label><input type="number" id="gpsModelVolLookback" value="20" step="1" min="1"></div>
-      <div class="row"><label>Volume multiplier</label><input type="number" id="gpsModelVolMult" value="1.5" step="0.1" min="0.1"></div>
-      <div class="row"><label>Require all timeframe alignment</label><input type="checkbox" id="gpsModelAlign"></div>
-      <div class="row"><label>TP = structure swing high/low</label><input type="checkbox" id="gpsModelTpStruct" checked></div>
-      <div class="row"><label>Stop loss</label>
+      <div class="row"><label>Stop loss mode</label>
         <select id="gpsModelSlMode">
-          <option value="pips" selected>Fixed pip stop</option>
-          <option value="h1">Most recent 1H swing high/low</option>
-          <option value="struct">Most recent structure swing high/low</option>
+          <option value="pips" selected>Fixed pip</option>
+          <option value="struct">Structure TF swing (beyond the NTZ)</option>
         </select>
       </div>
+      <div class="row" id="gpsModelSlPipsRow"><label>Fixed pip SL amount</label><input type="number" id="gpsModelSlPips" value="100" step="1" min="1"></div>
+      <div class="row"><label>Volume confirmation</label><input type="checkbox" id="gpsModelVolOn" checked></div>
+      <div id="gpsModelVolRows">
+        <div class="row"><label>Volume lookback (candles)</label><input type="number" id="gpsModelVolLookback" value="20" step="1" min="1"></div>
+        <div class="row"><label>Volume multiplier</label><input type="number" id="gpsModelVolMult" value="1.5" step="0.1" min="0.1"></div>
+      </div>
+      <div class="row"><label>Require all timeframe alignment</label><input type="checkbox" id="gpsModelAlign"></div>
       <div class="row"><label>Trail after TP (hold past target)</label><input type="checkbox" id="gpsModelTrail"></div>
       <small class="hint">
         The <b>ICC FVG engine</b> &mdash; its own entry system, separate from the six standard GPS
         engines. Dormant until ICC continuation; then on the FVG entry timeframe it tracks every FVG
         in the break direction, and enters when price taps back <b>into</b> an FVG and a candle
         closes back <b>out</b> of it on a volume spike (above the multiplier &times; the average of
-        the lookback). A newer FVG forming beyond a tracked one (below it on buys, above on sells)
-        replaces it. After <b>Max entries per cycle</b> it stops and waits for the TP target.
-        Fixed pip stop = the normal Stop loss (pips) setting.
+        the lookback; switch <b>Volume confirmation</b> off to drop that check). A newer FVG
+        forming beyond a tracked one (below it on buys, above on sells) replaces it. Every entry
+        aims at the structure TF swing target; after <b>Max entries per cycle</b> it stops and
+        waits for it. <b>Structure TF swing</b> stop = just beyond the NTZ level continuation broke
+        back from (below the NTZ low on buys, above the NTZ high on sells). Not filtered by the
+        50 EMA or the standard engines.
       </small>
     </div>
     <div class="row"><label>Enable ICC Entry Model</label><input type="checkbox" id="iccModelOn"></div>
@@ -2871,6 +2876,7 @@ function runIccCycle(p, data, mods) {
     if (!shs || !sls || !(shs.val > sls.val)) return false;
     var same = (shs.ts + "/" + sls.ts) === st.prevPair && (st.resetWhy === "COMPLETE" || st.resetWhy === "TIMEOUT");
     st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
+    st.lockHiWick = shs.bar.h; st.lockLoWick = sls.bar.l;
     st.status = "WAITING FOR INDICATION";
     st.needsFreshBreak = same;
     emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
@@ -3196,7 +3202,8 @@ function modelStop(kind, entry, dir, sl1h, slStruct) {
 function modelTarget(kind, entry, dir, target) {
   if (modelOpt(kind, "Trail")) return { tp: null, how: "none — held past the target, trail takes over there" };
   var sell = dir === "sell";
-  if (modelOpt(kind, "TpStruct") && target !== null && (sell ? target < entry : target > entry)) {
+  var structTp = kind === "gps" ? true : modelOpt(kind, "TpStruct");     // the GPS model always uses it
+  if (structTp && target !== null && (sell ? target < entry : target > entry)) {
     return { tp: target, how: "structure target" };
   }
   var tp = tpPricesFor(entry, dir)[0];
@@ -3421,7 +3428,7 @@ function runFvgEngine(st, bars, p) {
         z.tapped = false;                              // this exit is used, with or without volume
         if (t <= st.m.gps.activeTs) continue;          // before the engine was live
         var ratio = volume(i);
-        if (ratio === null || ratio <= p.volMult) {
+        if (p.volOn !== false && (ratio === null || ratio <= p.volMult)) {
           emit(t, "NOVOL|" + z.id, word.toUpperCase() + " FVG " + zone(z) + ": price tapped in and closed back out at " +
                fmt(b.c) + " without the volume (" + (ratio === null ? "n/a" : ratio.toFixed(2) + "×") + " vs " +
                p.volMult + "× needed) — no entry, still tracking.");
@@ -3429,7 +3436,8 @@ function runFvgEngine(st, bars, p) {
         }
         out.entries++;
         emit(t, "ENTRY", "FVG ENTRY " + out.entries + "/" + p.max + " — " + tfName_ + " " + word + " FVG " + zone(z) +
-             ": price tapped in and closed back out at " + fmt(b.c) + " on " + ratio.toFixed(2) + "× volume. " + side + ".",
+             ": price tapped in and closed back out at " + fmt(b.c) +
+             (p.volOn === false ? " (volume check off). " : " on " + ratio.toFixed(2) + "× volume. ") + side + ".",
              bull ? "log-buy" : "log-sell", { act: "fvgentry", dir: st.dir, entry: b.c, n: out.entries });
         out.fvgs.splice(f, 1);
         if (out.entries >= p.max) {
@@ -3462,15 +3470,31 @@ function runFvgEngine(st, bars, p) {
   return out;
 }
 
+// The GPS Entry Model's stop: a fixed pip distance of its own, or just beyond the NTZ level
+// continuation broke back from — the low of the NTZ swing-low candle on buys (high of the
+// swing-high candle on sells). Falls back to the pip amount if that level is not beyond entry.
+function gpsFvgStop(st, entry, dir) {
+  var sell = dir === "sell";
+  var pips = Math.max(1, cfg.gpsModelSlPips || 100);
+  var pipSl = sell ? entry + pipsToPrice(pips) : entry - pipsToPrice(pips);
+  if (cfg.gpsModelSlMode !== "struct") return { sl: pipSl, how: "fixed " + pips + " pips" };
+  var lvl = sell ? (st.lockHiWick !== undefined ? st.lockHiWick : st.lockHigh)
+                 : (st.lockLoWick !== undefined ? st.lockLoWick : st.lockLow);
+  if (lvl !== null && lvl !== undefined && (sell ? lvl > entry : lvl < entry)) {
+    return { sl: lvl, how: "structure TF swing — just " + (sell ? "above the NTZ high" : "below the NTZ low") };
+  }
+  return { sl: pipSl, how: "fixed " + pips + " pips — the NTZ level is not beyond the entry" };
+}
+
 // Replays the FVG engine for the live cycle and acts on anything new.
 function updateGpsFvgEngine() {
   if (!cfg || !cfg.gpsModelOn) return;
   var st = iccCycle;
   if (!st || !st.dir || !st.m.gps.active || st.contBarTs === null) { gpsFvg = null; return; }
   var bars = closedBars(gpsFvgStore);
-  var p = { tfSec: gpsEntryTf(), max: Math.max(1, cfg.gpsModelMaxEntries || 2),
+  var p = { tfSec: gpsEntryTf(), max: Math.max(1, cfg.gpsModelMaxEntries || 2), volOn: cfg.gpsModelVolOn !== false,
             volLen: Math.max(1, cfg.gpsModelVolLookback || 20), volMult: cfg.gpsModelVolMult > 0 ? cfg.gpsModelVolMult : 1.5 };
-  if (bars.length < p.volLen + 3) return;                     // feed still loading
+  if (bars.length < (p.volOn ? p.volLen : 0) + 3) return;     // feed still loading
   var r = runFvgEngine(st, bars, p);
   gpsFvg = r;
   if (gpsFvgSeen === null) {                                   // first read: history, never action
@@ -3498,8 +3522,7 @@ function placeGpsModelEntry(e, p) {
     return;
   }
   var st = iccCycle;
-  var s = modelStop("gps", e.entry, e.dir, e.dir === "sell" ? st.latest.h1Hi : st.latest.h1Lo,
-                    e.dir === "sell" ? st.latest.sHi : st.latest.sLo);
+  var s = gpsFvgStop(st, e.entry, e.dir);
   var tp = modelTarget("gps", e.entry, e.dir, st.target);
   log(tag + " " + side + " " + fmt(e.entry) + " | SL " + fmt(s.sl) + " (" + s.how + ") | TP " +
       (tp.tp !== null ? fmt(tp.tp) : "none") + " (" + tp.how + ")", e.dir === "sell" ? "log-sell" : "log-buy");
@@ -3527,6 +3550,10 @@ function syncModelOptions() {
   });
   any = any || document.getElementById("iccOn").checked;
   document.getElementById("iccCycleOpts").classList.toggle("shown", any);
+  document.getElementById("gpsModelSlPipsRow").style.display =
+    document.getElementById("gpsModelSlMode").value === "struct" ? "none" : "";
+  document.getElementById("gpsModelVolRows").style.display =
+    document.getElementById("gpsModelVolOn").checked ? "" : "none";
 }
 
 // ---- Shared panel views: phase colour + 3-dot cycle progress, last cycle, expiry, position.
@@ -5191,7 +5218,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
   "iccOn","iccSwingStrength","iccSwingSource","iccRequireH1",
-  "gpsModelOn","gpsModelEntryTf","gpsModelMaxEntries","gpsModelVolLookback","gpsModelVolMult","gpsModelAlign","gpsModelTpStruct","gpsModelSlMode","gpsModelTrail",
+  "gpsModelOn","gpsModelEntryTf","gpsModelMaxEntries","gpsModelSlMode","gpsModelSlPips","gpsModelVolOn","gpsModelVolLookback","gpsModelVolMult","gpsModelAlign","gpsModelTrail",
   "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
   "sessWindowOn","sessWindowStart","sessWindowStop","sessWindowTz","sessWindowFlatten",
@@ -5335,8 +5362,9 @@ function readConfig() {
     gpsModelVolLookback: Math.max(1, int("gpsModelVolLookback", 20)),
     gpsModelVolMult: Math.max(0.1, num("gpsModelVolMult", 1.5)),
     gpsModelAlign: chk("gpsModelAlign"),
-    gpsModelTpStruct: chk("gpsModelTpStruct"),
-    gpsModelSlMode: document.getElementById("gpsModelSlMode").value || "pips",
+    gpsModelSlMode: document.getElementById("gpsModelSlMode").value === "struct" ? "struct" : "pips",
+    gpsModelSlPips: Math.max(1, num("gpsModelSlPips", 100)),
+    gpsModelVolOn: chk("gpsModelVolOn"),
     gpsModelTrail: chk("gpsModelTrail"),
     iccModelOn: chk("iccModelOn"),
     iccModelAlign: chk("iccModelAlign"),
@@ -5655,9 +5683,10 @@ function startBot() {
         : "off"),
       "Models      " + (cfg.gpsModelOn || cfg.iccModelOn ? "same shared " + cfg.iccStructTf.toUpperCase() + " cycle  ·  " : "") +
         "GPS Entry Model " + (cfg.gpsModelOn ? "ON (ICC FVG engine on " + entryTfLabel(gpsEntryTf()) + ", max " +
-          cfg.gpsModelMaxEntries + " entries, volume > " + cfg.gpsModelVolMult + "× " + cfg.gpsModelVolLookback +
-          "-bar avg" + (cfg.gpsModelAlign ? ", alignment" : "") +
-          ", SL " + cfg.gpsModelSlMode + (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
+          cfg.gpsModelMaxEntries + " entries, " + (cfg.gpsModelVolOn
+            ? "volume > " + cfg.gpsModelVolMult + "× " + cfg.gpsModelVolLookback + "-bar avg" : "volume check OFF") + (cfg.gpsModelAlign ? ", alignment" : "") +
+          ", SL " + (cfg.gpsModelSlMode === "struct" ? "structure TF swing" : cfg.gpsModelSlPips + " pips") +
+          (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (" + (cfg.iccModelAggressive ? "AGGRESSIVE live-cross entry"
           : "1H entry" + (cfg.iccModelAlign ? ", alignment" : "")) +
           ", SL " + (cfg.iccModelAggressive ? "inside 1H swing range" : cfg.iccModelSlMode) +
@@ -5822,7 +5851,7 @@ Framework.OnLoad = function () {
     if (zm) zm.addEventListener("change", syncZoneLabels);
   });
   syncZoneLabels();
-  ["gpsModelOn", "iccModelOn", "iccOn"].forEach(function (id) {
+  ["gpsModelOn", "iccModelOn", "iccOn", "gpsModelSlMode", "gpsModelVolOn"].forEach(function (id) {
     document.getElementById(id).addEventListener("change", syncModelOptions);
   });
   syncModelOptions();

@@ -430,6 +430,47 @@ function fvgSandbox(over) {
   sb.updateGpsFvgEngine();
   check("7: a re-read does not trade the same candle twice", sb.__orders.length === 1);
 }
+// Stop-loss modes, volume ON/OFF, structure TP — the rest of the spec.
+function liveFvgOrder(over, cycleOver) {
+  const sb = fvgSandbox(over);
+  const T0 = Math.floor(Date.now() / M15) * M15 - FVG_ROWS.length * M15;
+  sb.iccCycle = liveCycle(T0, Object.assign({ lockLowWickDummy: 0 }, cycleOver || {}));
+  const bars = cand(FVG_ROWS, T0);
+  sb.gpsFvgStore = storeOf(bars.slice(0, -1), M15); sb.updateGpsFvgEngine();
+  sb.gpsFvgStore = storeOf(bars, M15); sb.updateGpsFvgEngine();
+  return sb;
+}
+{
+  const sb = liveFvgOrder({ gpsModelSlMode: "pips", gpsModelSlPips: 35 });
+  check("7: SL mode Fixed pip uses the GPS model's own pip amount (35)", sb.__orders[0] && sb.__orders[0].sl.pips === 35,
+    sb.__orders[0] && JSON.stringify(sb.__orders[0].sl));
+}
+{
+  // NTZ low 95 (its swing candle's wick 94.5): SL just below it = 103.4 - 94.5 = 89 pips.
+  const sb = liveFvgOrder({ gpsModelSlMode: "struct" }, { lockLoWick: 94.5 });
+  check("7: SL mode Structure TF swing = just below the NTZ low (the swing candle's low)",
+    sb.__orders[0] && sb.__orders[0].sl.pips === 89, sb.__orders[0] && JSON.stringify(sb.__orders[0].sl));
+  check("7: and logged as the structure stop", sb.__logLines.some((l) => /SL 94\.50 \(structure TF swing — just below the NTZ low\)/.test(l)));
+}
+{
+  // Volume confirmation OFF: the first tap + exit (bar 5, normal volume) is already an entry.
+  const sb = buildSandbox(); sb.priceDecimals = 2;
+  const T = Date.UTC(2026, 9, 20, 0, 0, 0);
+  const r = sb.runFvgEngine(liveCycle(T), cand(FVG_ROWS, T), Object.assign({}, FVP, { volOn: false }));
+  const e = r.events.find((x) => x.type === "ENTRY");
+  check("7: Volume confirmation OFF: tap + close back out is an entry without a volume spike",
+    !!e && e.entry === 102.5 && /\(volume check off\)/.test(e.text), e && e.text);
+}
+{
+  const sb = liveFvgOrder({ gpsModelTpStruct: false });
+  check("7: TP is always the structure TF swing target (there is no TP1-pips option for this model)",
+    sb.__orders[0] && sb.__orders[0].tp.pips === 166, sb.__orders[0] && JSON.stringify(sb.__orders[0].tp));
+}
+{
+  // The 50 EMA filter does not touch this engine.
+  const sb = liveFvgOrder({ emaFilterOn: true });
+  check("7: the 50 EMA filter does not block FVG entries", sb.__orders.length === 1);
+}
 {
   // Panel: DORMANT -> ACTIVE (tracking FVGs, entries used) -> TP MONITORING.
   const sb = fvgSandbox();

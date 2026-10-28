@@ -192,7 +192,10 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | :--- | :--- | :--- |
 | FVG entry timeframe | **15M** | 5M or 15M — the engine's own candle feed |
 | Max entries per cycle | **2** | 1–10; after it, TP monitoring |
-| Volume lookback | 20 | candles in the volume baseline |
+| Stop loss mode | **Fixed pip** | *Fixed pip*, or *Structure TF swing* — just beyond the NTZ level continuation broke back from: the low of the NTZ swing-low candle on buys, the high of the swing-high candle on sells (falls back to the pip amount if that is not beyond the entry) |
+| Fixed pip SL amount | 100 | this model's own pip stop; shown only in Fixed pip mode |
+| Volume confirmation | **ON** | OFF: a tap and close back out is enough, no volume spike needed |
+| Volume lookback | 20 | candles in the volume baseline (shown while volume confirmation is ON) |
 | Volume multiplier | 1.5 | the exit candle's volume must be above this × the baseline average |
 
 - **Dormant** until the shared cycle reaches continuation (with alignment ON: Daily/4H agree and price pulls back to the latest 1H swing).
@@ -200,7 +203,8 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 - **Entry:** price comes back **into** an FVG, then a candle **closes back out** of it in the break direction on a volume spike — entry at that close, market order tagged `GPSBOT-GPSM`. A tap that exits without the volume is logged and does not count; the FVG stays live and needs price back inside before the next exit can.
 - **Replacement:** a new bullish FVG forming entirely below a tracked one replaces it (bearish: above). Nothing else retires an FVG except its own entry.
 - **Max entries:** once used, the engine stops tracking and the cycle runs to its TP target (*TP monitoring*), then resets with the shared cycle.
-- SL / TP / Trail after TP use the GPS Entry Model's settings. Only an FVG exit on the candle that just closed after the engine went live is traded — history never is.
+- **TP:** every entry in the cycle aims at the same structure TF swing target (the cycle's target); *Trail after TP* works as in the ICC Entry Model. Not filtered by the 50 EMA. Only an FVG exit on the candle that just closed after the engine went live is traded — history never is.
+- **Cycle end:** target hit, structural failure (a structure-TF body close through the wrong side of the NTZ) or Max wait — then the engine resets and waits for the next continuation.
 
 The panel's *Engine status* reads DORMANT / ACTIVE — tracking N FVGs · entries x/max / TP MONITORING.
 
@@ -249,7 +253,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (520 assertions). |
+| `tests/` | Automated test suite (526 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -582,14 +586,14 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           68 pass   0 fail
-test_models       134 pass   0 fail
+test_models       140 pass   0 fail
 ----------------------------------------
-TOTAL: 520 pass, 0 fail
+TOTAL: 526 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
 
-Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read; the 50 EMA gate on 1H, 4H and Both, computed from 1H/4H bars only; swing detection on closes (body rule) or wicks at any swing strength, matching Liquid's *Swing Prices* labels; the one shared ICC cycle — swing lock and ignored swings, body-close indication, correction and continuation for entry types 1 and 2, completion at the TP target, disrespect (and the same close starting the opposite cycle), Max wait timeouts in every phase, and new swings (even beyond the locked level) never ending a cycle — with the ICC Filter, both entry models and alignment ON/OFF all reading identical levels and phases; the filter's opposite-bias pause, invalidation warning and auto close; the ICC Entry Model's market entry, SL and TP options, trail after TP and one trade per cycle, and Aggressive Entry Mode's live-cross trigger, tight stop and two-entry cap; the GPS Entry Model's ICC FVG engine — FVG tracking from the continuation candle, tap-and-exit entries only on a volume spike, the no-volume exit, replacement by a lower (higher) FVG, the max-entry cap and TP monitoring, both directions, dormant before continuation, and the standard engines staying independent; history never placing an order; the gates holding the order but not the signal; adopted and manual trades getting SL/TP from settings; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
+Coverage includes: the full signal sequence with each milestone on its own bar; all six engines running independently on one series and firing separate entries; the sell side as the exact mirror of the buy side, with the master direction toggles gating each; sell-side trailing and breakeven reversing correctly and refusing to loosen; the Rolling Lookback reference and its self re-arm; both 5-candle zones (R-G-G-G-R and G-R-R-R-G) and how they differ from the FVG gap on identical candles; zone max-age expiry and the require-fresh-sweep rule; pip-based SL/TP on both attach paths; the higher-timeframe trend read; the 50 EMA gate on 1H, 4H and Both, computed from 1H/4H bars only; swing detection on closes (body rule) or wicks at any swing strength, matching Liquid's *Swing Prices* labels; the one shared ICC cycle — swing lock and ignored swings, body-close indication, correction and continuation for entry types 1 and 2, completion at the TP target, disrespect (and the same close starting the opposite cycle), Max wait timeouts in every phase, and new swings (even beyond the locked level) never ending a cycle — with the ICC Filter, both entry models and alignment ON/OFF all reading identical levels and phases; the filter's opposite-bias pause, invalidation warning and auto close; the ICC Entry Model's market entry, SL and TP options, trail after TP and one trade per cycle, and Aggressive Entry Mode's live-cross trigger, tight stop and two-entry cap; the GPS Entry Model's ICC FVG engine — FVG tracking from the continuation candle, tap-and-exit entries only on a volume spike, the no-volume exit, replacement by a lower (higher) FVG, the max-entry cap and TP monitoring, both stop-loss modes, volume confirmation OFF, the structure target, both directions, dormant before continuation, and the standard engines staying independent; history never placing an order; the gates holding the order but not the signal; adopted and manual trades getting SL/TP from settings; session P/L scoping; the restart freeze; cross-session carry-over and its expiry; every fire condition gated independently; a fired setup surviving a session open with persist ON, and being reset with it off; `sig_reset` clearing the refs; invalidation preserving the sweep; configurable session windows; NY Lunch exclusion; EDT resolution; replay placing zero orders; risk sizing against the real stop distance; what actually reaches SendOrder in each attach mode; and the trade-management layer — breakeven, trailing, the never-loosen rule, and the circuit breaker's scope and day boundary.
 
 **Not yet tested against live market data.**
 
