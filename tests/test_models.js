@@ -41,7 +41,7 @@ function more(s, closes) {
 //   G4 / G5 / G6 rise without a new swing    -> NTZ unchanged
 //   G6 closes 109 above 104                  -> INDICATION (bullish)
 //   1H 111 swing high, then lower high 108.5 -> CORRECTION
-//   1H closes 109.5 above 108.5              -> CONTINUATION, target 110.2 (4H extreme)
+//   1H closes 109.5 above 108.5              -> CONTINUATION, target 112 (the wick of the 4H swing high 110.2)
 const BASE = [
   [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 102, 102, 102],
   [102, 102.5, 102.5, 102.5], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
@@ -97,7 +97,7 @@ function liveFeed(sb, s) {
 // ---------------------------------------------------------------- 1: the shared cycle
 {
   const sb = modelSandbox({ gpsModelOn: true });
-  const s = more(series(BASE, START), [110.5]);
+  const s = more(series(BASE, START), [111.5]);
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   console.log("===== 1: ONE SHARED CYCLE, BOTH MODELS ON =====");
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
@@ -111,7 +111,7 @@ function liveFeed(sb, s) {
   check("1: CORRECTION when the 1H turns down — price never came back into the NTZ",
     st.events.some((e) => e.type === "CORRECTION" && /swing high 111\.00/.test(e.text)));
   check("1: CONTINUATION on the 1H close above the lower high, with the 4H target",
-    st.events.some((e) => e.type === "CONTINUATION" && /closed above 108\.50\. TP target 110\.20/.test(e.text)));
+    st.events.some((e) => e.type === "CONTINUATION" && /closed above 108\.50\. TP target 112\.00/.test(e.text)));
   const entry = st.events.find((e) => e.type === "ENTRY");
   check("1: the ICC model enters on that same 1H close", !!entry && entry.entry === 109.5 && entry.kind === "icc");
   check("1: the GPS model's engines switch on at that same close",
@@ -119,8 +119,8 @@ function liveFeed(sb, s) {
   check("1: the cycle does NOT end at the entry — it ends when the TP target is hit",
     st.events.filter((e) => e.type === "COMPLETE").every((e) => e.ts > entry.ts));
   check("1: each model logs the brief's completion line",
-    st.events.some((e) => e.text.startsWith("[ICC ENTRY MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 110.20")) &&
-    st.events.some((e) => e.text.startsWith("[ICC GPS MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 110.20")));
+    st.events.some((e) => e.text.startsWith("[ICC ENTRY MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 112.00")) &&
+    st.events.some((e) => e.text.startsWith("[ICC GPS MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 112.00")));
   check("1: the finished cycle is recorded as COMPLETE, with the ICC entry it took",
     st.lastCycle && st.lastCycle.why === "COMPLETE" && st.lastCycle.iccEntered === true);
   check("1: and the NEXT cycle locks straight away — the NTZ is never left blank",
@@ -149,13 +149,15 @@ function liveFeed(sb, s) {
   check("1b: the same close is checked at once against the new levels: 103.5 is above 103 = INDICATION",
     st1.dir === "buy" && st1.events.some((e) => e.type === "INDICATION" && /4H closed above NTZ 103\.00/.test(e.text)), st1.phase);
   const st2 = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
-  check("1b: once broken the levels freeze for the cycle", st2.lockHigh === 103 && st2.lockLow === 102 && st2.dir === "buy");
+  const tt = types(st2), ind = tt.indexOf("INDICATION"), end = tt.indexOf("COMPLETE");
+  check("1b: once broken the levels freeze for the cycle (no NTZ update between the break and the end)",
+    ind >= 0 && end > ind && !tt.slice(ind, end).includes("RELOCK") && /TP target/.test(st2.events.find((e) => e.type === "CONTINUATION").text), tt.join(","));
   sb.iccCycle = st0;
   sb.renderModelPanels();
   const lbl = sb.document.getElementById("mIccNtzLabel").textContent;
   check("1b: panel says the NTZ is the LATEST swings while waiting, and which swings",
     lbl === "NTZ levels (latest) · 4H swings (1, close)", lbl);
-  sb.iccCycle = st2;
+  sb.iccCycle = st1;
   sb.renderModelPanels();
   check("1b: and LOCKED once broken", /^NTZ levels \(locked\)/.test(sb.document.getElementById("mIccNtzLabel").textContent));
 }
@@ -168,31 +170,31 @@ function liveFeed(sb, s) {
 
 // ---------------------------------------------------------------- 1c: cycle complete, live
 {
-  // The base cycle up to just after continuation (target 110.20), then the forming 1H candle
-  // touches 110.20: the cycle completes on the touch, not the close.
+  // The base cycle up to just after continuation (target 112, the swing's wick), then the
+  // forming 1H candle touches 112: the cycle completes on the touch, not the close.
   const s = series(BASE, START);
   const last = s.h1[s.h1.length - 1];
   const sb = modelSandbox();
   sb.h4Store = storeOf(s.h4, H4);
   sb.h1Store = storeOf(s.h1, H1, { o: 109.5, h: 110, l: 109.4, c: 109.9 });
   sb.updateEntryModels();
-  check("1c: in CONTINUATION, target 110.20 not touched yet", sb.iccCycle.phase === "CONTINUATION" && sb.iccCycle.target === 110.2,
+  check("1c: in CONTINUATION, target 112 not touched yet", sb.iccCycle.phase === "CONTINUATION" && sb.iccCycle.target === 112,
     sb.iccCycle.phase + " " + sb.iccCycle.target);
   check("1c: nothing for the ticker to re-check", sb.liveCycleEventDue() === false);
-  sb.h1Store = storeOf(s.h1, H1, { o: 109.5, h: 110.25, l: 109.4, c: 110.1 });
+  sb.h1Store = storeOf(s.h1, H1, { o: 109.5, h: 112.05, l: 109.4, c: 111.9 });
   check("1c: a tick at the target is picked up by the ticker", sb.liveCycleEventDue() === true);
   sb.updateEntryModels();
   const done = sb.iccCycle.events.find((e) => e.type === "COMPLETE");
   check("1c: the cycle completes on the touch — no close needed",
-    !!done && sb.iccCycle.lastCycle && sb.iccCycle.lastCycle.why === "COMPLETE" && sb.iccCycle.lastCycle.target === 110.2);
+    !!done && sb.iccCycle.lastCycle && sb.iccCycle.lastCycle.why === "COMPLETE" && sb.iccCycle.lastCycle.target === 112);
   check("1c: the log names the target and the candle that touched it",
-    !!done && new RegExp("✅ CYCLE COMPLETE — SWING TARGET REACHED at 110\\.20 on the 1H candle of " +
+    !!done && new RegExp("✅ CYCLE COMPLETE — SWING TARGET REACHED at 112\\.00 on the 1H candle of " +
       sb.nyParts(last.ts + H1).fullLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(done.text), done && done.text);
   const row = sb.signalLog.find((r) => r.engine === "CYCLE COMPLETE");
   check("1c: the signal log gets one CYCLE COMPLETE row with the price and the candle time",
-    sb.signalLog.filter((r) => r.engine === "CYCLE COMPLETE").length === 1 && row.entry === 110.2 &&
+    sb.signalLog.filter((r) => r.engine === "CYCLE COMPLETE").length === 1 && row.entry === 112 &&
     row.time === sb.nyParts(last.ts + H1).fullLabel && /SWING TARGET REACHED \(BULLISH cycle\)/.test(row.ref), JSON.stringify(row));
-  sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109.5, h: 110.4, l: 109.4, c: 110.3, v: 1 }]), H1);
+  sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109.5, h: 112.4, l: 109.4, c: 112.3, v: 1 }]), H1);
   sb.updateEntryModels();
   check("1c: when that candle closes it is the same completion (logged once)",
     sb.iccCycle.events.filter((e) => e.type === "COMPLETE").length === 1 &&
@@ -210,14 +212,14 @@ const RUN = [[111, 113, 110.5, 111.5], [112, 114, 113.8, 113.9]];
   const s = series(g, START - 5 * H4);
   const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
   const cont = st.events.find((e) => e.type === "CONTINUATION");
-  check("1d: buy target = the most recent 4H swing high above the NTZ and the trigger (120)",
-    st.target === 120 && !!cont && /TP target 120\.00 \(the 4H swing high of /.test(cont.text), cont && cont.text);
-  check("1d: fixed for the cycle", st.phase === "CONTINUATION" && st.target === 120);
+  check("1d: buy target = the wick of the most recent 4H swing high above the NTZ and the trigger (120 close, 121 wick)",
+    st.target === 121 && !!cont && /TP target 121\.00 \(the 4H swing high of /.test(cont.text), cont && cont.text);
+  check("1d: fixed for the cycle", st.phase === "CONTINUATION" && st.target === 121);
   const flip = (rows) => rows.map((r) => r.map((x) => 200 - x));
   const s2 = series(flip(g), START - 5 * H4);
   const st2 = cycle(modelSandbox(), { d1: [], h4: s2.h4, h1: s2.h1 });
-  check("1d: sell target = the most recent 4H swing low below the NTZ and the trigger (80)",
-    st2.dir === "sell" && st2.target === 80, st2.dir + " " + st2.target);
+  check("1d: sell target = the wick of the most recent 4H swing low below the NTZ and the trigger (80 close, 79 wick)",
+    st2.dir === "sell" && st2.target === 79, st2.dir + " " + st2.target);
   const s3 = series(BASE.slice(0, 7).concat(RUN), START - 2 * H4);
   const st3 = cycle(modelSandbox({ tp1Pips: 50 }), { d1: [], h4: s3.h4, h1: s3.h1 });
   check("1d: no swing beyond the NTZ and the trigger -> TP1 pips",
@@ -262,7 +264,7 @@ const RUN = [[111, 113, 110.5, 111.5], [112, 114, 113.8, 113.9]];
   check("3: the live continuation close places ONE market order", sb.__orders.length === 1 && o.tradingAction === "BUY");
   check("3: tagged GPSBOT-ICC", o && o.comment === "GPSBOT-ICC");
   check("3: default stop = fixed pips (100)", o && o.sl && o.sl.pips === 100, o && JSON.stringify(o.sl));
-  check("3: default TP = the structure target (110.2 - 109.5 = 7 pips)", o && o.tp && o.tp.pips === 7, o && JSON.stringify(o.tp));
+  check("3: default TP = the structure target, the swing wick (112 - 109.5 = 25 pips)", o && o.tp && o.tp.pips === 25, o && JSON.stringify(o.tp));
   check("3: the CSV row is labelled ICC ENTRY MODEL", sb.signalLog.length === 1 && sb.signalLog[0].model === "ICC ENTRY MODEL");
   sb.updateEntryModels();
   check("3: a re-read does not trade the same candle twice", sb.__orders.length === 1);
@@ -801,12 +803,12 @@ const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], 
 {
   // The panel: current status and last cycle are separate, so they never contradict.
   const sb = modelSandbox({ gpsModelOn: true });
-  sb.iccCycle = cycle(sb, { d1: [], ...(() => { const s = more(series(BASE, START), [110.5]); return { h4: s.h4, h1: s.h1 }; })() });
+  sb.iccCycle = cycle(sb, { d1: [], ...(() => { const s = more(series(BASE, START), [111.5]); return { h4: s.h4, h1: s.h1 }; })() });
   sb.engines = [];
   sb.renderModelPanels();
   const txt = (id) => sb.document.getElementById(id).textContent;
   check("8c: panel — right after a target hit, cycle status says COMPLETE (and that the next NTZ is waiting)",
-    txt("mIccStatus") === "COMPLETE ✅ — target 110.20 reached · next NTZ locked, waiting for indication" &&
+    txt("mIccStatus") === "COMPLETE ✅ — target 112.00 reached · next NTZ locked, waiting for indication" &&
     /ph-done/.test(sb.document.getElementById("mIccStatus").className), txt("mIccStatus"));
   check("8c: panel — Last cycle status is COMPLETE (an entry was taken), in silver",
     txt("mIccLastCycle") === "COMPLETE" && /ph-done/.test(sb.document.getElementById("mIccLastCycle").className), txt("mIccLastCycle"));
@@ -912,7 +914,7 @@ const aggSb = (over) => modelSandbox(Object.assign({ iccModelAggressive: true },
   const o = sb.__orders[0];
   check("9: armed + live cross back above 104 fires a BUY immediately", sb.__orders.length === 1 && o.tradingAction === "BUY");
   check("9: tagged GPSBOT-ICCA", o && o.comment === "GPSBOT-ICCA");
-  check("9: TP = the most recent 4H swing high above the NTZ and the entry (109 - 104.2 = 48 pips)", o && o.tp && o.tp.pips === 48, o && JSON.stringify(o.tp));
+  check("9: TP = the most recent 4H swing high wick above the NTZ and the entry (110 - 104.2 = 58 pips)", o && o.tp && o.tp.pips === 58, o && JSON.stringify(o.tp));
   check("9: SL below the entry and tight (inside the swing range / arming candle)",
     o && o.sl && o.sl.pips > 0 && o.sl.pips < 30, o && JSON.stringify(o.sl));
   check("9: logged as ENTRY 1/2", sb.__logLines.some((l) => /AGGRESSIVE ENTRY 1\/2 — price crossed above 104\.00 live\. BUY Entry: 104\.20/.test(l)));
