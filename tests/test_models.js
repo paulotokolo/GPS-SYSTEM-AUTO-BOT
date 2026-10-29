@@ -119,8 +119,8 @@ function liveFeed(sb, s) {
   check("1: the cycle does NOT end at the entry — it ends when the TP target is hit",
     st.events.filter((e) => e.type === "COMPLETE").every((e) => e.ts > entry.ts));
   check("1: each model logs the brief's completion line",
-    st.events.some((e) => e.text === "[ICC ENTRY MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset.") &&
-    st.events.some((e) => e.text === "[ICC GPS MODEL] CYCLE COMPLETE — TP target hit at 110.20. Bot reset."));
+    st.events.some((e) => e.text.startsWith("[ICC ENTRY MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 110.20")) &&
+    st.events.some((e) => e.text.startsWith("[ICC GPS MODEL] ✅ CYCLE COMPLETE — SWING TARGET REACHED at 110.20")));
   check("1: the finished cycle is recorded as COMPLETE, with the ICC entry it took",
     st.lastCycle && st.lastCycle.why === "COMPLETE" && st.lastCycle.iccEntered === true);
   check("1: and the NEXT cycle locks straight away — the NTZ is never left blank",
@@ -164,6 +164,39 @@ function liveFeed(sb, s) {
   const sb = modelSandbox({ iccSwingStrength: 7, iccSwingSource: "wick", iccStructTf: "1h" });
   const p = sb.cycleParams();
   check("1b: swing settings reach the cycle (1H, strength 7, wick)", p.structTf === "1h" && p.n === 7 && p.src === "wick");
+}
+
+// ---------------------------------------------------------------- 1c: cycle complete, live
+{
+  // The base cycle up to just after continuation (target 110.20), then the forming 1H candle
+  // touches 110.20: the cycle completes on the touch, not the close.
+  const s = series(BASE, START);
+  const last = s.h1[s.h1.length - 1];
+  const sb = modelSandbox();
+  sb.h4Store = storeOf(s.h4, H4);
+  sb.h1Store = storeOf(s.h1, H1, { o: 109.5, h: 110, l: 109.4, c: 109.9 });
+  sb.updateEntryModels();
+  check("1c: in CONTINUATION, target 110.20 not touched yet", sb.iccCycle.phase === "CONTINUATION" && sb.iccCycle.target === 110.2,
+    sb.iccCycle.phase + " " + sb.iccCycle.target);
+  check("1c: nothing for the ticker to re-check", sb.liveCycleEventDue() === false);
+  sb.h1Store = storeOf(s.h1, H1, { o: 109.5, h: 110.25, l: 109.4, c: 110.1 });
+  check("1c: a tick at the target is picked up by the ticker", sb.liveCycleEventDue() === true);
+  sb.updateEntryModels();
+  const done = sb.iccCycle.events.find((e) => e.type === "COMPLETE");
+  check("1c: the cycle completes on the touch — no close needed",
+    !!done && sb.iccCycle.lastCycle && sb.iccCycle.lastCycle.why === "COMPLETE" && sb.iccCycle.lastCycle.target === 110.2);
+  check("1c: the log names the target and the candle that touched it",
+    !!done && new RegExp("✅ CYCLE COMPLETE — SWING TARGET REACHED at 110\\.20 on the 1H candle of " +
+      sb.nyParts(last.ts + H1).fullLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).test(done.text), done && done.text);
+  const row = sb.signalLog.find((r) => r.engine === "CYCLE COMPLETE");
+  check("1c: the signal log gets one CYCLE COMPLETE row with the price and the candle time",
+    sb.signalLog.filter((r) => r.engine === "CYCLE COMPLETE").length === 1 && row.entry === 110.2 &&
+    row.time === sb.nyParts(last.ts + H1).fullLabel && /SWING TARGET REACHED \(BULLISH cycle\)/.test(row.ref), JSON.stringify(row));
+  sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109.5, h: 110.4, l: 109.4, c: 110.3, v: 1 }]), H1);
+  sb.updateEntryModels();
+  check("1c: when that candle closes it is the same completion (logged once)",
+    sb.iccCycle.events.filter((e) => e.type === "COMPLETE").length === 1 &&
+    sb.signalLog.filter((r) => r.engine === "CYCLE COMPLETE").length === 1);
 }
 
 // ---------------------------------------------------------------- 2: the client's bugs
@@ -525,11 +558,25 @@ function liveFvgOrder(over, cycleOver) {
   sb.updateGpsFvgEngine();
   sb.renderModelPanels();
   check("7: panel — ACTIVE, tracking FVGs, entries used", txt() === "ACTIVE — tracking 1 bullish FVG · entries 1/2", txt());
+  const shown = (id) => sb.document.getElementById(id).style.display !== "none";
+  check("7: panel — TP target / distance hidden while still tracking FVGs", !shown("mGpsTpBox") && !shown("mGpsTpDistBox"));
   sb.cfg.gpsModelMaxEntries = 1;
   sb.gpsFvgSeen = null;
   sb.updateGpsFvgEngine();
   sb.renderModelPanels();
   check("7: panel — TP MONITORING once max entries are used", /^TP MONITORING — 1\/1 entries used/.test(txt()), txt());
+  check("7: panel — TP target and TP distance shown during TP monitoring", shown("mGpsTpBox") && shown("mGpsTpDistBox"));
+  check("7: panel — TP target is the cycle's structure target",
+    sb.document.getElementById("mGpsTp").textContent === "120.00 (4H swing high)", sb.document.getElementById("mGpsTp").textContent);
+  sb.tradingStore = storeOf([{ ts: T0, o: 115, h: 115, l: 115, c: 115 }], M15, { o: 115, h: 115.5, l: 115, c: 115.5 });
+  sb.renderModelPanels();
+  const dist = sb.document.getElementById("mGpsTpDist").textContent;
+  check("7: panel — TP distance is live price to the target, in points and pips",
+    dist === "4.50 pts · " + (4.5 / sb.pipSize()).toFixed(1) + " pips", dist);
+  sb.tradingStore = storeOf([{ ts: T0, o: 115, h: 115, l: 115, c: 115 }], M15, { o: 115, h: 118, l: 115, c: 118 });
+  sb.renderModelPanels();
+  check("7: panel — and it updates with price", /^2\.00 pts/.test(sb.document.getElementById("mGpsTpDist").textContent),
+    sb.document.getElementById("mGpsTpDist").textContent);
   check("7: panel — entry TF shows the FVG engine timeframe",
     sb.document.getElementById("mGpsEntryTf").textContent === "15M (FVG engine)");
 }
@@ -632,15 +679,15 @@ const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107,
   sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 106, c: 107 });
   sb.updateEntryModels();
   check("8b live: after the break, price above 104: INDICATION", sb.iccCycle.phase === "INDICATION", sb.iccCycle.phase);
-  check("8b live: nothing to re-check yet", sb.liveCorrectionDue() === false);
+  check("8b live: nothing to re-check yet", sb.liveCycleEventDue() === false);
   sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 103.8, c: 104.2 });
-  check("8b live: a tick below 104 is picked up by the ticker", sb.liveCorrectionDue() === true);
+  check("8b live: a tick below 104 is picked up by the ticker", sb.liveCycleEventDue() === true);
   const before = sb.logLines ? sb.logLines.length : 0;
   sb.updateEntryModels();
   check("8b live: CORRECTION the moment live price crosses back inside — no close",
     sb.iccCycle.phase === "CORRECTION" && /live price crossed back inside the NTZ \(below 104\.00\)/.test(
       sb.iccCycle.events.find((e) => e.type === "CORRECTION").text), sb.iccCycle.phase);
-  check("8b live: only checked once per forming candle", sb.liveCorrectionDue() === false);
+  check("8b live: only checked once per forming candle", sb.liveCycleEventDue() === false);
   const key = sb.iccCycle.events.find((e) => e.type === "CORRECTION").key;
   sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109, h: 109.5, l: 103.5, c: 104.2, v: 1 }]), H1);
   sb.updateEntryModels();
@@ -732,7 +779,9 @@ const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], 
   sb.engines = [];
   sb.renderModelPanels();
   const txt = (id) => sb.document.getElementById(id).textContent;
-  check("8c: panel — cycle status is the CURRENT cycle", txt("mIccStatus") === "WAITING FOR INDICATION", txt("mIccStatus"));
+  check("8c: panel — right after a target hit, cycle status says COMPLETE (and that the next NTZ is waiting)",
+    txt("mIccStatus") === "COMPLETE ✅ — target 110.20 reached · next NTZ locked, waiting for indication" &&
+    /ph-done/.test(sb.document.getElementById("mIccStatus").className), txt("mIccStatus"));
   check("8c: panel — Last cycle status is COMPLETE (an entry was taken), in silver",
     txt("mIccLastCycle") === "COMPLETE" && /ph-done/.test(sb.document.getElementById("mIccLastCycle").className), txt("mIccLastCycle"));
   check("8c: panel — Last cycle date is its own field", /EST$/.test(txt("mIccLastDate")), txt("mIccLastDate"));

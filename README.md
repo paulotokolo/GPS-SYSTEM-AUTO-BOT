@@ -165,7 +165,7 @@ Two separately toggled entry models (both **OFF** by default) that read **one sh
    The panel phase always follows the entry type selected here; Aggressive mode only changes how the ICC Entry Model triggers. **The GPS Entry Model always needs a structure-TF body close beyond the NTZ**: on type 2 that is the continuation close itself; on type 1 the FVG engine goes on at that same moment if the structure candle also closed beyond the NTZ, otherwise at the next structure close that does (logged as waiting). Only 1H candles that open after the continuation close can hit the target.
 
    The TP target is fixed at continuation: the structure-TF extreme since the break (TP1 pips from the trigger if that extreme is not beyond it).
-5. **Complete.** Price reaches the target: `CYCLE COMPLETE — TP target hit at …. Bot reset.` in each model's log, *Cycle status: COMPLETE — Target Reached*.
+5. **Complete.** Price **touches** the target — live, on the forming 1H candle, no close needed (only 1H candles that open after the continuation close count): `✅ CYCLE COMPLETE — SWING TARGET REACHED at … on the 1H candle of …. Bot reset.` in each model's log, one *CYCLE COMPLETE* row in the signal log / CSV (target price and that candle's time), and *Cycle status: COMPLETE ✅ — target … reached* until the next cycle breaks out (*Last cycle status* keeps COMPLETE after that).
 
 **Resets** — besides completing, an active cycle ends on exactly two things: **disrespect** (a structure-TF candle *body* closing through the opposite side of the locked NTZ — below the low on a bullish cycle, above the high on a bearish one; wicks never count, and that same close can start the opposite cycle) or **timeout** (a phase reaching *Max wait* structure candles without progressing, default 20). New swings — even ones beyond the locked level, e.g. during the correction — never end a cycle; they are logged as ignored. After any reset the next NTZ is locked straight away (see *Lock*).
 
@@ -200,6 +200,7 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | Volume lookback | 20 | candles in the volume baseline (shown while volume confirmation is ON) |
 | Volume multiplier | 1.5 | the exit candle's volume must be above this × the baseline average |
 
+- **TP monitoring panel:** while the engine waits for the target, *TP target* (the cycle's structure target) and *TP distance* (live price to the target, in points and pips, refreshed every second) are shown; they are hidden otherwise.
 - **Dormant** until the shared cycle reaches continuation **and** a structure-TF body close beyond the NTZ has confirmed it (with alignment ON: Daily/4H agree and price pulls back to the latest 1H swing).
 - **Tracking:** every FVG in the break direction on the entry TF formed since the continuation candle opened — bullish (low above the high two candles back) on a bullish cycle, bearish on a bearish one.
 - **Entry:** price comes back **into** an FVG, then a candle **closes back out** of it in the break direction on a volume spike — entry at that close, market order tagged `GPSBOT-GPSM`. A tap that exits without the volume is logged and does not count; the FVG stays live and needs price back inside before the next exit can.
@@ -255,7 +256,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (552 assertions). |
+| `tests/` | Automated test suite (564 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -588,9 +589,9 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           68 pass   0 fail
-test_models       166 pass   0 fail
+test_models       178 pass   0 fail
 ----------------------------------------
-TOTAL: 552 pass, 0 fail
+TOTAL: 564 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

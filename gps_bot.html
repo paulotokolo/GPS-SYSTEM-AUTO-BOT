@@ -547,6 +547,8 @@ button:active { transform: scale(0.98); }
         <div class="state-box" id="mGpsAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mGpsAlign">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Entry TF</span><span class="state-value" id="mGpsEntryTf">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last entry</span><span class="state-value" id="mGpsLast">&mdash;</span></div>
+        <div class="state-box" id="mGpsTpBox"><span class="state-label">TP target</span><span class="state-value" id="mGpsTp">&mdash;</span></div>
+        <div class="state-box" id="mGpsTpDistBox"><span class="state-label">TP distance</span><span class="state-value" id="mGpsTpDist">&mdash;</span></div>
       </div>
     </div>
     <div class="state-grid">
@@ -2662,17 +2664,23 @@ function formingCandle(store) {
     return f && typeof f.l === "number" ? { ts: f.ts, o: f.o, h: f.h, l: f.l, c: f.c } : null;
   } catch (e) { return null; }
 }
-// Entry type 2 in INDICATION: has live price crossed back inside the broken NTZ level?
-// Re-checked once per forming candle, so a cross the cycle does not count (a candle from
-// before the break) is not replayed on every tick.
-var liveCorrCheckedTs = null;
-function liveCorrectionDue() {
+// Has live price just done something the cycle shows the moment it happens?
+//   - entry type 2 in INDICATION: crossed back inside the broken NTZ level (CORRECTION)
+//   - CONTINUATION: touched the TP target (CYCLE COMPLETE)
+// Re-checked once per forming candle and phase, so a touch the cycle does not count (a
+// candle from before the break) is not replayed on every tick.
+var liveCycleCheckedKey = null;
+function liveCycleEventDue() {
   var st = iccCycle;
-  if (!cfg || !st || !st.dir || st.phase !== "INDICATION" || cfg.iccRequireH1 !== false) return false;
+  if (!cfg || !st || !st.dir) return false;
   var f = formingCandle(h1Store);
-  if (!f || f.ts === liveCorrCheckedTs) return false;
-  if (!(st.dir === "buy" ? f.l < st.lockHigh : f.h > st.lockLow)) return false;
-  liveCorrCheckedTs = f.ts;
+  if (!f) return false;
+  var bull = st.dir === "buy", hit = false;
+  if (st.phase === "INDICATION" && cfg.iccRequireH1 === false) hit = bull ? f.l < st.lockHigh : f.h > st.lockLow;
+  if (st.phase === "CONTINUATION" && st.target !== null) hit = bull ? f.h >= st.target : f.l <= st.target;
+  var key = f.ts + "/" + st.phase;
+  if (!hit || key === liveCycleCheckedKey) return false;
+  liveCycleCheckedKey = key;
   return true;
 }
 function pollTrendStores() {
@@ -2682,7 +2690,7 @@ function pollTrendStores() {
   var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
   key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
   try { checkAggressiveEntry(livePrice()); } catch (e) {}
-  if (key === trendStoreLens && liveCorrectionDue()) key += "/live";   // type 2: CORRECTION shows on the cross itself
+  if (key === trendStoreLens && liveCycleEventDue()) key += "/live";   // live CORRECTION (type 2) / target touch
   if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
   trendStoreLens = key;
   updateTrendFilters();
@@ -3014,6 +3022,18 @@ function runIccCycle(p, data, mods) {
     }
   };
 
+  // The target is touched: the cycle completes on that 1H candle (closed, or forming — live).
+  var targetHit = function (t, bar) {
+    if (!(bull() ? bar.h >= st.target : bar.l <= st.target)) return false;
+    var tgt = st.target;
+    emitModels(t, "COMPLETE", "✅ CYCLE COMPLETE — SWING TARGET REACHED at " + fmt(tgt) + " on the 1H candle of " +
+               nyParts(bar.ts).fullLabel + ". Bot reset.", "log-buy",
+               { act: "target", target: tgt, barTs: bar.ts, dir: st.dir });
+    reset(t, "COMPLETE", "COMPLETE");
+    st.lastCycle.target = tgt;
+    st.lastCycle.barTs = bar.ts;
+    return true;
+  };
   var beyondNtz = function (c) { return bull() ? c > st.lockHigh : c < st.lockLow; };
   // CONTINUATION, on a 1H close (type 1) or a structure TF close (type 2). The GPS Entry Model
   // only ever goes on a structure TF body close beyond the NTZ: on type 2 that is this close;
@@ -3197,12 +3217,7 @@ function runIccCycle(p, data, mods) {
 
     // Only 1H candles that opened after the continuation close can hit the target.
     if (st.phase === "CONTINUATION" && h.ts >= st.contTs) {
-      if (bull() ? h.h >= st.target : h.l <= st.target) {
-        emitModels(t1, "COMPLETE", "CYCLE COMPLETE — TP target hit at " + fmt(st.target) + ". Bot reset.",
-                   "log-buy", { act: "target", target: st.target });
-        reset(t1, "COMPLETE", "COMPLETE");
-        continue;
-      }
+      if (targetHit(t1, h)) continue;
       MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t1, h, false); });
     }
   }
@@ -3210,9 +3225,9 @@ function runIccCycle(p, data, mods) {
   // crosses back inside. Stamped with that candle's close time, so the same event is not
   // logged again when the candle closes.
   var fh = data.liveH1;
-  if (fh && st.dir && p.contMode === "ntz" && st.phase === "INDICATION" &&
-      (!hBars.length || fh.ts > hBars[hBars.length - 1].ts)) {
-    ntzCorrection(fh.ts + hMs, fh, true);
+  if (fh && st.dir && (!hBars.length || fh.ts > hBars[hBars.length - 1].ts)) {
+    if (p.contMode === "ntz" && st.phase === "INDICATION") ntzCorrection(fh.ts + hMs, fh, true);
+    else if (st.phase === "CONTINUATION" && fh.ts >= st.contTs) targetHit(fh.ts + hMs, fh);
   }
   return st;
 }
@@ -3268,7 +3283,12 @@ function updateEntryModels() {
     if (!isRunning) return;
     log(e.text, e.cls);
     if (e.act === "entry") placeIccModelEntry(e);
-    if (e.act === "target" && e.kind === MODEL_KINDS.filter(modelEnabled)[0]) armTrailsAtTarget(e.target);
+    if (e.act === "target" && e.kind === MODEL_KINDS.filter(modelEnabled)[0]) {
+      armTrailsAtTarget(e.target);
+      signalLog.push({ time: nyParts(e.barTs).fullLabel, model: "ICC CYCLE", engine: "CYCLE COMPLETE",
+                       kind: "TARGET REACHED", entry: e.target, sl: "", tp1: "", tp2: "", tp3: "",
+                       ref: "SWING TARGET REACHED (" + (e.dir === "sell" ? "BEARISH" : "BULLISH") + " cycle)", bodyPct: "" });
+    }
     if (e.act === "disrespect" && cfg.iccOn) handleIccInvalidation(e.wasDir === "buy" ? "BEARISH" : "BULLISH", e.level);
   });
 }
@@ -3673,6 +3693,11 @@ function expiresView(st) {
   return { text: left + " " + cycleTfName() + " bar" + (left === 1 ? "" : "s") + " (" + st.phase.toLowerCase() + ")",
            cls: left <= 3 ? "ph-inval" : "" };
 }
+// "45.20 pts · 452.0 pips" — how far price still has to go to the target (0 once there).
+function tpDistanceText(d) {
+  var a = Math.abs(d), ps = pipSize();
+  return fmt(a) + " pts" + (ps > 0 ? " · " + (a / ps).toFixed(1) + " pips" : "");
+}
 function positionView(st) {
   var px = livePrice();
   if (!st || st.lockHigh === null || px === null) return { text: "—", cls: "muted" };
@@ -3735,6 +3760,12 @@ function renderModelPanels() {
         want && st.align.d === want && st.align.h4 === want && h1ok ? (bull ? "up" : "down") : "pending");
     }
     var statusText = st.status, statusCls = st.status === "ACTIVE" ? "up" : st.status === "SCANNING" ? "muted" : "pending";
+    // Right after a target hit, say so until the next cycle breaks out.
+    if (!st.dir && st.lastCycle && st.lastCycle.why === "COMPLETE") {
+      statusText = "COMPLETE ✅ — target " + fmt(st.lastCycle.target) + " reached · next NTZ " +
+                   (st.status === "SCANNING" ? "forming" : "locked, waiting for indication");
+      statusCls = "ph-done";
+    }
     // How the previous cycle ended — kept apart from the current status so the two never contradict.
     var lc = st.lastCycle;
     var entered = !!lc && (kind === "icc"
@@ -3776,6 +3807,17 @@ function renderModelPanels() {
           : "WAITING", sub.active ? (bull ? "up" : "down") : "pending");
       set("mGpsEntryTf", entryTfLabel(gpsEntryTf()) + " (FVG engine)", "");
       set("mGpsLast", since(gpsModelLastEntry), gpsModelLastEntry ? "" : "muted");
+      // TP target and live distance, while the engine is waiting for the target.
+      var tpOn = sub.active && !!g && g.mode === "TP MONITORING" && st.target !== null;
+      ["mGpsTpBox", "mGpsTpDistBox"].forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.style.display = tpOn ? "" : "none";
+      });
+      if (tpOn) {
+        set("mGpsTp", fmt(st.target) + " (" + sName + " swing " + (bull ? "high" : "low") + ")", bull ? "up" : "down");
+        var tpx = livePrice();
+        set("mGpsTpDist", tpx === null ? "—" : tpDistanceText(st.target - tpx), "");
+      }
     }
   });
 }
