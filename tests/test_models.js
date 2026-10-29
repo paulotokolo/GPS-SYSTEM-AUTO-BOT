@@ -38,13 +38,13 @@ function more(s, closes) {
 
 // The base bullish scenario (closes):
 //   G1 104 = swing high, G2 101 = swing low  -> NTZ 104 / 101 locked at G3's close
-//   G3 103 / G4 102 = new swings inside      -> ignored
+//   G4 / G5 / G6 rise without a new swing    -> NTZ unchanged
 //   G6 closes 109 above 104                  -> INDICATION (bullish)
 //   1H 111 swing high, then lower high 108.5 -> CORRECTION
 //   1H closes 109.5 above 108.5              -> CONTINUATION, target 110.2 (4H extreme)
 const BASE = [
-  [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
-  [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
+  [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 102, 102, 102],
+  [102, 102.5, 102.5, 102.5], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
   [110, 111, 110.5, 110.2], [107, 108.5, 107.5, 109.5]
 ];
 const START = END - BASE.length * H4;
@@ -52,9 +52,11 @@ const START = END - BASE.length * H4;
 // continuation — for scenarios that need price to wander before it is reached.
 const WIDE = BASE.slice(0, 7).concat([[110, 114, 113.5, 113], [107, 108.5, 107.5, 109.5]]);
 
-function storeOf(bars, tfMs) {
+function storeOf(bars, tfMs, forming) {
   const last = bars[bars.length - 1];
-  const all = bars.concat([{ ts: (last ? last.ts : END) + tfMs, o: 1, h: 1e9, l: -1e9, c: 1, v: 1 }]);
+  // The forming candle: flat at the last close unless a test gives it a range (live price).
+  const lc = last ? last.c : 100;
+  const all = bars.concat([Object.assign({ ts: (last ? last.ts : END) + tfMs, o: lc, h: lc, l: lc, c: lc, v: 1 }, forming || {})]);
   return { get length() { return all.length; }, GetCandle(i) { const k = all.length - 1 - i; return k >= 0 ? all[k] : null; } };
 }
 
@@ -102,8 +104,7 @@ function liveFeed(sb, s) {
   check("1: the NTZ locks once per cycle, shared by both models",
     st.events.find((e) => e.type === "LOCK" && e.kind === null) &&
     /^\[ICC\] Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st.events.find((e) => e.type === "LOCK").text));
-  check("1: later swings inside the NTZ are IGNORED, the lock holds",
-    st.events.some((e) => /New swing detected at 103\.00 — IGNORED/.test(e.text)));
+  check("1: no swing formed before the break, so the NTZ never moved", !types(st).includes("RELOCK"));
   check("1: one INDICATION on the 4H body close above 104",
     st.events.filter((e) => e.type === "INDICATION").length === 1 &&
     st.events.some((e) => /4H closed above NTZ 104\.00\. Break direction: BULLISH/.test(e.text)));
@@ -125,6 +126,44 @@ function liveFeed(sb, s) {
   check("1: and the NEXT cycle locks straight away — the NTZ is never left blank",
     st.lockHigh !== null && st.phase === "WAITING" && st.status === "WAITING FOR INDICATION", st.status);
   check("1: the last ICC entry is remembered for the panel", st.lastIccEntry && st.lastIccEntry.price === 109.5);
+}
+
+// ---------------------------------------------------------------- 1b: NTZ follows the latest swings
+// The client's Oil / Gold report: while no break has happened, the NTZ must always be the most
+// recent swing high and swing low (what the Swing Prices indicator shows), not the pair it
+// first locked. 4H closes 100 104 101 | 103 (new high) | 102 (new low) | 103.5 | 109.
+{
+  const g = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 103, 103, 103],
+             [102, 102, 102, 102], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109]];
+  const s = series(g, START);
+  const sb = modelSandbox();
+  const st0 = cycle(sb, { d1: [], h4: s.h4.slice(0, 5), h1: s.h1.slice(0, 20) });
+  check("1b: first lock is 104 / 101", /Swing high locked: 104\.00 \| Swing low locked: 101\.00/.test(st0.events.find((e) => e.type === "LOCK").text));
+  check("1b: a newer swing high (103) replaces it before any break",
+    st0.lockHigh === 103 && st0.lockLow === 101 && st0.phase === "WAITING", st0.lockHigh + "/" + st0.lockLow);
+  check("1b: logged as NTZ UPDATED",
+    st0.events.some((e) => e.type === "RELOCK" && /NTZ UPDATED — new 4H swing confirmed\. Swing high: 103\.00 \| Swing low: 101\.00 \(was 104\.00 \/ 101\.00\)/.test(e.text)));
+  const st1 = cycle(sb, { d1: [], h4: s.h4.slice(0, 6), h1: s.h1.slice(0, 24) });
+  check("1b: then the newer swing low (102) too: NTZ 103 / 102", st1.lockHigh === 103 && st1.lockLow === 102,
+    st1.lockHigh + "/" + st1.lockLow);
+  check("1b: the same close is checked at once against the new levels: 103.5 is above 103 = INDICATION",
+    st1.dir === "buy" && st1.events.some((e) => e.type === "INDICATION" && /4H closed above NTZ 103\.00/.test(e.text)), st1.phase);
+  const st2 = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  check("1b: once broken the levels freeze for the cycle", st2.lockHigh === 103 && st2.lockLow === 102 && st2.dir === "buy");
+  sb.iccCycle = st0;
+  sb.renderModelPanels();
+  const lbl = sb.document.getElementById("mIccNtzLabel").textContent;
+  check("1b: panel says the NTZ is the LATEST swings while waiting, and which swings",
+    lbl === "NTZ levels (latest) · 4H swings (1, close)", lbl);
+  sb.iccCycle = st2;
+  sb.renderModelPanels();
+  check("1b: and LOCKED once broken", /^NTZ levels \(locked\)/.test(sb.document.getElementById("mIccNtzLabel").textContent));
+}
+{
+  // Panels name where the swings come from, so a mismatch with the chart's indicator is obvious.
+  const sb = modelSandbox({ iccSwingStrength: 7, iccSwingSource: "wick", iccStructTf: "1h" });
+  const p = sb.cycleParams();
+  check("1b: swing settings reach the cycle (1H, strength 7, wick)", p.structTf === "1h" && p.n === 7 && p.src === "wick");
 }
 
 // ---------------------------------------------------------------- 2: the client's bugs
@@ -264,7 +303,7 @@ function liveFeed(sb, s) {
   const s = series(g, START - 4 * H4);
   const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
   const locks = st.events.filter((e) => e.type === "LOCK");
-  check("5: after COMPLETE, the next lock uses fresh swings", locks.length === 2 && !/104\.00/.test(locks[1].text),
+  check("5: after COMPLETE, the next lock uses fresh swings", locks.length >= 2 && !/104\.00/.test(locks[1].text),
     locks.map((e) => e.text).join(" || "));
 }
 
@@ -516,7 +555,7 @@ function liveFvgOrder(over, cycleOver) {
 // The whole cycle on 1H candles: swing high 104 / swing low 101 lock, a 1H close at 106 is the
 // indication, the 1H swing high 110 starts the correction, a close at 110.5 above the lower
 // high 109 is the continuation.
-const H1CYCLE = [100, 104, 101, 102, 103, 102.5, 106, 108, 110, 108.5, 107.5, 109, 108, 110.5];
+const H1CYCLE = [100, 104, 101, 102, 102.5, 103, 106, 108, 110, 108.5, 107.5, 109, 108, 110.5];
 function h1Bars(closes, start) {
   let prev = closes[0];
   return closes.map((c, i) => { const o = prev; prev = c; return { ts: start + i * H1, o, h: Math.max(o, c) + 1, l: Math.min(o, c) - 1, c, v: 1 }; });
@@ -547,8 +586,10 @@ function h1Bars(closes, start) {
 }
 
 // ---------------------------------------------------------------- 8b: entry type 2
-// After the break at 109 (NTZ 104 / 101): 1H closes 107, 105, 103.5 (back INSIDE the NTZ),
-// 103, then 104.5 (back OUT above 104), 106, 107, 108.
+// After the break at 109 (NTZ 104 / 101): 1H closes 107, 105, 103.5 (price back INSIDE the NTZ),
+// 103 = 4H close inside; then 104.5, 106, 107, 108 = 4H close 108 back OUT above 104.
+// Type 2: CORRECTION is price crossing back inside (no close needed); CONTINUATION is the
+// structure TF (4H) body close back out.
 const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107, 108]]);
 {
   const sb = modelSandbox({ iccRequireH1: false, gpsModelOn: true });
@@ -556,15 +597,76 @@ const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107,
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   console.log("\n===== 8b: ENTRY TYPE 2 — NTZ RE-ENTRY =====");
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
-  check("8b: type 2: CORRECTION is the 1H close back inside the NTZ",
-    st.events.some((e) => e.type === "CORRECTION" && /1H closed back inside the NTZ \(below 104\.00\)/.test(e.text)));
+  const corr = st.events.find((e) => e.type === "CORRECTION");
+  check("8b: type 2: CORRECTION is price crossing back inside the NTZ (below 104)",
+    !!corr && /price crossed back inside the NTZ \(below 104\.00\)\. .* Waiting for a 4H body close back above 104\.00/.test(corr.text), corr && corr.text);
+  check("8b: type 2: no close needed — it is the 1H candle whose LOW went below 104 (close 103.5 is the same candle)",
+    !!corr && corr.ts === s.h1[30].ts + H1, corr && new Date(corr.ts).toISOString());
+  check("8b: type 2: a 1H wick touching exactly 104 is not a cross", s.h1[29].l === 104 && corr.ts > s.h1[29].ts + H1);
   const entry = st.events.find((e) => e.type === "ENTRY");
-  check("8b: type 2: the entry is the 1H body close back out above 104", !!entry && entry.entry === 104.5,
-    entry && entry.entry);
-  check("8b: type 2: logged as closing back out of the NTZ",
-    st.events.some((e) => e.type === "CONTINUATION" && /closed back out of the NTZ, above 104\.00\. TP target 109\.00/.test(e.text)));
-  check("8b: type 2: the GPS engines switch on at the same close",
-    st.events.some((e) => e.type === "ACTIVE" && e.ts === entry.ts));
+  check("8b: type 2: no entry on the 1H close back above 104 — the 4H has to close out", !!entry && entry.entry !== 104.5);
+  check("8b: type 2: the entry is the 4H body close back out above 104 (108)", !!entry && entry.entry === 108 &&
+    entry.ts === s.h4[8].ts + H4, entry && entry.entry);
+  check("8b: type 2: logged as the 4H closing back out of the NTZ",
+    st.events.some((e) => e.type === "CONTINUATION" && /4H closed back out of the NTZ, above 104\.00\. TP target/.test(e.text)));
+  check("8b: type 2: the ICC entry says it was the 4H close",
+    /CONTINUATION — 4H candle body close confirmed back out of the NTZ, above 104\.00/.test(entry.text));
+  check("8b: type 2: the GPS FVG engine switches on at the same 4H close",
+    st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
+  check("8b: type 2: the 1H candles inside the continuation 4H cannot complete the cycle at once",
+    !types(st).includes("COMPLETE") && st.phase === "CONTINUATION", st.phase);
+}
+{
+  // A 4H close still inside the NTZ during the correction is not continuation.
+  const s = series(TYPE2.slice(0, 8), START);
+  const st = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: type 2: a 4H close inside the NTZ keeps the CORRECTION", st.phase === "CORRECTION" && !types(st).includes("ENTRY"), st.phase);
+}
+{
+  // Live: the forming 1H candle crosses back below 104 — CORRECTION shows at once, and is not
+  // logged twice when that candle closes.
+  const s = series(BASE.slice(0, 7), START);
+  const last = s.h1[s.h1.length - 1];
+  const sb = modelSandbox({ iccRequireH1: false });
+  sb.h4Store = storeOf(s.h4, H4);
+  sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 106, c: 107 });
+  sb.updateEntryModels();
+  check("8b live: after the break, price above 104: INDICATION", sb.iccCycle.phase === "INDICATION", sb.iccCycle.phase);
+  check("8b live: nothing to re-check yet", sb.liveCorrectionDue() === false);
+  sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 103.8, c: 104.2 });
+  check("8b live: a tick below 104 is picked up by the ticker", sb.liveCorrectionDue() === true);
+  const before = sb.logLines ? sb.logLines.length : 0;
+  sb.updateEntryModels();
+  check("8b live: CORRECTION the moment live price crosses back inside — no close",
+    sb.iccCycle.phase === "CORRECTION" && /live price crossed back inside the NTZ \(below 104\.00\)/.test(
+      sb.iccCycle.events.find((e) => e.type === "CORRECTION").text), sb.iccCycle.phase);
+  check("8b live: only checked once per forming candle", sb.liveCorrectionDue() === false);
+  const key = sb.iccCycle.events.find((e) => e.type === "CORRECTION").key;
+  sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109, h: 109.5, l: 103.5, c: 104.2, v: 1 }]), H1);
+  sb.updateEntryModels();
+  check("8b live: when that candle closes it is the same CORRECTION event (logged once)",
+    sb.iccCycle.events.filter((e) => e.type === "CORRECTION").length === 1 &&
+    sb.iccCycle.events.find((e) => e.type === "CORRECTION").key === key);
+  const sb1 = modelSandbox({ iccRequireH1: true });
+  const st1 = cycle(sb1, { d1: [], h4: s.h4, h1: s.h1, liveH1: { ts: last.ts + H1, o: 109, h: 109.5, l: 103.8, c: 104.2 } });
+  check("8b live: type 1 is unchanged — a live dip is not its correction", st1.phase === "INDICATION", st1.phase);
+}
+{
+  // Type 1, GPS Entry Model: the 1H continuation comes mid-4H-candle, so the FVG engine waits
+  // for the 4H body close beyond the NTZ; the ICC Entry Model enters on the 1H close.
+  const g = BASE.slice(0, 7).concat([[110, 114, 113.5, 113], [107, 108.5, 108, 107.8], [109, 109.3, 109.6, 109.8]]);
+  const s = series(g, START - H4);
+  const st = cycle(modelSandbox({ gpsModelOn: true }), { d1: [], h4: s.h4, h1: s.h1 });
+  const cont = st.events.find((e) => e.type === "CONTINUATION" && !e.kind);
+  const icc = st.events.find((e) => e.type === "ENTRY");
+  const gps = st.events.find((e) => e.type === "ACTIVE" && e.kind === "gps");
+  check("8b type 1: continuation on the 1H close above the lower high 108.5 (109)",
+    !!cont && /1H closed above 108\.50/.test(cont.text) && cont.ts === s.h1[36].ts + H1, cont && cont.text);
+  check("8b type 1: the ICC Entry Model enters on that 1H close", !!icc && icc.entry === 109 && icc.ts === cont.ts);
+  check("8b type 1: the GPS model logs that it waits for the 4H close",
+    st.events.some((e) => e.type === "GPSWAIT" && /waits for a 4H body close above 104\.00/.test(e.text)));
+  check("8b type 1: the GPS FVG engine goes on at the 4H body close (109.8), not the 1H",
+    !!gps && gps.ts === s.h4[9].ts + H4 && /4H candle body close confirmed above 104\.00/.test(gps.text), gps && gps.text);
 }
 {
   // The same candles with the check ON (type 1): the 1H swing high 109 is the corrective
