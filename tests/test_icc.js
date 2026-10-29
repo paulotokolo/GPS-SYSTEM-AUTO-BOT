@@ -153,7 +153,7 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   check("3: the cycle's continuation confirms the 1H", sb.icc.h1_confirmed === true && sb.icc.h1_state === "CONFIRMED");
   check("3: the buy gate is open", sb.trendGateReason(false, 109.5) === null && sb.icc.gps_buy_unlocked);
   check("3: the phase is CONTINUATION, GPS armed", sb.icc.phase === "CONTINUATION" && sb.icc.armed, sb.icc.phase);
-  feedS(sb, extend(series(CYCLE, T0), [110.5]));
+  feedS(sb, extend(series(CYCLE, T0), [111.5]));
   check("3: when the cycle completes at its target the NEXT NTZ is locked at once (not blank)",
     sb.icc.bias === "NTZ" && sb.icc.ntz_high !== null && /ICC bias is NTZ/.test(sb.trendGateReason(false, 111)),
     sb.icc.bias + " " + sb.icc.ntz_high);

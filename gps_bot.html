@@ -2758,7 +2758,8 @@ function resetTrendFilters() {
 //                    break (a swing low after a bearish one). Price does not have to come
 //                    back into the NTZ.
 //    CONTINUATION  — a 1H candle closes beyond the latest corrective 1H swing.
-//    COMPLETE      — price reaches the TP target: the structure-TF extreme since the break.
+//    COMPLETE      — price reaches the TP target: the most recent structure-TF swing beyond the
+//                    NTZ and the trigger, fixed at continuation.
 //
 //  Ends early on exactly two things: disrespect (a structure-TF candle BODY closing through
 //  the opposite side of the locked NTZ) or timeout (a phase reaching Max wait structure
@@ -2792,6 +2793,9 @@ function tfLabel(seconds) { return seconds >= D1_SECONDS ? "Daily" : seconds >= 
 function normStructTf(tf) { return tf === "daily" || tf === "1h" ? tf : "4h"; }
 function structSec(tf) { tf = normStructTf(tf); return tf === "daily" ? D1_SECONDS : tf === "1h" ? H1_SECONDS : H4_SECONDS; }
 function structOf(tf, d1, h4, h1) { tf = normStructTf(tf); return tf === "daily" ? d1 : tf === "1h" ? h1 : h4; }
+
+// A swing's wick: the high of a swing-high candle, the low of a swing-low candle.
+function swingWick(w) { return w.hi ? w.bar.h : w.bar.l; }
 
 // Every confirmed swing in a bar series, in the order they became known.
 function swingList(bars, tfMs, n, src) {
@@ -2940,15 +2944,21 @@ function runIccCycle(p, data, mods) {
     }
     return best;
   };
-  var structExtreme = function (t) {
-    var ext = null;
-    for (var i = 0; i < sBars.length; i++) {
-      var b = sBars[i];
-      if (b.ts < st.indBarTs || b.ts + sMs > t) continue;
-      var v = bull() ? hv(b, src) : lv(b, src);
-      if (ext === null || (bull() ? v > ext : v < ext)) ext = v;
+  // The TP target: the most recent structure TF swing that was already on the chart at the
+  // continuation and sits beyond both the NTZ and the trigger — a swing high above for buys,
+  // a swing low below for sells. Fixed for the cycle once found. The level is the swing
+  // candle's WICK whatever the Swing source (that is where the liquidity is).
+  var nextSwingTarget = function (t, price) {
+    var best = null;
+    for (var k = 0; k < sSw.length && sSw[k].confirmTs <= t; k++) {
+      var w = sSw[k];
+      if (w.hi !== bull()) continue;
+      var v = swingWick(w);
+      if (bull() ? (v > st.lockHigh && v > price) : (v < st.lockLow && v < price)) {
+        if (!best || w.ts > best.ts) best = { val: v, ts: w.ts };
+      }
     }
-    return ext;
+    return best;
   };
   var refreshLatest = function (t) {
     var a = latestSwing(hSw, true, t), b = latestSwing(hSw, false, t);
@@ -3044,12 +3054,12 @@ function runIccCycle(p, data, mods) {
     st.waitCount = 0;
     st.contBarTs = bar.ts;
     st.contTs = t;
-    st.target = structExtreme(t);
-    var why = "the " + sName + " extreme since the break";
-    // A target already behind the trigger (a V-shaped continuation) is no target at all.
-    if (st.target === null || (bull() ? st.target <= bar.c : st.target >= bar.c)) {
+    var nx = nextSwingTarget(t, bar.c);
+    st.target = nx ? nx.val : null;
+    var why = nx ? "the " + sName + " swing " + (bull() ? "high" : "low") + " of " + nyParts(nx.ts).fullLabel : "";
+    if (st.target === null) {
       st.target = bar.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
-      why = "TP1 pips — the " + sName + " extreme is not beyond the trigger";
+      why = "TP1 pips — no " + sName + " swing " + (bull() ? "high above" : "low below") + " the NTZ and the trigger";
     }
     var lvl = p.contMode === "ntz" ? (bull() ? st.lockHigh : st.lockLow) : st.corrLevel;
     st.contHow = "CONTINUATION — " + tfName + " candle body close confirmed " + (p.contMode === "ntz" ? "back out of the NTZ, " : "") +
@@ -3383,18 +3393,22 @@ var iccLastAggEntry = null;
 
 function aggCycleKey(st) { return st.lockHiTs + "/" + st.lockLoTs + "/" + st.dir + "/" + st.indBarTs; }
 
-// The structure-TF extreme since the break, from the live store — the TP before the shared
-// cycle has fixed its own target at continuation.
-function liveStructTarget(st) {
+// Aggressive entries come before the shared cycle has fixed its target at continuation, so
+// they look it up the same way: the most recent structure TF swing wick beyond the NTZ and
+// the entry (a swing high above for buys, a swing low below for sells). Null = TP1 pips.
+function liveStructTarget(st, price) {
   if (st.target !== null) return st.target;
-  var p = cycleParams();
-  var bars = closedBars(structOf(p.structTf, d1Store, h4Store, h1Store)), ext = null, bull = st.dir === "buy";
-  for (var i = 0; i < bars.length; i++) {
-    if (bars[i].ts < st.indBarTs) continue;
-    var v = bull ? hv(bars[i], p.src) : lv(bars[i], p.src);
-    if (ext === null || (bull ? v > ext : v < ext)) ext = v;
-  }
-  return ext;
+  var p = cycleParams(), bull = st.dir === "buy";
+  var bars = closedBars(structOf(p.structTf, d1Store, h4Store, h1Store));
+  var sw = swingList(bars, structSec(p.structTf) * 1000, p.n, p.src), best = null;
+  sw.forEach(function (w) {
+    if (w.hi !== bull) return;
+    var v = swingWick(w);
+    if (bull ? (v > st.lockHigh && v > price) : (v < st.lockLow && v < price)) {
+      if (!best || w.ts > best.ts) best = { val: v, ts: w.ts };
+    }
+  });
+  return best ? best.val : null;
 }
 
 // `dip` is the arming structure candle's low (high on sells) — the pullback's own extreme. A
@@ -3448,7 +3462,7 @@ function checkAggressiveEntry(price) {
   aggState.entries++;
   var side = bull ? "BUY" : "SELL";
   var sl = aggressiveStop(st, price, st.aggDip);
-  var tgt = liveStructTarget(st);
+  var tgt = liveStructTarget(st, price);
   var tp = modelTarget("icc", price, st.dir, tgt);
   iccLastAggEntry = { dir: side, price: price, ts: Date.now() };
   log(tag + " ENTRY " + aggState.entries + "/" + AGGRESSIVE_MAX_ENTRIES + " — price crossed " + (bull ? "above " : "below ") +
