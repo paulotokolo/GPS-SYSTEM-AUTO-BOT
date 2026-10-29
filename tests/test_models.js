@@ -199,6 +199,32 @@ function liveFeed(sb, s) {
     sb.signalLog.filter((r) => r.engine === "CYCLE COMPLETE").length === 1);
 }
 
+// ---------------------------------------------------------------- 1d: TP = next pre-existing swing
+// An old 4H swing high at 120 sits above the NTZ before the break. After the break the 1H
+// corrects (swing 113) and continues at 114 mid-candle — no new 4H swing on the way. The
+// target is that pre-existing 120, not the extreme since the break.
+const OLD120 = [[114, 115, 115, 115], [118, 120, 120, 120], [115, 112, 110, 110]];
+const RUN = [[111, 113, 110.5, 111.5], [112, 114, 113.8, 113.9]];
+{
+  const g = OLD120.concat(BASE.slice(0, 7), RUN);
+  const s = series(g, START - 5 * H4);
+  const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
+  const cont = st.events.find((e) => e.type === "CONTINUATION");
+  check("1d: buy target = the most recent 4H swing high above the NTZ and the trigger (120)",
+    st.target === 120 && !!cont && /TP target 120\.00 \(the 4H swing high of /.test(cont.text), cont && cont.text);
+  check("1d: fixed for the cycle", st.phase === "CONTINUATION" && st.target === 120);
+  const flip = (rows) => rows.map((r) => r.map((x) => 200 - x));
+  const s2 = series(flip(g), START - 5 * H4);
+  const st2 = cycle(modelSandbox(), { d1: [], h4: s2.h4, h1: s2.h1 });
+  check("1d: sell target = the most recent 4H swing low below the NTZ and the trigger (80)",
+    st2.dir === "sell" && st2.target === 80, st2.dir + " " + st2.target);
+  const s3 = series(BASE.slice(0, 7).concat(RUN), START - 2 * H4);
+  const st3 = cycle(modelSandbox({ tp1Pips: 50 }), { d1: [], h4: s3.h4, h1: s3.h1 });
+  check("1d: no swing beyond the NTZ and the trigger -> TP1 pips",
+    st3.phase === "CONTINUATION" && /TP1 pips — no 4H swing high above the NTZ and the trigger/.test(
+      st3.events.find((e) => e.type === "CONTINUATION").text), st3.target);
+}
+
 // ---------------------------------------------------------------- 2: the client's bugs
 {
   // Alignment ON vs OFF, and GPS model on or off, must give the SAME NTZ and phase path.
@@ -886,7 +912,7 @@ const aggSb = (over) => modelSandbox(Object.assign({ iccModelAggressive: true },
   const o = sb.__orders[0];
   check("9: armed + live cross back above 104 fires a BUY immediately", sb.__orders.length === 1 && o.tradingAction === "BUY");
   check("9: tagged GPSBOT-ICCA", o && o.comment === "GPSBOT-ICCA");
-  check("9: TP = the 4H extreme since the break (109 - 104.2 = 48 pips)", o && o.tp && o.tp.pips === 48, o && JSON.stringify(o.tp));
+  check("9: TP = the most recent 4H swing high above the NTZ and the entry (109 - 104.2 = 48 pips)", o && o.tp && o.tp.pips === 48, o && JSON.stringify(o.tp));
   check("9: SL below the entry and tight (inside the swing range / arming candle)",
     o && o.sl && o.sl.pips > 0 && o.sl.pips < 30, o && JSON.stringify(o.sl));
   check("9: logged as ENTRY 1/2", sb.__logLines.some((l) => /AGGRESSIVE ENTRY 1\/2 — price crossed above 104\.00 live\. BUY Entry: 104\.20/.test(l)));
