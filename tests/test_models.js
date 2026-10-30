@@ -421,6 +421,32 @@ const dailyBull = [
   check("6p: ICC panel — entry mode names the structure TF close", txt("mIccMode") === "STANDARD — 4H continuation close", txt("mIccMode"));
 }
 
+{
+  // Feed diagnostics: the panel says which feed it is waiting for, the log says when they
+  // load, warns if they never do, and a cycle error is logged instead of swallowed.
+  const sb = modelSandbox();
+  sb.engines = [];
+  sb.h4Store = storeOf([], H4); sb.h1Store = storeOf([], H1);
+  sb.feedState = { since: Date.now(), loaded: false, warned: false, lastErr: null };
+  sb.iccCycle = null;
+  sb.renderModelPanels();
+  check("6d: panel names the empty feeds", sb.document.getElementById("mIccPhase").textContent === "waiting for candles (4H: 0, 1H: 0)",
+    sb.document.getElementById("mIccPhase").textContent);
+  sb.checkFeeds();
+  check("6d: no warning in the first 30s", !sb.__logLines.some((l) => /Still waiting for candles/.test(l)));
+  sb.feedState.since = Date.now() - 31000;
+  sb.checkFeeds(); sb.checkFeeds();
+  check("6d: after 30s one warning with the counts",
+    sb.__logLines.filter((l) => /\[ICC\] Still waiting for candles after 30s — 4H: 0, 1H: 0/.test(l)).length === 1);
+  const s = series(BASE, START);
+  sb.h4Store = storeOf(s.h4, H4); sb.h1Store = storeOf(s.h1, H1);
+  sb.checkFeeds(); sb.checkFeeds();
+  check("6d: once loaded, one line with the counts",
+    sb.__logLines.filter((l) => /\[ICC\] Candles loaded — 4H: 9 closed candles, 1H: 36/.test(l)).length === 1);
+  sb.reportCycleError(new Error("boom")); sb.reportCycleError(new Error("boom"));
+  check("6d: a cycle error is logged once", sb.__logLines.filter((l) => /\[ICC\] Cycle error — boom/.test(l)).length === 1);
+}
+
 // ---------------------------------------------------------------- 7: GPS Entry Model — ICC FVG engine
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
