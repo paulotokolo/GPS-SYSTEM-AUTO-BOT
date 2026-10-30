@@ -768,9 +768,11 @@ button:active { transform: scale(0.98); }
       <small class="hint">
         <b>ON</b> (entry type 1): after the break the 1H shows a corrective swing &mdash; price does
         <b>not</b> need to come back into the NTZ &mdash; and the 1H close that flips back in the
-        break direction is the continuation. <b>OFF</b> (entry type 2): the correction is live
-        price crossing back <b>into</b> the NTZ (no close needed), and the <b>structure TF</b> body
-        close back out through the NTZ level is the continuation. Applies to the ICC Filter and
+        break direction is the continuation. <b>OFF</b> (entry type 2): everything runs on
+        <b>structure TF</b> body closes &mdash; wicks and live ticks never count. Correction is
+        whichever comes first: a close back <b>inside</b> the NTZ (then a close back out is the
+        continuation), or a new swing extending the break followed by a swing the other way
+        (then a close beyond that new swing is the continuation). Applies to the ICC Filter and
         both models. The GPS Entry Model always waits for a structure TF body close beyond the
         NTZ before its FVG engine goes on. (Aggressive Entry Mode is type 3.)
       </small>
@@ -2664,9 +2666,8 @@ function formingCandle(store) {
     return f && typeof f.l === "number" ? { ts: f.ts, o: f.o, h: f.h, l: f.l, c: f.c } : null;
   } catch (e) { return null; }
 }
-// Has live price just done something the cycle shows the moment it happens?
-//   - entry type 2 in INDICATION: crossed back inside the broken NTZ level (CORRECTION)
-//   - CONTINUATION: touched the TP target (CYCLE COMPLETE)
+// Has live price just touched the TP target (CYCLE COMPLETE)? The cycle shows that the moment
+// it happens. (Phases never move on a live tick.)
 // Re-checked once per forming candle and phase, so a touch the cycle does not count (a
 // candle from before the break) is not replayed on every tick.
 var liveCycleCheckedKey = null;
@@ -2676,7 +2677,6 @@ function liveCycleEventDue() {
   var f = formingCandle(h1Store);
   if (!f) return false;
   var bull = st.dir === "buy", hit = false;
-  if (st.phase === "INDICATION" && cfg.iccRequireH1 === false) hit = bull ? f.l < st.lockHigh : f.h > st.lockLow;
   if (st.phase === "CONTINUATION" && st.target !== null) hit = bull ? f.h >= st.target : f.l <= st.target;
   var key = f.ts + "/" + st.phase;
   if (!hit || key === liveCycleCheckedKey) return false;
@@ -2690,7 +2690,7 @@ function pollTrendStores() {
   var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
   key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
   try { checkAggressiveEntry(livePrice()); } catch (e) {}
-  if (key === trendStoreLens && liveCycleEventDue()) key += "/live";   // live CORRECTION (type 2) / target touch
+  if (key === trendStoreLens && liveCycleEventDue()) key += "/live";   // live target touch
   if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
   trendStoreLens = key;
   updateTrendFilters();
@@ -2846,6 +2846,7 @@ function newCycleState() {
     contBarTs: null,            // open time of the candle whose close made continuation (1H, or structure TF on type 2)
     contTs: null,               // the close time of that candle
     contHow: null,              // what confirmed it, for the model logs
+    corrPath: null,             // type 2: "A" swing structure or "B" NTZ re-entry close
     gpsOk: false,               // GPS Entry Model: a structure TF body close beyond the NTZ has confirmed continuation
     aggArmTs: null, aggDip: null,// Aggressive mode: last structure-TF close back inside the NTZ
     pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
@@ -3061,10 +3062,11 @@ function runIccCycle(p, data, mods) {
       st.target = bar.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
       why = "TP1 pips — no " + sName + " swing " + (bull() ? "high above" : "low below") + " the NTZ and the trigger";
     }
-    var lvl = p.contMode === "ntz" ? (bull() ? st.lockHigh : st.lockLow) : st.corrLevel;
-    st.contHow = "CONTINUATION — " + tfName + " candle body close confirmed " + (p.contMode === "ntz" ? "back out of the NTZ, " : "") +
+    var outOfNtz = p.contMode === "ntz" && st.corrPath === "B";
+    var lvl = st.corrLevel;
+    st.contHow = "CONTINUATION — " + tfName + " candle body close confirmed " + (outOfNtz ? "back out of the NTZ, " : "") +
                  (bull() ? "above " : "below ") + fmt(lvl);
-    emit(t, "CONTINUATION", "CONTINUATION — " + tfName + " closed " + (p.contMode === "ntz" ? "back out of the NTZ, " : "") +
+    emit(t, "CONTINUATION", "CONTINUATION — " + tfName + " closed " + (outOfNtz ? "back out of the NTZ, " : "") +
          (bull() ? "above " : "below ") + fmt(lvl) +
          ". TP target " + fmt(st.target) + " (" + why + ").", bull() ? "log-buy" : "log-sell");
     st.gpsOk = !!structOk;
@@ -3074,19 +3076,42 @@ function runIccCycle(p, data, mods) {
     }
     MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t, bar, true); });
   };
-  // Type 2: CORRECTION is price crossing back inside the broken level — live, no close needed.
-  // `bar` is a closed 1H candle or the forming one; only candles that opened after the
-  // indication close count (the breakout candle's own wick is not a correction).
-  var ntzCorrection = function (t, bar, live) {
-    if (bar.ts < st.indTs) return false;
-    var level = bull() ? st.lockHigh : st.lockLow;
-    if (!(bull() ? bar.l < level : bar.h > level)) return false;
-    st.phase = "CORRECTION";
-    st.waitCount = 0;
-    st.corrLevel = level;
-    emit(t, "CORRECTION", "CORRECTION — " + (live ? "live " : "") + "price crossed back inside the NTZ (" +
-         (bull() ? "below " : "above ") + fmt(level) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 +
-         ". Waiting for a " + sName + " body close back " + (bull() ? "above " : "below ") + fmt(level) + ".");
+  // Type 2 CORRECTION, judged on structure TF closes only — whichever path comes first.
+  //   Path B: a structure TF body close back INSIDE the NTZ. Wicks and live ticks never count.
+  //   Path A: price extends the break with a new structure swing (a lower low after a bearish
+  //           break, a higher high after a bullish one) and then turns, confirming a swing the
+  //           other way (the lower high / higher low).
+  // Path A's continuation is a structure close beyond that new swing; path B's is a structure
+  // close back out of the NTZ.
+  var latestExtension = function (t) {
+    var ext = null;
+    for (var k = 0; k < sSw.length && sSw[k].confirmTs <= t; k++) {
+      var w = sSw[k];
+      if (w.hi === bull() && w.ts > st.indBarTs && (bull() ? w.val > st.indClose : w.val < st.indClose)) ext = w;
+    }
+    return ext;
+  };
+  var typeTwoCorrection = function (t, b) {
+    if (bull() ? b.c <= st.lockHigh : b.c >= st.lockLow) {
+      var level = bull() ? st.lockHigh : st.lockLow;
+      st.phase = "CORRECTION"; st.waitCount = 0; st.corrPath = "B"; st.corrLevel = level;
+      emit(t, "CORRECTION", "CORRECTION (NTZ re-entry) — " + sName + " body closed back inside the NTZ at " + fmt(b.c) +
+           " (" + (bull() ? "below " : "above ") + fmt(level) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 +
+           ". Waiting for a " + sName + " body close back " + (bull() ? "above " : "below ") + fmt(level) + ".");
+      return true;
+    }
+    var ext = latestExtension(t);
+    if (!ext) return false;
+    var turn = null;
+    for (var k = 0; k < sSw.length && sSw[k].confirmTs <= t; k++) {
+      if (sSw[k].hi !== bull() && sSw[k].ts > ext.ts) turn = sSw[k];
+    }
+    if (!turn) return false;
+    st.phase = "CORRECTION"; st.waitCount = 0; st.corrPath = "A"; st.corrLevel = ext.val;
+    emit(t, "CORRECTION", "CORRECTION (swing structure) — after the " + (bull() ? "higher high " : "lower low ") +
+         fmt(ext.val) + ", " + sName + " formed a " + (bull() ? "higher low " : "lower high ") + fmt(turn.val) +
+         ". Daily: " + st.align.d + " | 4H: " + st.align.h4 + ". Waiting for a " + sName + " body close " +
+         (bull() ? "above " : "below ") + fmt(ext.val) + ".");
     return true;
   };
 
@@ -3155,11 +3180,19 @@ function runIccCycle(p, data, mods) {
         i--;
         continue;
       }
-      // Type 2: a structure TF body close back out of the NTZ after the correction is the
-      // continuation.
-      if (st.phase === "CORRECTION" && p.contMode === "ntz" && beyondNtz(b.c)) {
-        toContinuation(t, b, sName, true);
-        continue;
+      // Type 2: CORRECTION on a structure close (path A or B), then CONTINUATION on a
+      // structure close back in the break direction (beyond the new swing, or out of the NTZ).
+      // (The correcting close still runs on below: Max wait, and Aggressive mode arming.)
+      var corrected = st.phase === "INDICATION" && p.contMode === "ntz" && b.ts >= st.indTs && typeTwoCorrection(t, b);
+      if (!corrected && st.phase === "CORRECTION" && p.contMode === "ntz") {
+        if (st.corrPath === "A") {
+          var ext2 = latestExtension(t);
+          if (ext2 && (bull() ? ext2.val > st.corrLevel : ext2.val < st.corrLevel)) st.corrLevel = ext2.val;
+        }
+        if (st.corrPath === "B" ? beyondNtz(b.c) : (bull() ? b.c > st.corrLevel : b.c < st.corrLevel)) {
+          toContinuation(t, b, sName, true);
+          continue;
+        }
       }
       // Type 1: the GPS Entry Model's structure TF confirmation, after the 1H continuation.
       if (st.phase === "CONTINUATION" && !st.gpsOk && beyondNtz(b.c)) {
@@ -3199,8 +3232,7 @@ function runIccCycle(p, data, mods) {
 
     // 1H continuation check OFF (entry type 2): the correction is price crossing back INTO the
     // NTZ, and the continuation is a structure TF body close back out through the broken level.
-    if (p.contMode === "ntz" && st.phase === "INDICATION") { ntzCorrection(t1, h, false); continue; }
-    if (p.contMode === "ntz" && st.phase === "CORRECTION") continue;   // continuation is a structure close (above)
+    if (p.contMode === "ntz" && st.phase !== "CONTINUATION") continue;   // type 2 runs on structure closes (above)
 
     if (st.phase === "INDICATION") {
       var c0 = latestSwing(hSw, bull(), t1, st.indBarTs);
@@ -3231,13 +3263,12 @@ function runIccCycle(p, data, mods) {
       MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t1, h, false); });
     }
   }
-  // The forming 1H candle: on type 2 the correction is live, so it shows the moment price
-  // crosses back inside. Stamped with that candle's close time, so the same event is not
-  // logged again when the candle closes.
+  // The forming 1H candle: the target counts the moment price touches it. Stamped with that
+  // candle's close time, so the same event is not logged again when the candle closes.
   var fh = data.liveH1;
-  if (fh && st.dir && (!hBars.length || fh.ts > hBars[hBars.length - 1].ts)) {
-    if (p.contMode === "ntz" && st.phase === "INDICATION") ntzCorrection(fh.ts + hMs, fh, true);
-    else if (st.phase === "CONTINUATION" && fh.ts >= st.contTs) targetHit(fh.ts + hMs, fh);
+  if (fh && st.dir && st.phase === "CONTINUATION" && fh.ts >= st.contTs &&
+      (!hBars.length || fh.ts > hBars[hBars.length - 1].ts)) {
+    targetHit(fh.ts + hMs, fh);
   }
   return st;
 }

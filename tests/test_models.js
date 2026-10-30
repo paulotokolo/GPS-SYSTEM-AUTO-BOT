@@ -661,70 +661,80 @@ function h1Bars(closes, start) {
 }
 
 // ---------------------------------------------------------------- 8b: entry type 2
-// After the break at 109 (NTZ 104 / 101): 1H closes 107, 105, 103.5 (price back INSIDE the NTZ),
-// 103 = 4H close inside; then 104.5, 106, 107, 108 = 4H close 108 back OUT above 104.
-// Type 2: CORRECTION is price crossing back inside (no close needed); CONTINUATION is the
-// structure TF (4H) body close back out.
+// Type 2 (1H continuation check OFF) runs on structure TF (4H) closes only. CORRECTION is
+// whichever comes first: path B, a 4H body close back inside the NTZ, or path A, a new 4H
+// swing extending the break followed by a 4H swing the other way. Wicks and live ticks never
+// count. CONTINUATION: path B = a 4H close back out of the NTZ; path A = a 4H close beyond
+// the new swing.
+// After the break at 109 (NTZ 104 / 101): 4H closes 103 (back INSIDE), then 108 (back OUT).
 const TYPE2 = BASE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 106, 107, 108]]);
 {
   const sb = modelSandbox({ iccRequireH1: false, gpsModelOn: true });
   const s = series(TYPE2, START);
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
-  console.log("\n===== 8b: ENTRY TYPE 2 — NTZ RE-ENTRY =====");
+  console.log("\n===== 8b: ENTRY TYPE 2 =====");
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
   const corr = st.events.find((e) => e.type === "CORRECTION");
-  check("8b: type 2: CORRECTION is price crossing back inside the NTZ (below 104)",
-    !!corr && /price crossed back inside the NTZ \(below 104\.00\)\. .* Waiting for a 4H body close back above 104\.00/.test(corr.text), corr && corr.text);
-  check("8b: type 2: no close needed — it is the 1H candle whose LOW went below 104 (close 103.5 is the same candle)",
-    !!corr && corr.ts === s.h1[30].ts + H1, corr && new Date(corr.ts).toISOString());
-  check("8b: type 2: a 1H wick touching exactly 104 is not a cross", s.h1[29].l === 104 && corr.ts > s.h1[29].ts + H1);
+  check("8b: path B: CORRECTION is the 4H body close back inside the NTZ (103)",
+    !!corr && corr.ts === s.h4[7].ts + H4 && /CORRECTION \(NTZ re-entry\) — 4H body closed back inside the NTZ at 103\.00 \(below 104\.00\)/.test(corr.text),
+    corr && corr.text);
+  check("8b: path B: not on the 1H candles that dipped inside before that 4H close", corr.ts > s.h1[30].ts + H1);
   const entry = st.events.find((e) => e.type === "ENTRY");
-  check("8b: type 2: no entry on the 1H close back above 104 — the 4H has to close out", !!entry && entry.entry !== 104.5);
-  check("8b: type 2: the entry is the 4H body close back out above 104 (108)", !!entry && entry.entry === 108 &&
+  check("8b: path B: the entry is the 4H body close back out above 104 (108)", !!entry && entry.entry === 108 &&
     entry.ts === s.h4[8].ts + H4, entry && entry.entry);
-  check("8b: type 2: logged as the 4H closing back out of the NTZ",
+  check("8b: path B: logged as the 4H closing back out of the NTZ",
     st.events.some((e) => e.type === "CONTINUATION" && /4H closed back out of the NTZ, above 104\.00\. TP target/.test(e.text)));
-  check("8b: type 2: the ICC entry says it was the 4H close",
-    /CONTINUATION — 4H candle body close confirmed back out of the NTZ, above 104\.00/.test(entry.text));
-  check("8b: type 2: the GPS FVG engine switches on at the same 4H close",
+  check("8b: path B: the GPS FVG engine switches on at the same 4H close",
     st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
-  check("8b: type 2: the 1H candles inside the continuation 4H cannot complete the cycle at once",
-    !types(st).includes("COMPLETE") && st.phase === "CONTINUATION", st.phase);
+}
+{
+  // The bug: 1H wicks (and closes) dip back below 104 but the 4H closes at 105, outside.
+  const s = series(BASE.slice(0, 7).concat([[107, 105, 103.5, 105]]), START);
+  const st = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: a wick / 1H dip back inside the NTZ is NOT a correction (4H closed outside)",
+    st.phase === "INDICATION" && !types(st).includes("CORRECTION") && s.h4[7].l < 104, st.phase);
+  const sb = modelSandbox({ iccRequireH1: false });
+  sb.h4Store = storeOf(s.h4, H4);
+  sb.h1Store = storeOf(s.h1, H1, { o: 105, h: 105.2, l: 102, c: 104.5 });
+  sb.updateEntryModels();
+  check("8b: nor is live price trading inside the NTZ", sb.iccCycle.phase === "INDICATION" && sb.liveCycleEventDue() === false,
+    sb.iccCycle.phase);
 }
 {
   // A 4H close still inside the NTZ during the correction is not continuation.
   const s = series(TYPE2.slice(0, 8), START);
   const st = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
-  check("8b: type 2: a 4H close inside the NTZ keeps the CORRECTION", st.phase === "CORRECTION" && !types(st).includes("ENTRY"), st.phase);
+  check("8b: path B: a 4H close inside the NTZ keeps the CORRECTION", st.phase === "CORRECTION" && !types(st).includes("ENTRY"), st.phase);
+}
+// Path A: after the break (109) 4H closes 112 (higher high), 110.5 (pulls back, still above
+// the NTZ), 111 (110.5 is now a higher low) -> CORRECTION; 113 closes above 112 -> CONTINUATION.
+const PATHA = BASE.slice(0, 7).concat([[110, 111, 111.5, 112], [111.5, 111, 110.8, 110.5], [110.8, 111, 111, 111], [111.5, 112.5, 113, 113]]);
+{
+  const s = series(PATHA, START - 2 * H4);
+  const st = cycle(modelSandbox({ iccRequireH1: false, gpsModelOn: true }), { d1: [], h4: s.h4, h1: s.h1 });
+  const corr = st.events.find((e) => e.type === "CORRECTION");
+  check("8b: path A: CORRECTION when the 4H makes a higher high (112) then a higher low (110.5)",
+    !!corr && corr.ts === s.h4[9].ts + H4 &&
+    /CORRECTION \(swing structure\) — after the higher high 112\.00, 4H formed a higher low 110\.50\. .* Waiting for a 4H body close above 112\.00/.test(corr.text),
+    corr && corr.text);
+  check("8b: path A: price never had to come back into the NTZ", s.h4.slice(7).every((b) => b.c > 104));
+  const entry = st.events.find((e) => e.type === "ENTRY");
+  check("8b: path A: CONTINUATION + entry on the 4H body close above 112 (113)", !!entry && entry.entry === 113 &&
+    entry.ts === s.h4[10].ts + H4 && st.events.some((e) => e.type === "CONTINUATION" && /4H closed above 112\.00/.test(e.text)),
+    entry && entry.entry);
+  check("8b: path A: the GPS FVG engine switches on at that close", st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
+  const flip = (rows) => rows.map((r) => r.map((x) => 200 - x));
+  const s2 = series(flip(PATHA), START - 2 * H4);
+  const st2 = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s2.h4, h1: s2.h1 });
+  check("8b: path A bearish: lower low 88 then lower high 89.5 = CORRECTION; 4H close below 88 = entry at 87",
+    st2.dir === "sell" && st2.events.some((e) => e.type === "CORRECTION" && /after the lower low 88\.00, 4H formed a lower high 89\.50/.test(e.text)) &&
+    (st2.events.find((e) => e.type === "ENTRY") || {}).entry === 87);
 }
 {
-  // Live: the forming 1H candle crosses back below 104 — CORRECTION shows at once, and is not
-  // logged twice when that candle closes.
-  const s = series(BASE.slice(0, 7), START);
-  const last = s.h1[s.h1.length - 1];
-  const sb = modelSandbox({ iccRequireH1: false });
-  sb.h4Store = storeOf(s.h4, H4);
-  sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 106, c: 107 });
-  sb.updateEntryModels();
-  check("8b live: after the break, price above 104: INDICATION", sb.iccCycle.phase === "INDICATION", sb.iccCycle.phase);
-  check("8b live: nothing to re-check yet", sb.liveCycleEventDue() === false);
-  sb.h1Store = storeOf(s.h1, H1, { o: 109, h: 109.5, l: 103.8, c: 104.2 });
-  check("8b live: a tick below 104 is picked up by the ticker", sb.liveCycleEventDue() === true);
-  const before = sb.logLines ? sb.logLines.length : 0;
-  sb.updateEntryModels();
-  check("8b live: CORRECTION the moment live price crosses back inside — no close",
-    sb.iccCycle.phase === "CORRECTION" && /live price crossed back inside the NTZ \(below 104\.00\)/.test(
-      sb.iccCycle.events.find((e) => e.type === "CORRECTION").text), sb.iccCycle.phase);
-  check("8b live: only checked once per forming candle", sb.liveCycleEventDue() === false);
-  const key = sb.iccCycle.events.find((e) => e.type === "CORRECTION").key;
-  sb.h1Store = storeOf(s.h1.concat([{ ts: last.ts + H1, o: 109, h: 109.5, l: 103.5, c: 104.2, v: 1 }]), H1);
-  sb.updateEntryModels();
-  check("8b live: when that candle closes it is the same CORRECTION event (logged once)",
-    sb.iccCycle.events.filter((e) => e.type === "CORRECTION").length === 1 &&
-    sb.iccCycle.events.find((e) => e.type === "CORRECTION").key === key);
-  const sb1 = modelSandbox({ iccRequireH1: true });
-  const st1 = cycle(sb1, { d1: [], h4: s.h4, h1: s.h1, liveH1: { ts: last.ts + H1, o: 109, h: 109.5, l: 103.8, c: 104.2 } });
-  check("8b live: type 1 is unchanged — a live dip is not its correction", st1.phase === "INDICATION", st1.phase);
+  // Aggressive mode still arms on the same 4H close back inside that is path B's correction.
+  const s = series(TYPE2.slice(0, 8), START);
+  const st = cycle(modelSandbox({ iccRequireH1: false, iccModelAggressive: true }), { d1: [], h4: s.h4, h1: s.h1 });
+  check("8b: Aggressive still arms on the 4H close back inside (check OFF)", st.aggArmTs === s.h4[7].ts + H4 && st.phase === "CORRECTION");
 }
 {
   // Type 1, GPS Entry Model: the 1H continuation comes mid-4H-candle, so the FVG engine waits
