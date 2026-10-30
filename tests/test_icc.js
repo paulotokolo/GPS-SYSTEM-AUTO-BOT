@@ -31,7 +31,7 @@ function iccSandbox(over) {
     emaFilterOn: false, emaTimeframe: "4h", trendEmaLen: 50,
     // The cycle sections use 1-bar swings on closes; section 11 covers strength 3 on wicks.
     iccOn: true, iccStructTf: "4h", iccMaxWait: 20, iccSwingStrength: 1, iccSwingSource: "close",
-    iccRequireH1: true, iccPauseOpposite: true, iccAutoClose: false,
+    iccPauseOpposite: true, iccAutoClose: false,
     iccModelOn: false, gpsModelOn: false
   }, over || {}));
   sb.priceDecimals = 2;
@@ -75,11 +75,11 @@ function extend(s, closes) {
   return s;
 }
 // Swing high 104 then swing low 101 -> NTZ 104 / 101; 4H closes 109 -> bullish break;
-// 1H swing high 111 then lower high 108.5 -> correction; 1H close 109.5 -> continuation.
+// 4H closes 103 back inside -> correction; 4H closes 109.5 back out -> continuation.
 const CYCLE = [
   [99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], [102, 102, 102, 102],
   [102, 102.5, 102.5, 102.5], [103, 103.5, 103.5, 103.5], [104.5, 106, 108, 109],
-  [110, 111, 110.5, 110.2], [107, 108.5, 107.5, 109.5]
+  [107, 105, 103.5, 103], [104.5, 106, 108, 109.5]
 ];
 const feedS = (sb, s) => feed(sb, s.h4, s.h1);
 
@@ -111,20 +111,16 @@ const feedS = (sb, s) => feed(sb, s.h4, s.h1);
   feedS(sb, series(CYCLE.slice(0, 7), T0));
   check("2: a 4H close above the locked high sets BULLISH", sb.icc.bias === "BULLISH", sb.icc.bias);
   check("2: the broken level is the locked high", sb.icc.break_level === 104);
-  check("2: before continuation the buy is held, waiting for the 1H",
-    /4H confirmed bullish but 1H continuation not yet confirmed/.test(sb.trendGateReason(false, 109)));
+  check("2: before continuation the buy is held",
+    /4H confirmed bullish but the cycle has not reached continuation yet/.test(sb.trendGateReason(false, 109)));
   check("2: sells are paused on the opposite bias", /against this sell/.test(sb.trendGateReason(true, 109)));
 }
 {
-  // 1H continuation check OFF (entry type 2): the break alone is not enough — price has to
-  // come back into the NTZ and close back out.
-  const sb = iccSandbox({ iccRequireH1: false });
-  feedS(sb, series(CYCLE.slice(0, 7), T0));
-  check("2: check OFF: the buy is held after the break, waiting for the NTZ re-entry",
-    /has not yet corrected into the NTZ and closed back out/.test(sb.trendGateReason(false, 109)));
-  // (kept below the 109 target, so the cycle is still live)
+  // The break alone is not enough — price has to correct and continue on 4H closes.
+  const sb = iccSandbox();
+  // (kept below the 110 target, so the cycle is still live)
   feedS(sb, series(CYCLE.slice(0, 7).concat([[107, 105, 103.5, 103], [104.5, 105, 105.5, 106]]), T0));
-  check("2: check OFF: after a 1H close back inside and back out, the buy is open",
+  check("2: after a 4H close back inside and back out, the buy is open",
     sb.trendGateReason(false, 106) === null && sb.icc.gps_buy_unlocked);
   check("2: and the phase reads CONTINUATION, GPS armed", sb.icc.phase === "CONTINUATION" && sb.icc.armed, sb.icc.phase);
 }
@@ -278,8 +274,8 @@ function refEma(closes, len) {
   check("7: both ON, ICC armed but price below the EMA: held by the EMA",
     /EMA filter/.test(sb.trendGateReason(false, ema - 1)));
   sb.icc.h1_confirmed = false;
-  check("7: both ON, EMA fine but no 1H continuation: held by ICC",
-    /1H continuation not yet confirmed/.test(sb.trendGateReason(false, ema + 1)));
+  check("7: both ON, EMA fine but no continuation: held by ICC",
+    /has not reached continuation yet/.test(sb.trendGateReason(false, ema + 1)));
 }
 
 // ---------------------------------------------------------------- 8: the gate stops the ORDER
@@ -306,7 +302,7 @@ function fvgSequence() {
 {
   const sb = buildSandbox();
   sb.icc.bias = "NTZ";
-  run(sb, fvgSequence(), defaultCfg({ iccOn: true, iccRequireH1: true, iccPauseOpposite: true }));
+  run(sb, fvgSequence(), defaultCfg({ iccOn: true, iccPauseOpposite: true }));
   console.log("\n===== 8: ICC HOLDS THE ORDER, NOT THE SIGNAL =====");
   console.log("orders:", sb.__orders.length, "| signals:", sb.signalLog.length);
   check("8: the GPS signal is still recorded", sb.signalLog.length === 1);
@@ -318,7 +314,7 @@ function fvgSequence() {
   const sb = buildSandbox();
   sb.icc.bias = "BULLISH";
   sb.icc.h1_confirmed = true;
-  run(sb, fvgSequence(), defaultCfg({ iccOn: true, iccRequireH1: true, iccPauseOpposite: true }));
+  run(sb, fvgSequence(), defaultCfg({ iccOn: true, iccPauseOpposite: true }));
   check("8: with ICC armed bullish the same buy IS sent", sb.__orders.length === 1);
 }
 {
@@ -384,7 +380,7 @@ function zecChart() {
   return hl.map(([h, l], i) => B(T0 + i * H4, (h + l) / 2, h, l, i >= 16 && i <= 20 ? h - 2 : (h + l) / 2));
 }
 {
-  const sb = iccSandbox({ iccSwingStrength: 3, iccSwingSource: "wick", iccRequireH1: false });
+  const sb = iccSandbox({ iccSwingStrength: 3, iccSwingSource: "wick" });
   feed(sb, zecChart());
   const marked = [];
   const bars = zecChart();
