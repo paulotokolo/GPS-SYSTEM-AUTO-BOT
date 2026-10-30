@@ -511,7 +511,7 @@ button:active { transform: scale(0.98); }
       <div class="state-box"><span class="state-label" id="stIccBiasLabel">ICC bias (4H)</span><span class="state-value" id="stIccBias">&mdash;</span></div>
       <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="stIccPhase">&mdash;</span></div>
       <div class="state-box"><span class="state-label" id="stIccNtzLabel">NTZ levels (live)</span><span class="state-value" id="stIccNtz">&mdash;</span></div>
-      <div class="state-box"><span class="state-label">1H structure</span><span class="state-value" id="stH1Struct">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Continuation</span><span class="state-value" id="stH1Struct">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Price position</span><span class="state-value" id="stIccPos">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Cycle expires in</span><span class="state-value" id="stIccExpires">&mdash;</span></div>
     </div>
@@ -689,7 +689,7 @@ button:active { transform: scale(0.98); }
       cycle</b> as the entry models below &mdash; same NTZ high and low, same break, same phase.
       Inside the NTZ (or while scanning for a fresh swing high and low) nothing is allowed;
       after the break only the break direction is, and only
-      once the cycle reaches Continuation (see <b>1H continuation check</b> below). A swing is the highest / lowest <b>close</b> of
+      once the cycle reaches Continuation (structure TF closes; see ICC Entry Models below). A swing is the highest / lowest <b>close</b> of
       <b>Swing strength</b> bars on each side (<b>Swing source</b> Wick measures highs and lows,
       matching Liquid&rsquo;s &ldquo;Swing Prices&rdquo; labels). Auto close acts when the NTZ is
       disrespected against an open trade, in Live mode. The structure timeframe and Max wait
@@ -764,19 +764,14 @@ button:active { transform: scale(0.98); }
       <div class="row"><label>ICC structure timeframe</label>
         <select id="iccStructTf"><option value="1h">1H</option><option value="4h" selected>4H</option><option value="daily">Daily</option></select>
       </div>
-      <div class="row"><label>1H continuation check</label><input type="checkbox" id="iccRequireH1" checked></div>
       <small class="hint">
-        <b>ON</b> (entry type 1): after the break the 1H shows a corrective swing &mdash; price does
-        <b>not</b> need to come back into the NTZ &mdash; and the 1H close that flips back in the
-        break direction is the continuation. <b>OFF</b> (entry type 2): everything runs on
-        <b>structure TF</b> body closes &mdash; wicks and live ticks never count. One logic block
-        watches both conditions at once, and whichever comes first counts. Correction: a close
-        back <b>inside</b> the NTZ, or a new swing extending the break followed by a swing the
-        other way (lower high / higher low). Continuation: a close back <b>out</b> of the NTZ (after
-        a close inside), or a momentum close back in the break direction beyond that lower high /
-        higher low candle&rsquo;s body. Applies to the ICC Filter and
-        both models. The GPS Entry Model always waits for a structure TF body close beyond the
-        NTZ before its FVG engine goes on. (Aggressive Entry Mode is type 3.)
+        Every phase runs on <b>structure TF</b> body closes &mdash; wicks and live ticks never count.
+        One logic block watches both conditions at once, and whichever comes first counts.
+        Correction: a close back <b>inside</b> the NTZ, or a new swing extending the break followed
+        by a swing the other way (lower high / higher low). Continuation: a close back <b>out</b> of
+        the NTZ (after a close inside), or a momentum close back in the break direction beyond that
+        lower high / higher low candle&rsquo;s body. Then the GPS Entry Model drops to 5M/15M for an
+        FVG entry; the ICC Entry Model enters on that continuation close.
       </small>
       <div class="row"><label>Max wait per phase (structure candles)</label><input type="number" id="iccMaxWait" value="20" step="1" min="1"></div>
       <small class="hint">
@@ -2595,8 +2590,7 @@ function trendGateReason(sell, price) {
       }
     } else if (!icc.h1_confirmed) {
       return "GPS signal held — ICC 4H confirmed " + want.toLowerCase() + " but " +
-             (cfg.iccRequireH1 === false ? "price has not yet corrected into the NTZ and closed back out (1H)"
-                                         : "1H continuation not yet confirmed") + ". Waiting.";
+             "the cycle has not reached continuation yet. Waiting.";
     }
   }
   return null;
@@ -2845,18 +2839,17 @@ function newCycleState() {
     lastCycle: null,            // how the previous cycle ended: { why, ts, iccEntered, gpsActive, key }
     needsFreshBreak: false,     // re-locked the pair a cycle just finished on: wait for price back inside
     indClose: null, indTs: null,// the structure close that made the indication, for the panel
-    contBarTs: null,            // open time of the candle whose close made continuation (1H, or structure TF on type 2)
+    contBarTs: null,            // open time of the structure TF candle whose close made continuation
     contTs: null,               // the close time of that candle
     contHow: null,              // what confirmed it, for the model logs
-    corrInside: false,          // type 2: a structure close has come back inside the NTZ
-    corrTurn: null,             // type 2: the latest lower high / higher low after a new extension
-    gpsOk: false,               // GPS Entry Model: a structure TF body close beyond the NTZ has confirmed continuation
+    corrInside: false,          // a structure close has come back inside the NTZ since the break
+    corrTurn: null,             // the latest lower high / higher low after a new extension
     aggArmTs: null, aggDip: null,// Aggressive mode: last structure-TF close back inside the NTZ
     pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
     lockHigh: null, lockLow: null, lockHiTs: null, lockLoTs: null,
     dir: null,                  // "buy" / "sell" once indicated
     indBarTs: null, waitCount: 0,
-    corrLevel: null,            // the 1H swing a continuation close has to break
+    corrLevel: null,            // the level the continuation close broke, for the logs
     target: null,
     align: { d: "NTZ", h4: "NTZ" },
     latest: { h1Hi: null, h1Lo: null, sHi: null, sLo: null },   // swing extremes (wicks) for stops
@@ -2979,7 +2972,7 @@ function runIccCycle(p, data, mods) {
     var sub = st.m[k], side = bull() ? "BUY" : "SELL";
     if (k === "icc" && mods.icc.aggressive) return;   // Aggressive mode enters on the live cross instead
     if (k === "icc" && sub.entered) return;
-    if (k === "gps" && (sub.active || !st.gpsOk)) return;
+    if (k === "gps" && sub.active) return;
     var fire = function (how) {
       if (k === "icc") {
         sub.entered = true;
@@ -3049,13 +3042,10 @@ function runIccCycle(p, data, mods) {
     return true;
   };
   var beyondNtz = function (c) { return bull() ? c > st.lockHigh : c < st.lockLow; };
-  // CONTINUATION, on a 1H close (type 1) or a structure TF close (type 2). The GPS Entry Model
-  // only ever goes on a structure TF body close beyond the NTZ: on type 2 that is this close;
-  // on type 1 it is this close only if a structure candle closed beyond the NTZ at the same
-  // moment, otherwise the next one that does.
-  // `what` describes the close, e.g. "closed back out of the NTZ, below 4033.05"; type 1
-  // passes nothing and gets "closed above <corrective swing>".
-  var toContinuation = function (t, bar, tfName, structOk, what) {
+  // CONTINUATION on a structure TF close. `what` describes it, e.g. "closed back out of the
+  // NTZ, below 4033.05". The ICC Entry Model enters on this close; the GPS Entry Model's FVG
+  // engine goes on at it.
+  var toContinuation = function (t, bar, what) {
     st.phase = "CONTINUATION";
     st.waitCount = 0;
     st.contBarTs = bar.ts;
@@ -3067,18 +3057,12 @@ function runIccCycle(p, data, mods) {
       st.target = bar.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
       why = "TP1 pips — no " + sName + " swing " + (bull() ? "high above" : "low below") + " the NTZ and the trigger";
     }
-    what = what || "closed " + (bull() ? "above " : "below ") + fmt(st.corrLevel);
-    st.contHow = "CONTINUATION — " + tfName + " candle body " + what;
-    emit(t, "CONTINUATION", "CONTINUATION — " + tfName + " " + what +
+    st.contHow = "CONTINUATION — " + sName + " candle body " + what;
+    emit(t, "CONTINUATION", "CONTINUATION — " + sName + " " + what +
          ". TP target " + fmt(st.target) + " (" + why + ").", bull() ? "log-buy" : "log-sell");
-    st.gpsOk = !!structOk;
-    if (!st.gpsOk && on("gps")) {
-      emit(t, "GPSWAIT", "GPS Entry Model waits for a " + sName + " body close " + (bull() ? "above " : "below ") +
-           fmt(bull() ? st.lockHigh : st.lockLow) + " to confirm continuation before the FVG engine goes on.", "log-info", null, "gps");
-    }
     MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t, bar, true); });
   };
-  // Type 2: one logic block, on structure TF closes only (wicks and live ticks never count).
+  // One logic block, on structure TF closes only (wicks and live ticks never count).
   // After the indication both conditions are watched at once, and whichever happens first
   // counts — for CORRECTION and again for CONTINUATION:
   //   NTZ re-entry  — CORRECTION: a body close back INSIDE the NTZ.
@@ -3106,21 +3090,21 @@ function runIccCycle(p, data, mods) {
     return turn ? { ext: ext, turn: turn } : null;
   };
   // Returns true when this close made CONTINUATION.
-  var typeTwoStep = function (t, b) {
+  var phaseStep = function (t, b) {
     var wasCorr = st.phase === "CORRECTION";
     var inside = bull() ? b.c <= st.lockHigh : b.c >= st.lockLow;
     // Continuation first, from what was already known before this close.
     if (wasCorr) {
       if (st.corrInside && beyondNtz(b.c)) {
         st.corrLevel = bull() ? st.lockHigh : st.lockLow;
-        toContinuation(t, b, sName, true, "closed back out of the NTZ, " + (bull() ? "above " : "below ") + fmt(st.corrLevel));
+        toContinuation(t, b, "closed back out of the NTZ, " + (bull() ? "above " : "below ") + fmt(st.corrLevel));
         return true;
       }
       var tb = st.corrTurn && st.corrTurn.bar;
       // (Also beyond the NTZ: a continuation close never sits inside the zone.)
       if (tb && beyondNtz(b.c) && (bull() ? b.c > b.o && b.c > Math.max(tb.o, tb.c) : b.c < b.o && b.c < Math.min(tb.o, tb.c))) {
         st.corrLevel = bull() ? Math.max(tb.o, tb.c) : Math.min(tb.o, tb.c);
-        toContinuation(t, b, sName, true, "closed with momentum (" + (bull() ? "bullish" : "bearish") + " body) " +
+        toContinuation(t, b, "closed with momentum (" + (bull() ? "bullish" : "bearish") + " body) " +
                        (bull() ? "above " : "below ") + "the " + (bull() ? "higher low" : "lower high") + " candle's body " + fmt(st.corrLevel));
         return true;
       }
@@ -3209,17 +3193,10 @@ function runIccCycle(p, data, mods) {
         i--;
         continue;
       }
-      // Type 2: correction and continuation (see typeTwoStep). A correcting close still runs
-      // on below: Max wait, and Aggressive mode arming.
-      if ((st.phase === "INDICATION" || st.phase === "CORRECTION") && p.contMode === "ntz" && b.ts >= st.indTs &&
-          typeTwoStep(t, b)) continue;
-      // Type 1: the GPS Entry Model's structure TF confirmation, after the 1H continuation.
-      if (st.phase === "CONTINUATION" && !st.gpsOk && beyondNtz(b.c)) {
-        st.gpsOk = true;
-        st.contHow = "CONTINUATION — " + sName + " candle body close confirmed " + (bull() ? "above " : "below ") +
-                     fmt(bull() ? st.lockHigh : st.lockLow);
-        if (on("gps")) modelStep("gps", t, b, true);
-      }
+      // Correction and continuation (see phaseStep). A correcting close still runs on below:
+      // Max wait, and Aggressive mode arming.
+      if ((st.phase === "INDICATION" || st.phase === "CORRECTION") && b.ts >= st.indTs &&
+          phaseStep(t, b)) continue;
       // Max wait applies to every phase after the break, counted from the phase's start, so a
       // cycle can never sit on stale levels indefinitely.
       if (++st.waitCount >= p.maxWait) {
@@ -3249,33 +3226,8 @@ function runIccCycle(p, data, mods) {
     refreshLatest(t1);
     if (!st.dir) continue;
 
-    // 1H continuation check OFF (entry type 2): the correction is price crossing back INTO the
-    // NTZ, and the continuation is a structure TF body close back out through the broken level.
-    if (p.contMode === "ntz" && st.phase !== "CONTINUATION") continue;   // type 2 runs on structure closes (above)
-
-    if (st.phase === "INDICATION") {
-      var c0 = latestSwing(hSw, bull(), t1, st.indBarTs);
-      if (c0) {
-        st.phase = "CORRECTION";
-        st.waitCount = 0;
-        st.corrLevel = c0.val;
-        emit(t1, "CORRECTION", "CORRECTION — 1H turned " + (bull() ? "down (swing high " : "up (swing low ") +
-             fmt(c0.val) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 +
-             ". Waiting for a 1H close " + (bull() ? "above " : "below ") + "the corrective structure.");
-      }
-      continue;
-    }
-
-    if (st.phase === "CORRECTION") {
-      var c1 = latestSwing(hSw, bull(), t1, st.indBarTs);
-      if (c1) st.corrLevel = c1.val;                 // follows each new lower high / higher low
-      if (!(bull() ? h.c > st.corrLevel : h.c < st.corrLevel)) continue;
-      // The structure candle that closed at this same moment, if any (it was handled first).
-      var sb0 = i > 0 && sBars[i - 1].ts + sMs === t1 ? sBars[i - 1] : null;
-      toContinuation(t1, h, "1H", !!sb0 && beyondNtz(sb0.c));
-      continue;
-    }
-
+    // Correction and continuation run on structure closes (above); the 1H only checks the
+    // target and the models' alignment pullback.
     // Only 1H candles that opened after the continuation close can hit the target.
     if (st.phase === "CONTINUATION" && h.ts >= st.contTs) {
       if (targetHit(t1, h)) continue;
@@ -3298,9 +3250,6 @@ function cycleParams() {
     n: Math.max(1, cfg.iccSwingStrength || 1),
     src: cfg.iccSwingSource,
     maxWait: Math.max(1, cfg.iccMaxWait || 20),
-    // 1H continuation check ON = entry type 1 (the 1H flips back, no NTZ re-entry needed);
-    // OFF = entry type 2 (price crosses back into the NTZ, then a structure TF close back out).
-    contMode: cfg.iccRequireH1 === false ? "ntz" : "h1",
     entryTf: gpsEntryTf()
   };
 }
@@ -3971,7 +3920,7 @@ function fireSignal(eng, bar, idx, ny, bodyPct) {
   if (replaying) return;      // historical bar — state only, never an order
   beep();
 
-  // The trend gates (50 EMA, ICC 4H bias, ICC 1H continuation) sit here rather than inside
+  // The trend gates (50 EMA, ICC 4H bias, ICC continuation) sit here rather than inside
   // the engine on purpose: the engine's own state has to keep running exactly as the
   // indicator's does, or later signals stop matching TradingView. The signal is still a
   // real signal and still belongs in the log and the CSV. What the filters stop is the order.
@@ -5418,7 +5367,7 @@ var FIELD_IDS = ["instrumentId","timeframe","tradingMode","accountSizeSelect","s
   "attachSl","attachTp","attachMode","testLots","testSlPips",
   "slPips","tp1Pips","tp2Pips","tp3Pips",
   "emaFilterOn","emaTimeframe","trendEmaLen",
-  "iccOn","iccSwingStrength","iccSwingSource","iccRequireH1",
+  "iccOn","iccSwingStrength","iccSwingSource",
   "gpsModelOn","gpsModelEntryTf","gpsModelMaxEntries","gpsModelSlMode","gpsModelSlPips","gpsModelVolOn","gpsModelVolLookback","gpsModelVolMult","gpsModelAlign","gpsModelTrail",
   "iccModelOn","iccModelAlign","iccModelAggressive","iccModelTpStruct","iccModelSlMode","iccModelTrail","iccStructTf","iccMaxWait","iccPauseOpposite","iccAutoClose",
   "enableBuys","enableSells","adoptExisting","adoptOnlyTagged",
@@ -5574,7 +5523,6 @@ function readConfig() {
     iccModelSlMode: document.getElementById("iccModelSlMode").value || "pips",
     iccModelTrail: chk("iccModelTrail"),
     iccMaxWait: Math.max(1, int("iccMaxWait", 20)),
-    iccRequireH1: chk("iccRequireH1"),
     iccPauseOpposite: chk("iccPauseOpposite"),
     iccAutoClose: chk("iccAutoClose"),
 
@@ -5877,8 +5825,7 @@ function startBot() {
       "50 EMA      " + (cfg.emaFilterOn ? "ON" : "off (shown, not gating)") + "  ·  EMA" +
         cfg.trendEmaLen + " on " + ({ "1h": "1H", "4h": "4H", "both": "1H + 4H" })[cfg.emaTimeframe],
       "ICC         " + (cfg.iccOn
-        ? "ON  ·  reads the shared " + cfg.iccStructTf.toUpperCase() + " ICC cycle  ·  1H continuation " +
-          (cfg.iccRequireH1 ? "type 1 (1H flip)" : "type 2 (NTZ re-entry + close out)") +
+        ? "ON  ·  reads the shared " + cfg.iccStructTf.toUpperCase() + " ICC cycle" +
           "  ·  opposite bias " + (cfg.iccPauseOpposite ? "paused" : "allowed") +
           "  ·  auto close " + (cfg.iccAutoClose ? "ON" : "off")
         : "off"),
