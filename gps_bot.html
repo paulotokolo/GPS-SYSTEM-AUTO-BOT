@@ -2652,7 +2652,7 @@ function updateTrendFilters() {
   var b4 = closedBars(h4Store), b1 = closedBars(h1Store);
   icc.ema_4h = emaOfBars(b4, cfg.trendEmaLen);
   icc.ema_1h = emaOfBars(b1, cfg.trendEmaLen);
-  try { updateEntryModels(); } catch (e) {}      // the shared ICC cycle (filter + models)
+  try { updateEntryModels(); } catch (e) { reportCycleError(e); }   // the shared ICC cycle (filter + models)
   try { updateGpsFvgEngine(); } catch (e) {}     // the GPS Entry Model's FVG engine
   if (cfg.iccOn) mapIccFromCycle();
   refreshTrendGates(livePrice());
@@ -2682,6 +2682,39 @@ function liveCycleEventDue() {
   liveCycleCheckedKey = key;
   return true;
 }
+// The ICC feeds: log once when they have loaded (with counts), warn once if they are still
+// empty 30 s after Start, and log a cycle failure instead of swallowing it — so a panel
+// stuck on "waiting for candles" always says why.
+var feedState = null;          // { since, loaded, warned, lastErr }
+function feedCounts() {
+  var p = cycleParams();
+  var s = closedBars(structOf(p.structTf, d1Store, h4Store, h1Store)).length, h = closedBars(h1Store).length;
+  return { s: s, h: h, sName: tfLabel(structSec(p.structTf)) };
+}
+function feedWaitText() {
+  var c = feedCounts();
+  return "waiting for candles (" + c.sName + ": " + c.s + ", 1H: " + c.h + ")";
+}
+function checkFeeds() {
+  if (!cfg || !feedState || (!cfg.gpsModelOn && !cfg.iccModelOn && !cfg.iccOn)) return;
+  var c = feedCounts();
+  if (!feedState.loaded && c.s >= 3 && c.h >= 3) {
+    feedState.loaded = true;
+    log("[ICC] Candles loaded — " + c.sName + ": " + c.s + " closed candles, 1H: " + c.h + ".", "log-info");
+  } else if (!feedState.loaded && !feedState.warned && Date.now() - feedState.since > 30000) {
+    feedState.warned = true;
+    log("[ICC] Still waiting for candles after 30s — " + c.sName + ": " + c.s + ", 1H: " + c.h + ". The ICC cycle " +
+        "needs at least 3 closed candles on each. Check the instrument (" + cfg.instrumentId + ") and the platform " +
+        "connection; if the market is closed the platform may not send history until it reopens.", "log-warn");
+  }
+}
+function reportCycleError(e) {
+  var msg = e && e.message ? e.message : String(e);
+  if (feedState && feedState.lastErr === msg) return;
+  if (feedState) feedState.lastErr = msg;
+  log("[ICC] Cycle error — " + msg + ". The ICC panels cannot update until this is fixed; please send this line " +
+      "to support.", "log-warn");
+}
 function pollTrendStores() {
   var key = [h4Store ? h4Store.length : 0, h1Store ? h1Store.length : 0, d1Store ? d1Store.length : 0,
              gpsFvgStore ? gpsFvgStore.length : 0].join("/");
@@ -2689,6 +2722,7 @@ function pollTrendStores() {
   var b1 = h1Store && h1Store.length > 1 ? h1Store.GetCandle(1) : null;
   key += "/" + (b4 ? b4.ts : "") + "/" + (b1 ? b1.ts : "");
   try { checkAggressiveEntry(livePrice()); } catch (e) {}
+  try { checkFeeds(); } catch (e) {}
   if (key === trendStoreLens && liveCycleEventDue()) key += "/live";   // live target touch
   if (key === trendStoreLens) { refreshTrendGates(livePrice()); return; }
   trendStoreLens = key;
@@ -3767,7 +3801,7 @@ function renderModelPanels() {
     var alignOn = !!modelOpt(kind, "Align");
     var alignBox = document.getElementById(pre + "AlignBox");
     if (alignBox) alignBox.style.display = alignOn ? "" : "none";
-    if (!st) { set(pre + "Phase", "waiting for " + sName + " / 1H candles", "muted"); return; }
+    if (!st) { set(pre + "Phase", feedWaitText(), "muted"); return; }
 
     var bull = st.dir === "buy", sub = st.m[kind];
     var ph = phaseView(st.dir ? st.phase : "WAITING");
@@ -5236,7 +5270,7 @@ function refreshStatePanel(ny) {
       t("stIccNtz", icc.ntz_high !== null ? fmt(icc.ntz_high) + " / " + fmt(icc.ntz_low)
                   : iccCycle ? (iccCycle.pendHi !== null ? fmt(iccCycle.pendHi) : "high pending") + " / " +
                                (iccCycle.pendLo !== null ? fmt(iccCycle.pendLo) : "low pending")
-                  : "waiting for candles",
+                  : feedWaitText(),
         icc.ntz_high !== null ? "" : "muted");
       if (icc.bias !== "BULLISH" && icc.bias !== "BEARISH") t("stH1Struct", "—", "muted");
       else t("stH1Struct", icc.h1_state,
@@ -5789,6 +5823,7 @@ function startBot() {
   trendState = { dir: "unknown", label: "—", detail: "", close: null, ema: null };
   resetTrendFilters();
   resetEntryModels();
+  feedState = { since: Date.now(), loaded: false, warned: false, lastErr: null };
   sessionPLKey = null;
   sessionPLSince = Date.now();
   // Performance (this session) starts from zero every time the bot goes live. Closed trades
