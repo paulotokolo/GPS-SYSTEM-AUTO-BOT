@@ -715,12 +715,13 @@ const PATHA = BASE.slice(0, 7).concat([[110, 111, 111.5, 112], [111.5, 111, 110.
   const corr = st.events.find((e) => e.type === "CORRECTION");
   check("8b: path A: CORRECTION when the 4H makes a higher high (112) then a higher low (110.5)",
     !!corr && corr.ts === s.h4[9].ts + H4 &&
-    /CORRECTION \(swing structure\) — after the higher high 112\.00, 4H formed a higher low 110\.50\. .* Waiting for a 4H body close above 112\.00/.test(corr.text),
+    /CORRECTION \(swing structure\) — after the higher high 112\.00, 4H formed a higher low 110\.50\./.test(corr.text),
     corr && corr.text);
   check("8b: path A: price never had to come back into the NTZ", s.h4.slice(7).every((b) => b.c > 104));
   const entry = st.events.find((e) => e.type === "ENTRY");
-  check("8b: path A: CONTINUATION + entry on the 4H body close above 112 (113)", !!entry && entry.entry === 113 &&
-    entry.ts === s.h4[10].ts + H4 && st.events.some((e) => e.type === "CONTINUATION" && /4H closed above 112\.00/.test(e.text)),
+  check("8b: path A: CONTINUATION + entry on the bullish 4H close (113) above the higher-low candle's body (112)", !!entry && entry.entry === 113 &&
+    entry.ts === s.h4[10].ts + H4 && st.events.some((e) => e.type === "CONTINUATION" &&
+      /4H closed with momentum \(bullish body\) above the higher low candle's body 112\.00/.test(e.text)),
     entry && entry.entry);
   check("8b: path A: the GPS FVG engine switches on at that close", st.events.some((e) => e.type === "ACTIVE" && e.kind === "gps" && e.ts === entry.ts));
   const flip = (rows) => rows.map((r) => r.map((x) => 200 - x));
@@ -729,6 +730,21 @@ const PATHA = BASE.slice(0, 7).concat([[110, 111, 111.5, 112], [111.5, 111, 110.
   check("8b: path A bearish: lower low 88 then lower high 89.5 = CORRECTION; 4H close below 88 = entry at 87",
     st2.dir === "sell" && st2.events.some((e) => e.type === "CORRECTION" && /after the lower low 88\.00, 4H formed a lower high 89\.50/.test(e.text)) &&
     (st2.events.find((e) => e.type === "ENTRY") || {}).entry === 87);
+}
+{
+  // One logic block: a swing correction, then price closes back inside the NTZ (103.5) and back
+  // out (105) before any momentum close beyond the higher low — the NTZ condition fires first.
+  const g = PATHA.slice(0, 10).concat([[110, 106, 104.5, 103.5], [104, 104.5, 104.8, 105]]);
+  const s = series(g, START - 2 * H4);
+  const st = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s.h4, h1: s.h1 });
+  const corr = st.events.filter((e) => e.type === "CORRECTION");
+  const cont = st.events.find((e) => e.type === "CONTINUATION");
+  check("8b: one block: corrected by swing structure, continued by the close back out of the NTZ (whichever first)",
+    corr.length === 1 && /swing structure/.test(corr[0].text) && !!cont && cont.ts === s.h4[11].ts + H4 &&
+    /4H closed back out of the NTZ, above 104\.00/.test(cont.text), cont && cont.text);
+  const s2 = series(PATHA.slice(0, 10).concat([[110, 106, 104.5, 103.5], [103, 103.4, 103.6, 103.8]]), START - 2 * H4);
+  const st2 = cycle(modelSandbox({ iccRequireH1: false }), { d1: [], h4: s2.h4, h1: s2.h1 });
+  check("8b: a bullish close still inside the NTZ is not continuation", st2.phase === "CORRECTION", st2.phase);
 }
 {
   // Aggressive mode still arms on the same 4H close back inside that is path B's correction.

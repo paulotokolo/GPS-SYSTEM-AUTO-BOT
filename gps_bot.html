@@ -769,10 +769,12 @@ button:active { transform: scale(0.98); }
         <b>ON</b> (entry type 1): after the break the 1H shows a corrective swing &mdash; price does
         <b>not</b> need to come back into the NTZ &mdash; and the 1H close that flips back in the
         break direction is the continuation. <b>OFF</b> (entry type 2): everything runs on
-        <b>structure TF</b> body closes &mdash; wicks and live ticks never count. Correction is
-        whichever comes first: a close back <b>inside</b> the NTZ (then a close back out is the
-        continuation), or a new swing extending the break followed by a swing the other way
-        (then a close beyond that new swing is the continuation). Applies to the ICC Filter and
+        <b>structure TF</b> body closes &mdash; wicks and live ticks never count. One logic block
+        watches both conditions at once, and whichever comes first counts. Correction: a close
+        back <b>inside</b> the NTZ, or a new swing extending the break followed by a swing the
+        other way (lower high / higher low). Continuation: a close back <b>out</b> of the NTZ (after
+        a close inside), or a momentum close back in the break direction beyond that lower high /
+        higher low candle&rsquo;s body. Applies to the ICC Filter and
         both models. The GPS Entry Model always waits for a structure TF body close beyond the
         NTZ before its FVG engine goes on. (Aggressive Entry Mode is type 3.)
       </small>
@@ -2846,7 +2848,8 @@ function newCycleState() {
     contBarTs: null,            // open time of the candle whose close made continuation (1H, or structure TF on type 2)
     contTs: null,               // the close time of that candle
     contHow: null,              // what confirmed it, for the model logs
-    corrPath: null,             // type 2: "A" swing structure or "B" NTZ re-entry close
+    corrInside: false,          // type 2: a structure close has come back inside the NTZ
+    corrTurn: null,             // type 2: the latest lower high / higher low after a new extension
     gpsOk: false,               // GPS Entry Model: a structure TF body close beyond the NTZ has confirmed continuation
     aggArmTs: null, aggDip: null,// Aggressive mode: last structure-TF close back inside the NTZ
     pendHi: null, pendLo: null, // the halves found so far while scanning, for the panel
@@ -3050,7 +3053,9 @@ function runIccCycle(p, data, mods) {
   // only ever goes on a structure TF body close beyond the NTZ: on type 2 that is this close;
   // on type 1 it is this close only if a structure candle closed beyond the NTZ at the same
   // moment, otherwise the next one that does.
-  var toContinuation = function (t, bar, tfName, structOk) {
+  // `what` describes the close, e.g. "closed back out of the NTZ, below 4033.05"; type 1
+  // passes nothing and gets "closed above <corrective swing>".
+  var toContinuation = function (t, bar, tfName, structOk, what) {
     st.phase = "CONTINUATION";
     st.waitCount = 0;
     st.contBarTs = bar.ts;
@@ -3062,12 +3067,9 @@ function runIccCycle(p, data, mods) {
       st.target = bar.c + (bull() ? 1 : -1) * pipsToPrice(cfg && cfg.tp1Pips > 0 ? cfg.tp1Pips : 100);
       why = "TP1 pips — no " + sName + " swing " + (bull() ? "high above" : "low below") + " the NTZ and the trigger";
     }
-    var outOfNtz = p.contMode === "ntz" && st.corrPath === "B";
-    var lvl = st.corrLevel;
-    st.contHow = "CONTINUATION — " + tfName + " candle body close confirmed " + (outOfNtz ? "back out of the NTZ, " : "") +
-                 (bull() ? "above " : "below ") + fmt(lvl);
-    emit(t, "CONTINUATION", "CONTINUATION — " + tfName + " closed " + (outOfNtz ? "back out of the NTZ, " : "") +
-         (bull() ? "above " : "below ") + fmt(lvl) +
+    what = what || "closed " + (bull() ? "above " : "below ") + fmt(st.corrLevel);
+    st.contHow = "CONTINUATION — " + tfName + " candle body " + what;
+    emit(t, "CONTINUATION", "CONTINUATION — " + tfName + " " + what +
          ". TP target " + fmt(st.target) + " (" + why + ").", bull() ? "log-buy" : "log-sell");
     st.gpsOk = !!structOk;
     if (!st.gpsOk && on("gps")) {
@@ -3076,13 +3078,16 @@ function runIccCycle(p, data, mods) {
     }
     MODEL_KINDS.forEach(function (k) { if (on(k)) modelStep(k, t, bar, true); });
   };
-  // Type 2 CORRECTION, judged on structure TF closes only — whichever path comes first.
-  //   Path B: a structure TF body close back INSIDE the NTZ. Wicks and live ticks never count.
-  //   Path A: price extends the break with a new structure swing (a lower low after a bearish
-  //           break, a higher high after a bullish one) and then turns, confirming a swing the
-  //           other way (the lower high / higher low).
-  // Path A's continuation is a structure close beyond that new swing; path B's is a structure
-  // close back out of the NTZ.
+  // Type 2: one logic block, on structure TF closes only (wicks and live ticks never count).
+  // After the indication both conditions are watched at once, and whichever happens first
+  // counts — for CORRECTION and again for CONTINUATION:
+  //   NTZ re-entry  — CORRECTION: a body close back INSIDE the NTZ.
+  //                   CONTINUATION: after that, a body close back OUT of it in the break direction.
+  //   Swing         — CORRECTION: a new swing extends the break (lower low / higher high), then
+  //                   a swing forms the other way (the lower high / higher low).
+  //                   CONTINUATION: after that, a candle closes with momentum back in the break
+  //                   direction — a bearish (bullish) body closing beyond the lower high's
+  //                   (higher low's) candle body. Price need not re-enter the NTZ.
   var latestExtension = function (t) {
     var ext = null;
     for (var k = 0; k < sSw.length && sSw[k].confirmTs <= t; k++) {
@@ -3091,28 +3096,52 @@ function runIccCycle(p, data, mods) {
     }
     return ext;
   };
-  var typeTwoCorrection = function (t, b) {
-    if (bull() ? b.c <= st.lockHigh : b.c >= st.lockLow) {
-      var level = bull() ? st.lockHigh : st.lockLow;
-      st.phase = "CORRECTION"; st.waitCount = 0; st.corrPath = "B"; st.corrLevel = level;
-      emit(t, "CORRECTION", "CORRECTION (NTZ re-entry) — " + sName + " body closed back inside the NTZ at " + fmt(b.c) +
-           " (" + (bull() ? "below " : "above ") + fmt(level) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 +
-           ". Waiting for a " + sName + " body close back " + (bull() ? "above " : "below ") + fmt(level) + ".");
-      return true;
-    }
-    var ext = latestExtension(t);
-    if (!ext) return false;
-    var turn = null;
+  // The latest swing the other way after the latest extension — the lower high / higher low.
+  var latestTurn = function (t) {
+    var ext = latestExtension(t), turn = null;
+    if (!ext) return null;
     for (var k = 0; k < sSw.length && sSw[k].confirmTs <= t; k++) {
       if (sSw[k].hi !== bull() && sSw[k].ts > ext.ts) turn = sSw[k];
     }
-    if (!turn) return false;
-    st.phase = "CORRECTION"; st.waitCount = 0; st.corrPath = "A"; st.corrLevel = ext.val;
-    emit(t, "CORRECTION", "CORRECTION (swing structure) — after the " + (bull() ? "higher high " : "lower low ") +
-         fmt(ext.val) + ", " + sName + " formed a " + (bull() ? "higher low " : "lower high ") + fmt(turn.val) +
-         ". Daily: " + st.align.d + " | 4H: " + st.align.h4 + ". Waiting for a " + sName + " body close " +
-         (bull() ? "above " : "below ") + fmt(ext.val) + ".");
-    return true;
+    return turn ? { ext: ext, turn: turn } : null;
+  };
+  // Returns true when this close made CONTINUATION.
+  var typeTwoStep = function (t, b) {
+    var wasCorr = st.phase === "CORRECTION";
+    var inside = bull() ? b.c <= st.lockHigh : b.c >= st.lockLow;
+    // Continuation first, from what was already known before this close.
+    if (wasCorr) {
+      if (st.corrInside && beyondNtz(b.c)) {
+        st.corrLevel = bull() ? st.lockHigh : st.lockLow;
+        toContinuation(t, b, sName, true, "closed back out of the NTZ, " + (bull() ? "above " : "below ") + fmt(st.corrLevel));
+        return true;
+      }
+      var tb = st.corrTurn && st.corrTurn.bar;
+      // (Also beyond the NTZ: a continuation close never sits inside the zone.)
+      if (tb && beyondNtz(b.c) && (bull() ? b.c > b.o && b.c > Math.max(tb.o, tb.c) : b.c < b.o && b.c < Math.min(tb.o, tb.c))) {
+        st.corrLevel = bull() ? Math.max(tb.o, tb.c) : Math.min(tb.o, tb.c);
+        toContinuation(t, b, sName, true, "closed with momentum (" + (bull() ? "bullish" : "bearish") + " body) " +
+                       (bull() ? "above " : "below ") + "the " + (bull() ? "higher low" : "lower high") + " candle's body " + fmt(st.corrLevel));
+        return true;
+      }
+    }
+    // Then this close's own news: back inside the NTZ, and/or a new lower high / higher low.
+    var lt = latestTurn(t), newTurn = lt && (!st.corrTurn || lt.turn.ts !== st.corrTurn.ts) ? lt.turn : null;
+    if (newTurn) st.corrTurn = newTurn;
+    if (inside) st.corrInside = true;
+    if (!wasCorr && (inside || newTurn)) {
+      st.phase = "CORRECTION"; st.waitCount = 0;
+      var lvl = bull() ? st.lockHigh : st.lockLow;
+      if (inside) {
+        emit(t, "CORRECTION", "CORRECTION (NTZ re-entry) — " + sName + " body closed back inside the NTZ at " + fmt(b.c) +
+             " (" + (bull() ? "below " : "above ") + fmt(lvl) + "). Daily: " + st.align.d + " | 4H: " + st.align.h4 + ".");
+      } else {
+        emit(t, "CORRECTION", "CORRECTION (swing structure) — after the " + (bull() ? "higher high " : "lower low ") +
+             fmt(lt.ext.val) + ", " + sName + " formed a " + (bull() ? "higher low " : "lower high ") + fmt(newTurn.val) +
+             ". Daily: " + st.align.d + " | 4H: " + st.align.h4 + ".");
+      }
+    }
+    return false;
   };
 
   // Walk structure closes and 1H closes in time order; a structure close is handled before a
@@ -3180,20 +3209,10 @@ function runIccCycle(p, data, mods) {
         i--;
         continue;
       }
-      // Type 2: CORRECTION on a structure close (path A or B), then CONTINUATION on a
-      // structure close back in the break direction (beyond the new swing, or out of the NTZ).
-      // (The correcting close still runs on below: Max wait, and Aggressive mode arming.)
-      var corrected = st.phase === "INDICATION" && p.contMode === "ntz" && b.ts >= st.indTs && typeTwoCorrection(t, b);
-      if (!corrected && st.phase === "CORRECTION" && p.contMode === "ntz") {
-        if (st.corrPath === "A") {
-          var ext2 = latestExtension(t);
-          if (ext2 && (bull() ? ext2.val > st.corrLevel : ext2.val < st.corrLevel)) st.corrLevel = ext2.val;
-        }
-        if (st.corrPath === "B" ? beyondNtz(b.c) : (bull() ? b.c > st.corrLevel : b.c < st.corrLevel)) {
-          toContinuation(t, b, sName, true);
-          continue;
-        }
-      }
+      // Type 2: correction and continuation (see typeTwoStep). A correcting close still runs
+      // on below: Max wait, and Aggressive mode arming.
+      if ((st.phase === "INDICATION" || st.phase === "CORRECTION") && p.contMode === "ntz" && b.ts >= st.indTs &&
+          typeTwoStep(t, b)) continue;
       // Type 1: the GPS Entry Model's structure TF confirmation, after the 1H continuation.
       if (st.phase === "CONTINUATION" && !st.gpsOk && beyondNtz(b.c)) {
         st.gpsOk = true;
