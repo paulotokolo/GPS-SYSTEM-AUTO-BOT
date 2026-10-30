@@ -199,7 +199,9 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | Volume lookback | 20 | candles in the volume baseline (shown while volume confirmation is ON) |
 | Volume multiplier | 1.5 | the exit candle's volume must be above this × the baseline average |
 
-- **TP monitoring panel:** while the engine waits for the target, *TP target* (the cycle's structure target) and *TP distance* (live price to the target, in points and pips, refreshed every second) are shown; they are hidden otherwise.
+- **TP monitoring panel:** while the engine waits for the target, *TP target* (the cycle's structure target) and *TP distance* (live price to the target, in points and pips, refreshed every second) are shown; they are hidden otherwise. *Engine status* names the engine (`GPS FVG ENGINE — …`) with entries used vs max.
+
+**Both model panels** show *Engine status* (`ICC ENTRY MODEL — …` / `GPS FVG ENGINE — …`) with entries used vs max for the cycle (ICC Entry Model: 1 in Standard, 2 in Aggressive), *NTZ levels* (latest until the break, locked after it), live *Price position* (ABOVE / INSIDE / BELOW NTZ), and *TP target* / *TP distance* only once that model's entries are used and it is waiting for the target (TP MONITORING). CORRECTION shows from the structure close that made it and stays at least until the next structure close.
 - **Dormant** until the shared cycle reaches continuation **and** a structure-TF body close beyond the NTZ has confirmed it (with alignment ON: Daily/4H agree and price pulls back to the latest 1H swing).
 - **Tracking:** every FVG in the break direction on the entry TF formed since the continuation candle opened — bullish (low above the high two candles back) on a bullish cycle, bearish on a bearish one.
 - **Entry:** price comes back **into** an FVG, then a candle **closes back out** of it in the break direction on a volume spike — entry at that close, market order tagged `GPSBOT-GPSM`. A tap that exits without the volume is logged and does not count; the FVG stays live and needs price back inside before the next exit can.
@@ -255,7 +257,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (560 assertions). |
+| `tests/` | Automated test suite (564 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -588,9 +590,9 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           67 pass   0 fail
-test_models       175 pass   0 fail
+test_models       179 pass   0 fail
 ----------------------------------------
-TOTAL: 560 pass, 0 fail
+TOTAL: 564 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
