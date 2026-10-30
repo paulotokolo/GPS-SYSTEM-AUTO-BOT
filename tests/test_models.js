@@ -398,6 +398,29 @@ const dailyBull = [
     types(st, "icc").includes("PULLBROKEN") && st.phase === "CONTINUATION" && !types(st, "icc").includes("ENTRY"));
 }
 
+{
+  // ICC Entry Model panel: engine status with entries used vs max, and TP target / distance
+  // only during TP monitoring.
+  const sb = modelSandbox();
+  sb.engines = [];
+  const txt = (id) => sb.document.getElementById(id).textContent;
+  const shown = (id) => sb.document.getElementById(id).style.display !== "none";
+  const s = series(WIDE, START);
+  sb.iccCycle = cycle(sb, { d1: [], h4: s.h4.slice(0, 7), h1: s.h1.slice(0, 28) });
+  sb.renderModelPanels();
+  check("6p: ICC panel — before continuation: waiting, entries 0/1, no TP fields",
+    txt("mIccEngine") === "ICC ENTRY MODEL — WAITING for the 4H continuation close · entries 0/1" && !shown("mIccTpBox") && !shown("mIccTpDistBox"),
+    txt("mIccEngine"));
+  sb.iccCycle = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
+  sb.tradingStore = storeOf([{ ts: START, o: 110, h: 110, l: 110, c: 110 }], 900e3, { o: 110, h: 111, l: 110, c: 111 });
+  sb.renderModelPanels();
+  check("6p: ICC panel — after its entry: TP MONITORING 1/1", txt("mIccEngine") === "ICC ENTRY MODEL — TP MONITORING — 1/1 entries used, waiting for the target",
+    txt("mIccEngine"));
+  check("6p: ICC panel — TP target and live distance shown", shown("mIccTpBox") && shown("mIccTpDistBox") &&
+    txt("mIccTp") === "114.00 (4H swing high)" && /^3\.00 pts/.test(txt("mIccTpDist")), txt("mIccTp") + " | " + txt("mIccTpDist"));
+  check("6p: ICC panel — entry mode names the structure TF close", txt("mIccMode") === "STANDARD — 4H continuation close", txt("mIccMode"));
+}
+
 // ---------------------------------------------------------------- 7: GPS Entry Model — ICC FVG engine
 const asiaOpen = Date.UTC(2025, 0, 16, 1, 0, 0);
 const flat = (ts, p) => ({ ts, o: p, h: p + 0.5, l: p - 0.5, c: p, v: 100 });
@@ -582,19 +605,19 @@ function liveFvgOrder(over, cycleOver) {
   const txt = () => sb.document.getElementById("mGpsEngines").textContent;
   sb.iccCycle = liveCycle(T0, Object.assign({}, base, { phase: "CORRECTION", m: { gps: { active: false }, icc: {} } }));
   sb.renderModelPanels();
-  check("7: panel — DORMANT before continuation", txt() === "DORMANT — waiting for ICC continuation", txt());
+  check("7: panel — DORMANT before continuation", txt() === "GPS FVG ENGINE — DORMANT — waiting for ICC continuation", txt());
   sb.iccCycle = liveCycle(T0, base);
   sb.gpsFvgStore = storeOf(cand(FVG_ROWS, T0), M15);
   sb.updateGpsFvgEngine();
   sb.renderModelPanels();
-  check("7: panel — ACTIVE, tracking FVGs, entries used", txt() === "ACTIVE — tracking 1 bullish FVG · entries 1/2", txt());
+  check("7: panel — ACTIVE, tracking FVGs, entries used", txt() === "GPS FVG ENGINE — ACTIVE — tracking 1 bullish FVG · entries 1/2", txt());
   const shown = (id) => sb.document.getElementById(id).style.display !== "none";
   check("7: panel — TP target / distance hidden while still tracking FVGs", !shown("mGpsTpBox") && !shown("mGpsTpDistBox"));
   sb.cfg.gpsModelMaxEntries = 1;
   sb.gpsFvgSeen = null;
   sb.updateGpsFvgEngine();
   sb.renderModelPanels();
-  check("7: panel — TP MONITORING once max entries are used", /^TP MONITORING — 1\/1 entries used/.test(txt()), txt());
+  check("7: panel — TP MONITORING once max entries are used", /^GPS FVG ENGINE — TP MONITORING — 1\/1 entries used/.test(txt()), txt());
   check("7: panel — TP target and TP distance shown during TP monitoring", shown("mGpsTpBox") && shown("mGpsTpDistBox"));
   check("7: panel — TP target is the cycle's structure target",
     sb.document.getElementById("mGpsTp").textContent === "120.00 (4H swing high)", sb.document.getElementById("mGpsTp").textContent);

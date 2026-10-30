@@ -520,6 +520,7 @@ button:active { transform: scale(0.98); }
       <div class="model-panel-title sec-icc">ICC Entry Model</div>
       <div class="state-grid">
         <div class="state-box"><span class="state-label">ICC phase</span><span class="state-value" id="mIccPhase">&mdash;</span></div>
+        <div class="state-box"><span class="state-label">Engine status</span><span class="state-value" id="mIccEngine">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Cycle status</span><span class="state-value" id="mIccStatus">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last cycle status</span><span class="state-value" id="mIccLastCycle">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last cycle date</span><span class="state-value" id="mIccLastDate">&mdash;</span></div>
@@ -530,6 +531,8 @@ button:active { transform: scale(0.98); }
         <div class="state-box" id="mIccAlignBox"><span class="state-label">TF alignment</span><span class="state-value" id="mIccAlign">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Entry mode</span><span class="state-value" id="mIccMode">&mdash;</span></div>
         <div class="state-box"><span class="state-label">Last entry</span><span class="state-value" id="mIccLast">&mdash;</span></div>
+        <div class="state-box" id="mIccTpBox"><span class="state-label">TP target</span><span class="state-value" id="mIccTp">&mdash;</span></div>
+        <div class="state-box" id="mIccTpDistBox"><span class="state-label">TP distance</span><span class="state-value" id="mIccTpDist">&mdash;</span></div>
       </div>
     </div>
     <div class="model-panel" id="gpsModelPanel">
@@ -3706,6 +3709,21 @@ function expiresView(st) {
   return { text: left + " " + cycleTfName() + " bar" + (left === 1 ? "" : "s") + " (" + st.phase.toLowerCase() + ")",
            cls: left <= 3 ? "ph-inval" : "" };
 }
+// TP target and live distance boxes (`pre` = "mIcc" / "mGps"), shown only during TP monitoring.
+function showTp(pre, on, st, bull, sName) {
+  [pre + "TpBox", pre + "TpDistBox"].forEach(function (id) {
+    var b = document.getElementById(id);
+    if (b) b.style.display = on ? "" : "none";
+  });
+  if (!on) return;
+  var set = function (id, v, cls) {
+    var el = document.getElementById(id);
+    if (el) { el.textContent = v; el.className = "state-value" + (cls ? " " + cls : ""); }
+  };
+  set(pre + "Tp", fmt(st.target) + " (" + sName + " swing " + (bull ? "high" : "low") + ")", bull ? "up" : "down");
+  var px = livePrice();
+  set(pre + "TpDist", px === null ? "—" : tpDistanceText(st.target - px), "");
+}
 // "45.20 pts · 452.0 pips" — how far price still has to go to the target (0 once there).
 function tpDistanceText(d) {
   var a = Math.abs(d), ps = pipSize();
@@ -3792,11 +3810,25 @@ function renderModelPanels() {
       var lastE = st.lastIccEntry;
       if (iccLastAggEntry && (!lastE || iccLastAggEntry.ts > lastE.ts)) lastE = iccLastAggEntry;
       set("mIccLast", since(lastE), lastE ? "" : "muted");
-      if (!cfg.iccModelAggressive) {
-        set("mIccMode", "STANDARD — 1H close" + (alignOn ? " + alignment" : ""), "");
+      // Engine status: what the model is doing and entries used vs max for this cycle.
+      var aggOn = !!cfg.iccModelAggressive;
+      var mine = aggState && aggState.key === aggCycleKey(st);
+      var used = aggOn ? (mine ? aggState.entries : 0) : (sub.entered ? 1 : 0);
+      var maxI = aggOn ? AGGRESSIVE_MAX_ENTRIES : 1;
+      var iccTpMon = !!st.dir && used >= maxI;
+      set("mIccEngine", "ICC ENTRY MODEL — " + (iccTpMon
+            ? "TP MONITORING — " + used + "/" + maxI + " entries used, waiting for the target"
+          : !st.dir ? "WAITING for a break · entries 0/" + maxI
+          : aggOn ? "ACTIVE · entries " + used + "/" + maxI
+          : st.phase !== "CONTINUATION" ? "WAITING for the " + sName + " continuation close · entries 0/1"
+          : alignOn ? (sub.aligned ? "WAITING — pullback to 1H " + (bull ? "higher low" : "lower high") : "WAITING — Daily / 4H alignment") +
+                      " · entries 0/1"
+          : "ACTIVE · entries 0/1"),
+          iccTpMon || (st.dir && (aggOn || st.phase === "CONTINUATION")) ? (bull ? "up" : "down") : "pending");
+      showTp("mIcc", iccTpMon && st.target !== null, st, bull, sName);
+      if (!aggOn) {
+        set("mIccMode", "STANDARD — " + sName + " continuation close" + (alignOn ? " + alignment" : ""), "");
       } else {
-        var mine = aggState && aggState.key === aggCycleKey(st);
-        var used = mine ? aggState.entries : 0;
         var armed = st.dir && st.aggArmTs !== null && !(mine && aggState.usedArmTs === st.aggArmTs);
         set("mIccMode", "AGGRESSIVE — " + (!st.dir || st.status !== "ACTIVE" ? "waiting for a break"
               : used >= AGGRESSIVE_MAX_ENTRIES ? "max entries used"
@@ -3807,7 +3839,7 @@ function renderModelPanels() {
     } else {
       set("mGpsStatus", statusText, statusCls);
       var g = gpsFvg && gpsFvg.key === aggCycleKey(st) ? gpsFvg : null, maxE = Math.max(1, cfg.gpsModelMaxEntries || 2);
-      set("mGpsEngines", sub.active
+      set("mGpsEngines", "GPS FVG ENGINE — " + (sub.active
           ? (g && g.mode === "TP MONITORING"
               ? "TP MONITORING — " + g.entries + "/" + maxE + " entries used, waiting for the target"
               : "ACTIVE — tracking " + (g ? g.fvgs.length : 0) + " " + (bull ? "bullish" : "bearish") + " FVG" +
@@ -3817,20 +3849,10 @@ function renderModelPanels() {
             ? (sub.aligned ? "WAITING — pullback to 1H " + (bull ? "higher low " : "lower high ") +
                              (sub.pullLevel !== null ? fmt(sub.pullLevel) : "(forming)")
                            : "WAITING — Daily / 4H alignment")
-          : "WAITING", sub.active ? (bull ? "up" : "down") : "pending");
+          : "WAITING"), sub.active ? (bull ? "up" : "down") : "pending");
       set("mGpsEntryTf", entryTfLabel(gpsEntryTf()) + " (FVG engine)", "");
       set("mGpsLast", since(gpsModelLastEntry), gpsModelLastEntry ? "" : "muted");
-      // TP target and live distance, while the engine is waiting for the target.
-      var tpOn = sub.active && !!g && g.mode === "TP MONITORING" && st.target !== null;
-      ["mGpsTpBox", "mGpsTpDistBox"].forEach(function (id) {
-        var b = document.getElementById(id);
-        if (b) b.style.display = tpOn ? "" : "none";
-      });
-      if (tpOn) {
-        set("mGpsTp", fmt(st.target) + " (" + sName + " swing " + (bull ? "high" : "low") + ")", bull ? "up" : "down");
-        var tpx = livePrice();
-        set("mGpsTpDist", tpx === null ? "—" : tpDistanceText(st.target - tpx), "");
-      }
+      showTp("mGps", sub.active && !!g && g.mode === "TP MONITORING" && st.target !== null, st, bull, sName);
     }
   });
 }
