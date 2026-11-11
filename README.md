@@ -197,7 +197,7 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | :--- | :--- | :--- |
 | FVG entry timeframe | **15M** | 5M or 15M — the engine's own candle feed |
 | Max entries per cycle | **2** | 1–10; after it, TP monitoring |
-| Stop loss mode | **Fixed pip** | *Fixed pip*, or *Structure TF swing* — just beyond the NTZ level continuation broke back from: the low of the NTZ swing-low candle on buys, the high of the swing-high candle on sells (falls back to the pip amount if that is not beyond the entry) |
+| Stop loss mode | **Fixed pip** | *Fixed pip*; *Structure TF swing* — just beyond the NTZ level continuation broke back from: the low of the NTZ swing-low candle on buys, the high of the swing-high candle on sells; or *Most recent structure swing high/low* — the wick of the latest confirmed structure TF swing low (buys) / swing high (sells), wherever the NTZ is. The swing modes fall back to the pip amount if the level is not beyond the entry |
 | Fixed pip SL amount | 100 | this model's own pip stop; shown only in Fixed pip mode |
 | Volume confirmation | **ON** | OFF: a tap and close back out is enough, no volume spike needed |
 | Volume lookback | 20 | candles in the volume baseline (shown while volume confirmation is ON) |
@@ -263,7 +263,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (598 assertions). |
+| `tests/` | Automated test suite (602 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -596,10 +596,10 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           67 pass   0 fail
-test_models       192 pass   0 fail
+test_models       196 pass   0 fail
 test_biaslock      21 pass   0 fail
 ----------------------------------------
-TOTAL: 598 pass, 0 fail
+TOTAL: 602 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

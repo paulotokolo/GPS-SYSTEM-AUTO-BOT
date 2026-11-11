@@ -702,10 +702,11 @@ button:active { transform: scale(0.98); }
 
     <div class="trend-sub">ICC Entry Models</div>
     <small class="hint">
-      One shared ICC cycle that both models read: lock the structure swing high/low (NTZ)
-      &rarr; <b>Indication</b> (body close outside it) &rarr; <b>Correction</b> (the 1H turns
-      against the break) &rarr; <b>Continuation</b> (a 1H close breaks that corrective
-      structure) &rarr; <b>Complete</b> (TP target hit). The models only differ in how they enter.
+      One shared ICC cycle that both models read, all on structure TF closes: lock the structure
+      swing high/low (NTZ) &rarr; <b>Indication</b> (body close outside it) &rarr; <b>Correction</b>
+      (a close back inside, or a new swing then a swing the other way) &rarr; <b>Continuation</b>
+      (a close back out, or a momentum close) &rarr; <b>Complete</b> (TP target hit). The models
+      only differ in how they enter.
     </small>
     <div class="row"><label>Enable GPS Entry Model</label><input type="checkbox" id="gpsModelOn"></div>
     <div class="model-opts" id="gpsModelOpts">
@@ -717,6 +718,7 @@ button:active { transform: scale(0.98); }
         <select id="gpsModelSlMode">
           <option value="pips" selected>Fixed pip</option>
           <option value="struct">Structure TF swing (beyond the NTZ)</option>
+          <option value="recent">Most recent structure swing high/low</option>
         </select>
       </div>
       <div class="row" id="gpsModelSlPipsRow"><label>Fixed pip SL amount</label><input type="number" id="gpsModelSlPips" value="100" step="1" min="1"></div>
@@ -736,8 +738,10 @@ button:active { transform: scale(0.98); }
         forming beyond a tracked one (below it on buys, above on sells) replaces it. Every entry
         aims at the structure TF swing target; after <b>Max entries per cycle</b> it stops and
         waits for it. <b>Structure TF swing</b> stop = just beyond the NTZ level continuation broke
-        back from (below the NTZ low on buys, above the NTZ high on sells). Not filtered by the
-        50 EMA or the standard engines.
+        back from (below the NTZ low on buys, above the NTZ high on sells). <b>Most recent structure
+        swing</b> stop = the wick of the latest confirmed structure TF swing low (buys) / swing high
+        (sells), wherever the NTZ is. Either falls back to the Fixed pip SL amount if the level is not beyond the
+        entry. Not filtered by the 50 EMA or the standard engines.
       </small>
     </div>
     <div class="row"><label>Enable ICC Entry Model</label><input type="checkbox" id="iccModelOn"></div>
@@ -3655,6 +3659,16 @@ function gpsFvgStop(st, entry, dir) {
   var sell = dir === "sell";
   var pips = Math.max(1, cfg.gpsModelSlPips || 100);
   var pipSl = sell ? entry + pipsToPrice(pips) : entry - pipsToPrice(pips);
+  if (cfg.gpsModelSlMode === "recent") {
+    // The latest confirmed structure TF swing on the stop side, at its wick: the latest swing
+    // high above a sell, the latest swing low below a buy — wherever the NTZ is.
+    var rl = st.latest ? (sell ? st.latest.sHi : st.latest.sLo) : null;
+    if (rl !== null && rl !== undefined && (sell ? rl > entry : rl < entry)) {
+      return { sl: rl, how: "most recent structure TF swing " + (sell ? "high" : "low") };
+    }
+    return { sl: pipSl, how: "fixed " + pips + " pips — the most recent structure swing " + (sell ? "high" : "low") +
+             " is not beyond the entry" };
+  }
   if (cfg.gpsModelSlMode !== "struct") return { sl: pipSl, how: "fixed " + pips + " pips" };
   var lvl = sell ? (st.lockHiWick !== undefined ? st.lockHiWick : st.lockHigh)
                  : (st.lockLoWick !== undefined ? st.lockLoWick : st.lockLow);
@@ -3729,7 +3743,7 @@ function syncModelOptions() {
   any = any || document.getElementById("iccOn").checked;
   document.getElementById("iccCycleOpts").classList.toggle("shown", any);
   document.getElementById("gpsModelSlPipsRow").style.display =
-    document.getElementById("gpsModelSlMode").value === "struct" ? "none" : "";
+    document.getElementById("gpsModelSlMode").value === "pips" ? "" : "none";
   document.getElementById("gpsModelVolRows").style.display =
     document.getElementById("gpsModelVolOn").checked ? "" : "none";
 }
@@ -5960,7 +5974,8 @@ function startBot() {
         "GPS Entry Model " + (cfg.gpsModelOn ? "ON (ICC FVG engine on " + entryTfLabel(gpsEntryTf()) + ", max " +
           cfg.gpsModelMaxEntries + " entries, " + (cfg.gpsModelVolOn
             ? "volume > " + cfg.gpsModelVolMult + "× " + cfg.gpsModelVolLookback + "-bar avg" : "volume check OFF") + (cfg.gpsModelAlign ? ", alignment" : "") +
-          ", SL " + (cfg.gpsModelSlMode === "struct" ? "structure TF swing" : cfg.gpsModelSlPips + " pips") +
+          ", SL " + (cfg.gpsModelSlMode === "struct" ? "structure TF swing (NTZ)" : cfg.gpsModelSlMode === "recent"
+            ? "most recent structure swing" : cfg.gpsModelSlPips + " pips") +
           (cfg.gpsModelTrail ? ", trail after TP" : "") + ")" : "off") +
         "  ·  ICC Entry Model " + (cfg.iccModelOn ? "ON (" + (cfg.iccModelAggressive ? "AGGRESSIVE live-cross entry"
           : "1H entry" + (cfg.iccModelAlign ? ", alignment" : "")) +

@@ -650,6 +650,21 @@ function liveFvgOrder(over, cycleOver) {
   check("7: and logged as the structure stop", sb.__logLines.some((l) => /SL 94\.50 \(structure TF swing — just below the NTZ low\)/.test(l)));
 }
 {
+  // Most recent structure swing: the latest structure swing low's wick (96), whatever the NTZ
+  // is: 103.4 - 96 = 74 pips.
+  const sb = liveFvgOrder({ gpsModelSlMode: "recent" }, { lockLoWick: 94.5 });
+  check("7: SL mode Most recent structure swing = below the latest structure swing low (96)",
+    sb.__orders[0] && sb.__orders[0].sl.pips === 74, sb.__orders[0] && JSON.stringify(sb.__orders[0].sl));
+  check("7: and logged as such", sb.__logLines.some((l) => /SL 96\.00 \(most recent structure TF swing low\)/.test(l)));
+  const sb2 = liveFvgOrder({ gpsModelSlMode: "recent", gpsModelSlPips: 40 }, { latest: { h1Hi: 104, h1Lo: 99, sHi: 110, sLo: 104 } });
+  check("7: if that swing is not below the entry it falls back to the Fixed pip SL amount (40)",
+    sb2.__orders[0] && sb2.__orders[0].sl.pips === 40 &&
+    sb2.__logLines.some((l) => /fixed 40 pips — the most recent structure swing low is not beyond the entry/.test(l)));
+  const st = { latest: { sHi: 110, sLo: 96 } };
+  sb.cfg.gpsModelSlMode = "recent";
+  check("7: sells use the latest structure swing high (110)", sb.gpsFvgStop(st, 103.4, "sell").sl === 110);
+}
+{
   // Volume confirmation OFF: the first tap + exit (bar 5, normal volume) is already an entry.
   const sb = buildSandbox(); sb.priceDecimals = 2;
   const T = Date.UTC(2026, 9, 20, 0, 0, 0);
