@@ -55,6 +55,10 @@ Every order carries the engine in its comment (`GPSBOT-E1`), so a fill can alway
 
 Any drift from the table above is called out loudly in the log at Start — silent drift is what makes a bot stop matching its indicator.
 
+### Bias lock — one direction at a time
+
+**Always on, no setting.** The bot never holds a BUY and a SELL on its instrument at the same time. Before every order — all six engines, both entry models, Aggressive mode — it checks what is open on the instrument: the broker's open positions (the bot's own, adopted ones, and trades opened by hand, whatever spelling the platform uses for the symbol), the bot's managed book, and any entry sent but not filled yet. If anything is open in the **other** direction, the new order is not placed: the signal still fires and is logged, followed by `NO ORDER SENT — BIAS LOCK: a BUY trade is open on XAU/USD, so this SELL is not placed…`. Signals in the **same** direction are unaffected (normal entry caps still apply). The lock releases by itself once every trade on the instrument has closed — TP, SL or closed by hand — logged as `🔓 BIAS LOCK released`; engaging is logged as `🔒 BIAS LOCK — BUY — SELL signals blocked…`. The Signal State panel's **Bias lock** box shows BUY / SELL / FREE live. In Dry Run nothing is really opened, so the lock only engages there if a trade is open on the account (e.g. a manual one).
+
 ### The sell side — engines 4 to 6
 
 Engines 4–6 are the **exact mirror** of 1–3. The state machine is shared, with one `dir` flag flipping every comparison, so the two sides cannot drift apart in maintenance:
@@ -259,7 +263,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (569 assertions). |
+| `tests/` | Automated test suite (590 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -593,8 +597,9 @@ test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           67 pass   0 fail
 test_models       184 pass   0 fail
+test_biaslock      21 pass   0 fail
 ----------------------------------------
-TOTAL: 569 pass, 0 fail
+TOTAL: 590 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.

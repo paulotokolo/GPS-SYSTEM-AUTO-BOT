@@ -559,6 +559,7 @@ button:active { transform: scale(0.98); }
       <div class="state-box"><span class="state-label">Ref Low / High</span><span class="state-value" id="stRefLevels">&mdash;</span></div>
       <div class="state-box"><span class="state-label" id="stZoneLabel">FVG Zone (bot &rarr; top)</span><span class="state-value" id="stFvgZone">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Active engine</span><span class="state-value" id="stEngine">&mdash;</span></div>
+      <div class="state-box"><span class="state-label">Bias lock</span><span class="state-value" id="stBiasLock">&mdash;</span></div>
       <div class="state-box"><span class="state-label" id="stZoneAgeLabel">Zone age</span><span class="state-value" id="stZoneAge">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Session P/L</span><span class="state-value" id="stSessionPL">&mdash;</span></div>
       <div class="state-box"><span class="state-label">Add-on entries used</span><span class="state-value" id="stAddons">0 buy  ·  0 sell</span></div>
@@ -4014,12 +4015,60 @@ function setPendingOrder(on) {
 //   forceLevels  always attach slPrice/tpPrice — the ICC Entry Model's levels are its own
 //                structure, not the pip settings, so the Attach SL/TP switches do not apply
 //   tpOverride   true when tpPrice is a structure target rather than the TP1 pip distance
+// =====================================================================================
+//  BIAS LOCK — always on, no setting. One direction at a time on the bot's instrument:
+//  while any trade is open there (the bot's, an adopted one, or one opened by hand), or a
+//  bot entry is still in flight, a signal the other way is logged but never placed. The
+//  lock releases by itself once every trade on the instrument has closed (TP, SL or by hand).
+// =====================================================================================
+function openDirection() {
+  var buy = false, sell = false;
+  var mark = function (d) { if (d === "buy") buy = true; else if (d === "sell") sell = true; };
+  enumerateOrders().forEach(function (o) {
+    if (!o || o.closeTime || !isBotInstrument(o.instrumentId)) return;
+    if (o.orderType === FXB.OrderTypes.BUY) mark("buy");
+    else if (o.orderType === FXB.OrderTypes.SELL) mark("sell");
+  });
+  // The bot's own book too, in case the platform's order list is slow or unreadable, and
+  // entries sent but not yet filled.
+  Object.keys(managedOrders).forEach(function (id) { mark(managedOrders[id].dir); });
+  pendingManagement.forEach(function (q) { mark(q.dir); });
+  return buy && sell ? "both" : buy ? "buy" : sell ? "sell" : null;
+}
+function biasLockText(d) {
+  return d === "both" ? "BUY and SELL trades are open — new entries blocked both ways"
+       : d ? d.toUpperCase() + " — " + (d === "buy" ? "SELL" : "BUY") + " signals blocked until the open " +
+             d.toUpperCase() + " trade" + " closes"
+       : "free — scanning both directions";
+}
+// Called every second: logs when the lock engages and releases, and updates the panel.
+var biasLockState = null;
+function checkBiasLock() {
+  var d = openDirection();
+  var el = document.getElementById("stBiasLock");
+  if (el) {
+    el.textContent = d ? biasLockText(d) : "FREE — both directions";
+    el.className = "state-value" + (d === "buy" ? " up" : d === "sell" ? " down" : d ? " ph-inval" : " muted");
+  }
+  if (d === biasLockState) return;
+  if (d) log("🔒 BIAS LOCK — " + biasLockText(d) + ".", "log-info");
+  else log("🔓 BIAS LOCK released — no open trades on " + cfg.instrumentId + ". Scanning both directions again.", "log-info");
+  biasLockState = d;
+}
+
 function submitOrder(eng, signalPrice, slPrice, tpPrice, reason, opts) {
   opts = opts || {};
   var sell = opts.dir ? opts.dir === "sell" : isSell(eng);
   var side = sell ? "SELL" : "BUY";
   // Every path out of this function says WHY, so "a signal fired but no trade appeared" is
   // always answerable from the log alone.
+  var lockDir = openDirection();
+  if (lockDir && lockDir !== (sell ? "sell" : "buy")) {
+    log("NO ORDER SENT — BIAS LOCK: " + (lockDir === "both" ? "BUY and SELL trades are" : "a " + lockDir.toUpperCase() + " trade is") +
+        " open on " + cfg.instrumentId + ", so this " + side + " is not placed. " + side + " entries resume once " +
+        (lockDir === "both" ? "those close" : "that trade closes") + ". (" + reason + ")", "log-warn");
+    return;
+  }
   if (cfg.tradingMode !== "live") {
     log("NO ORDER SENT — bot is in DRY RUN. Switch 'Trading mode' to Live Trading to place " +
         "real orders. (" + reason + ")", "log-warn");
@@ -5330,6 +5379,7 @@ function startUiTicker() {
     // Floating logs are throttled per order, so running this every second only guarantees
     // they appear even if the platform is slow to raise OnAccountMetrics.
     try { trackFloatingOrders(); } catch (e) {}
+    try { checkBiasLock(); } catch (e) {}
   }, 1000);
 }
 function stopUiTicker() {
@@ -5824,6 +5874,7 @@ function startBot() {
   resetTrendFilters();
   resetEntryModels();
   feedState = { since: Date.now(), loaded: false, warned: false, lastErr: null };
+  biasLockState = null;          // a trade already open at Start is reported on the first tick
   sessionPLKey = null;
   sessionPLSince = Date.now();
   // Performance (this session) starts from zero every time the bot goes live. Closed trades
@@ -5875,7 +5926,7 @@ function startBot() {
   log("Started on " + cfg.instrumentId + " @ " + cfg.timeframe + "s — " +
       (cfg.tradingMode === "live" ? "LIVE TRADING" : "DRY RUN (no orders)"), "log-info", {
     detail: [
-      "Direction   " + sides.join(" + "),
+      "Direction   " + sides.join(" + ") + "  ·  bias lock ON (one direction at a time)",
       "Engines     " + (engines.length ? engines.map(function (e) {
         return "E" + e.def.id + " " + e.def.name;
       }).join("\n            ") : "none — entry models only"),
