@@ -3365,30 +3365,49 @@ function modelTarget(kind, entry, dir, target) {
   return { tp: tp, how: "TP1 pips" };
 }
 
-// ICC Entry Model order. The event already happened on a closed 1H bar; anything that is
-// not from the bar that just closed is too late to chase and is only logged.
+// ICC Entry Model order, on the structure TF continuation close (see the late-entry window above).
+// How late an entry may still be taken: until the next structure candle closes. The candle
+// data can reach the bot late (a reconnect, or the platform catching up its history); one
+// structure candle later the signal is stale and is never chased.
+var LATE_ENTRY_NOTE_MS = 2 * 60 * 1000;     // later than this, the log says how late
 function placeIccModelEntry(e) {
-  var side = e.dir === "sell" ? "SELL" : "BUY";
-  if (Date.now() - e.ts > H1_SECONDS * 1000) {
-    log("[ICC ENTRY MODEL] NO ORDER SENT — the entry candle closed more than an hour ago (the feed " +
-        "caught up late). Not chasing it.", "log-warn");
+  var side = e.dir === "sell" ? "SELL" : "BUY", sell = e.dir === "sell";
+  var sec = structSec(cycleParams().structTf), sName = tfLabel(sec);
+  var age = Date.now() - e.ts, mins = Math.round(age / 60000);
+  if (age > sec * 1000) {
+    log("[ICC ENTRY MODEL] NO ORDER SENT — the " + sName + " entry candle closed " + mins + " min ago, more than one " +
+        sName + " candle (the feed caught up late). Not chasing it.", "log-warn");
     return;
   }
   if (side === "BUY" ? !cfg.enableBuys : !cfg.enableSells) {
     log("[ICC ENTRY MODEL] NO ORDER SENT — " + side + " signals are switched off under Trade Direction.", "log-warn");
     return;
   }
-  var s = modelStop("icc", e.entry, e.dir, e.sl1h, e.slStruct);
-  var tp = modelTarget("icc", e.entry, e.dir, e.target);
-  log("[ICC ENTRY MODEL] " + side + " " + fmt(e.entry) + " | SL " + fmt(s.sl) + " (" + s.how + ") | TP " +
+  // A late entry is a market order at today's price, so the levels are worked out from that
+  // price — and if price has already reached the target there is nothing left to take.
+  var late = age > LATE_ENTRY_NOTE_MS, px = late ? livePrice() : null;
+  var entry = late && px !== null ? px : e.entry;
+  if (late && e.target !== null && e.target !== undefined && (sell ? entry <= e.target : entry >= e.target)) {
+    log("[ICC ENTRY MODEL] NO ORDER SENT — the " + sName + " entry candle closed " + mins + " min ago and price (" +
+        fmt(entry) + ") has already reached the target " + fmt(e.target) + ". Not chasing it.", "log-warn");
+    return;
+  }
+  if (late) {
+    log("[ICC ENTRY MODEL] LATE ENTRY — the " + sName + " entry candle closed " + mins + " min ago (the feed caught up " +
+        "late). Entering at market " + fmt(entry) + " instead of the " + fmt(e.entry) + " close; the target is still ahead.",
+        "log-warn");
+  }
+  var s = modelStop("icc", entry, e.dir, e.sl1h, e.slStruct);
+  var tp = modelTarget("icc", entry, e.dir, e.target);
+  log("[ICC ENTRY MODEL] " + side + " " + fmt(entry) + " | SL " + fmt(s.sl) + " (" + s.how + ") | TP " +
       (tp.tp !== null ? fmt(tp.tp) : "none") + " (" + tp.how + ")", e.dir === "sell" ? "log-sell" : "log-buy");
   signalCount++;
   signalLog.push({ time: nyParts(e.ts).fullLabel, model: "ICC ENTRY MODEL", engine: "ICC ENTRY MODEL", kind: side,
-                   entry: e.entry, sl: s.sl, tp1: tp.tp === null ? "" : tp.tp, tp2: "", tp3: "",
-                   ref: "ICC " + cycleParams().structTf.toUpperCase(), bodyPct: "" });
+                   entry: entry, sl: s.sl, tp1: tp.tp === null ? "" : tp.tp, tp2: "", tp3: "",
+                   ref: "ICC " + cycleParams().structTf.toUpperCase() + (late ? " (late entry, " + mins + " min)" : ""), bodyPct: "" });
   refreshStatsDisplay();
   beep();
-  submitOrder(null, e.entry, s.sl, tp.tp, "[ICC ENTRY MODEL] " + side, {
+  submitOrder(null, entry, s.sl, tp.tp, "[ICC ENTRY MODEL] " + side + (late ? " (late entry)" : ""), {
     dir: e.dir, comment: BOT_TAG + "-ICC", forceLevels: true, holdForTarget: !!modelOpt("icc", "Trail")
   });
 }
