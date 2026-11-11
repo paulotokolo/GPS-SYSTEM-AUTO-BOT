@@ -662,6 +662,13 @@ function liveFvgOrder(over, cycleOver) {
     sb2.__logLines.some((l) => /fixed 40 pips — the most recent structure swing low is not beyond the entry/.test(l)));
   const st = { latest: { sHi: 110, sLo: 96 } };
   sb.cfg.gpsModelSlMode = "recent";
+  // The settings reader keeps the new value (it used to fold anything but "struct" to pips).
+  const rd = buildSandbox();
+  rd.document.getElementById("gpsModelSlMode").value = "recent";
+  let read = null;
+  try { read = rd.readConfig(); } catch (e) { read = { err: e.message }; }
+  check("7: the settings reader keeps 'recent' as the stop mode", read && read.gpsModelSlMode === "recent",
+    read && (read.err || read.gpsModelSlMode));
   check("7: sells use the latest structure swing high (110)", sb.gpsFvgStop(st, 103.4, "sell").sl === 110);
 }
 {

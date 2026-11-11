@@ -5651,7 +5651,8 @@ function readConfig() {
     gpsModelVolLookback: Math.max(1, int("gpsModelVolLookback", 20)),
     gpsModelVolMult: Math.max(0.1, num("gpsModelVolMult", 1.5)),
     gpsModelAlign: chk("gpsModelAlign"),
-    gpsModelSlMode: document.getElementById("gpsModelSlMode").value === "struct" ? "struct" : "pips",
+    gpsModelSlMode: ["struct", "recent"].indexOf(document.getElementById("gpsModelSlMode").value) >= 0
+      ? document.getElementById("gpsModelSlMode").value : "pips",
     gpsModelSlPips: Math.max(1, num("gpsModelSlPips", 100)),
     gpsModelVolOn: chk("gpsModelVolOn"),
     gpsModelTrail: chk("gpsModelTrail"),
