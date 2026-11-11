@@ -187,7 +187,7 @@ The cycle is replayed from history on every update, so on Start the phase is whe
 | Stop loss | **Fixed pip stop** | or the latest 1H swing high/low, or the latest structure swing high/low (wick); falls back to pips if the swing is not on the right side |
 | Trail after TP | OFF | ON: no TP is placed; the trade is not trailed until price reaches the target, then **Auto Trailing** takes over and the bot moves on |
 
-**ICC Entry Model** runs without the GPS engines: with it ON the bot starts even with every engine switched off (only the GPS Entry Model, which trades through the engines, needs at least one). The continuation **structure-TF close** (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades — only the 1H candle that just closed.
+**ICC Entry Model** runs without the GPS engines: with it ON the bot starts even with every engine switched off (only the GPS Entry Model, which trades through the engines, needs at least one). The continuation **structure-TF close** (alignment OFF) or the first trend-direction 1H close off the pullback (alignment ON) is the entry: one market order per cycle, tagged `GPSBOT-ICC`. It follows the master direction switches, Dry Run, sizing, the daily cap, circuit breaker and trading window, but not the 50 EMA / ICC filter. History never trades. **Late entries:** if the candle data reaches the bot late (a reconnect, or the platform catching up its history), the entry is still taken until the next structure candle closes (up to 4 h late on 4H, 24 h on Daily) — at market, with SL/TP worked out from the current price, logged as `LATE ENTRY — the 4H entry candle closed N min ago…` and marked in the CSV — unless price has already reached the target. Older than one structure candle, it is never chased.
 
 **ICC Entry Model — Aggressive Entry Mode** (toggle, default OFF). Same shared cycle; only the trigger changes. After the indication the model **arms only when a structure-TF candle body (1H, 4H or Daily, whichever the cycle uses) closes back inside the NTZ** — a tick, a wick or a close on a lower timeframe never arms it — and the entry fires the moment **live** price crosses back out through the broken level (above the NTZ high on a bullish cycle, below the low on a bearish one) — no candle close, no structure confirmation, no pullback wait, and **alignment has no effect** (use Standard for alignment). SL sits inside the 1H swing range: the midpoint of the latest 1H swing high and swing low, or halfway to the arming candle's low (high on sells) if that midpoint is not below the entry. TP is the structure target; Trail after TP works as in Standard. Each arm is used once; another structure-TF close back inside re-arms it — **max 2 entries per cycle**. Live price has to be seen inside after an arm before a cross counts, so a bot started with price already outside never chases a cross that happened while it was off. Orders are tagged `GPSBOT-ICCA`; the panel's *Entry mode* row shows ARMED / waiting and entries used.
 
@@ -263,7 +263,7 @@ change them on their chart.
 | File | Purpose |
 | :--- | :--- |
 | `gps_bot.html` | The bot. Single self-contained widget — load this into Liquid Charts Pro. |
-| `tests/` | Automated test suite (590 assertions). |
+| `tests/` | Automated test suite (598 assertions). |
 | `tests/run-all.js` | Runs every suite and prints a combined tally. |
 
 The Pine source itself is deliberately **not** included here — it is the client's intellectual property, and this is a public repository. It can be added to a private repo on request.
@@ -596,10 +596,10 @@ test_sell          49 pass   0 fail
 test_adopt         53 pass   0 fail
 test_window        33 pass   0 fail
 test_icc           67 pass   0 fail
-test_models       184 pass   0 fail
+test_models       192 pass   0 fail
 test_biaslock      21 pass   0 fail
 ----------------------------------------
-TOTAL: 590 pass, 0 fail
+TOTAL: 598 pass, 0 fail
 ```
 
 The suite loads the real engine out of `gps_bot.html` into a stubbed FXBlue sandbox and drives it with synthetic candles. `test_pine_parity.js` specifically locks in each behaviour corrected against the source, with the Pine line cited in the test.
@@ -643,7 +643,7 @@ Only switch to **Live Trading** once the timestamps line up. Live mode places re
 - Refuses to start above the indicator's M30 timeframe limit
 - If the broker drops the SL/TP on the opening request, the bot reattaches them and warns loudly if that fails
 - Trend gates: 50 EMA on the 1H/4H, and the ICC Filter on the shared ICC cycle
-- ICC entry models: one ICC Entry Model trade per cycle (two in Aggressive mode), never from history, never off a 1H candle more than an hour old; every cycle times out after *Max wait* structure candles per phase
+- ICC entry models: one ICC Entry Model trade per cycle (two in Aggressive mode), never from history, never off a structure candle more than one structure candle old; every cycle times out after *Max wait* structure candles per phase
 - Refuses to start with every engine switched off, and warns when the stop is set to 0 pips
 
 ---

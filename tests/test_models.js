@@ -370,6 +370,52 @@ const RUN = [[107, 105, 103.5, 103], [104.5, 106, 109, 111]];
     locks.map((e) => e.text).join(" || "));
 }
 
+// ---------------------------------------------------------------- 5b: late entries
+// The candle data can reach the bot late. An ICC entry is still taken until the next
+// structure candle closes, at market, with its levels from the current price — unless price
+// has already reached the target. Older than one structure candle: never chased.
+{
+  const MIN = 60e3;
+  const ev = (ageMin, over) => Object.assign({ act: "entry", dir: "sell", entry: 4005.10, target: 3895.08, sl1h: null, slStruct: null,
+    ts: Date.now() - ageMin * MIN }, over || {});
+  const sbAt = (px) => {
+    const sb = modelSandbox();
+    sb.pendingManagement = [];
+    sb.tradingStore = storeOf([{ ts: END - H1, o: px, h: px, l: px, c: px }], 900e3, { o: px, h: px, l: px, c: px });
+    return sb;
+  };
+  const fresh = sbAt(4005.10);
+  fresh.placeIccModelEntry(ev(0.5));
+  check("5b: on time: placed at the candle close, no late note", fresh.__orders.length === 1 &&
+    !fresh.__logLines.some((l) => /LATE ENTRY/.test(l)));
+
+  const late = sbAt(3998.2);
+  late.placeIccModelEntry(ev(63));
+  const o = late.__orders[0];
+  check("5b: 63 min late on 4H (the client's case): still placed", !!o && o.tradingAction === "SELL");
+  check("5b: the log says how late, and that it enters at market",
+    late.__logLines.some((l) => /LATE ENTRY — the 4H entry candle closed 63 min ago \(the feed caught up late\)\. Entering at market 3998\.20 instead of the 4005\.10 close/.test(l)));
+  check("5b: levels are worked out from the market price (SL 100 pips above 3998.20)",
+    late.__logLines.some((l) => /\[ICC ENTRY MODEL\] SELL 3998\.20 \| SL 4008\.20/.test(l)) && o.sl.pips === 100 && o.tp.pips === 1031.2,
+    JSON.stringify(o && [o.sl, o.tp]));
+  check("5b: the CSV row is marked as a late entry", /late entry, 63 min/.test(late.signalLog[0].ref) && late.signalLog[0].entry === 3998.2);
+
+  const old = sbAt(3998.2);
+  old.placeIccModelEntry(ev(4 * 60 + 5));
+  check("5b: older than one 4H candle: not placed", old.__orders.length === 0 &&
+    old.__logLines.some((l) => /NO ORDER SENT — the 4H entry candle closed 245 min ago, more than one 4H candle/.test(l)));
+
+  const past = sbAt(3890);
+  past.placeIccModelEntry(ev(63));
+  check("5b: late, and price already through the target: not placed", past.__orders.length === 0 &&
+    past.__logLines.some((l) => /price \(3890\.00\) has already reached the target 3895\.08/.test(l)));
+
+  const daily = sbAt(3998.2);
+  daily.cfg.iccStructTf = "daily";
+  daily.placeIccModelEntry(ev(10 * 60));
+  check("5b: on Daily structure the window is one Daily candle (10 h late still placed)", daily.__orders.length === 1);
+}
+
 // ---------------------------------------------------------------- 6: alignment entries
 const dailyBull = [
   { ts: START - 4 * D1, o: 99, h: 101, l: 98, c: 100, v: 1 }, { ts: START - 3 * D1, o: 100, h: 105, l: 99, c: 104, v: 1 },
