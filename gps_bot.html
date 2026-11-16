@@ -2879,7 +2879,8 @@ function newCycleState() {
     phase: "WAITING",           // WAITING / INDICATION / CORRECTION / CONTINUATION
     status: "SCANNING",         // SCANNING / WAITING FOR INDICATION / ACTIVE — the current cycle only
     lastCycle: null,            // how the previous cycle ended: { why, ts, iccEntered, gpsActive, key }
-    needsFreshBreak: false,     // re-locked the pair a cycle just finished on: wait for price back inside
+    armed: true,                // a break counts; false after a cycle ends until a close inside the NTZ
+    usedSwing: null,            // { dir, ts } — the swing the last cycle broke: it cannot start another one
     indClose: null, indTs: null,// the structure close that made the indication, for the panel
     contBarTs: null,            // open time of the structure TF candle whose close made continuation
     contTs: null,               // the close time of that candle
@@ -2936,30 +2937,34 @@ function runIccCycle(p, data, mods) {
   var reset = function (t, status, why) {
     var last = { why: why, ts: t, iccEntered: !!st.m.icc.entered, gpsActive: !!st.m.gps.active,
                  key: st.lockHiTs + "/" + st.lockLoTs + "/" + st.dir + "/" + st.indBarTs };
+    var used = st.dir ? { dir: st.dir, ts: st.dir === "buy" ? st.lockHiTs : st.lockLoTs,
+                          val: st.dir === "buy" ? st.lockHigh : st.lockLow } : null;
     var keep = { resetWhy: why, events: st.events, lastIccEntry: st.lastIccEntry, lastCycle: last,
-                 prevPair: st.lockHiTs + "/" + st.lockLoTs, latest: st.latest, align: st.align };
+                 prevPair: st.lockHiTs + "/" + st.lockLoTs, latest: st.latest, align: st.align,
+                 armed: false, usedSwing: used };
     st = Object.assign(newCycleState(), keep);
     tryLock(t);
   };
   // Lock the most recent confirmed swing high and swing low — no waiting for "fresh" ones,
-  // and as soon as the missing half confirms. If that is the very pair a cycle just finished
-  // on (target hit or timed out), the NTZ is drawn but a new break only counts once price has
-  // been back inside it, or once a newer swing replaces one side — so the same move is never
-  // traded twice.
+  // and as soon as the missing half confirms. After ANY cycle ending (complete, timeout or
+  // invalidated) the levels the last cycle used are spent: a new indication needs a fresh
+  // structure close breaking out of the NTZ from inside it (never price already sitting
+  // outside), and never through the very swing the last cycle broke — that side needs a new
+  // confirmed swing first. So the same move is never traded twice.
   var tryLock = function (t) {
     var shs = latestSwing(sSw, true, t), sls = latestSwing(sSw, false, t);
     st.pendHi = shs ? shs.val : null;
     st.pendLo = sls ? sls.val : null;
     if (!shs || !sls || !(shs.val > sls.val)) return false;
-    var same = (shs.ts + "/" + sls.ts) === st.prevPair && (st.resetWhy === "COMPLETE" || st.resetWhy === "TIMEOUT");
     st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
     st.lockHiWick = shs.bar.h; st.lockLoWick = sls.bar.l;
     st.status = "WAITING FOR INDICATION";
-    st.needsFreshBreak = same;
     emit(t, "LOCK", "Swing high locked: " + fmt(st.lockHigh) + " | Swing low locked: " + fmt(st.lockLow) +
-         " — NTZ set (" + sName + "). " + (same
-           ? "Same levels as the cycle that just ended — a new break counts once price is back inside them."
-           : "They follow newer swings until a break, then freeze for the cycle."));
+         " — NTZ set (" + sName + "). " + (st.armed
+           ? "They follow newer swings until a break, then freeze for the cycle."
+           : "Previous cycle's levels are used up — a new break counts only after a " + sName + " close back inside the NTZ" +
+             (st.usedSwing ? ", and not through the " + (st.usedSwing.dir === "buy" ? "swing high " : "swing low ") +
+                             fmt(st.usedSwing.val) + " the last cycle broke" : "") + "."));
     return true;
   };
   // A newer swing replaces the NTZ while waiting for a break. A pair that is not a range
@@ -2972,7 +2977,9 @@ function runIccCycle(p, data, mods) {
     st.lockHigh = shs.val; st.lockLow = sls.val; st.lockHiTs = shs.ts; st.lockLoTs = sls.ts;
     st.lockHiWick = shs.bar.h; st.lockLoWick = sls.bar.l;
     st.pendHi = shs.val; st.pendLo = sls.val;
-    st.needsFreshBreak = false;
+    // After a cycle has ended, a changed NTZ still needs a close inside it before a break
+    // counts (this same close is checked next).
+    if (st.resetWhy) st.armed = false;
     emit(t, "RELOCK", "NTZ UPDATED — new " + sName + " swing confirmed. Swing high: " + fmt(st.lockHigh) +
          " | Swing low: " + fmt(st.lockLow) + " (was " + was + "). No break yet, so the NTZ follows the most recent swings.");
   };
@@ -3203,16 +3210,24 @@ function runIccCycle(p, data, mods) {
       }
 
       if (st.phase === "WAITING") {
-        if (st.needsFreshBreak) {
+        if (!st.armed) {
           if (b.c <= st.lockHigh && b.c >= st.lockLow) {
-            st.needsFreshBreak = false;
-            emit(t, "FRESH", "Price closed back inside the NTZ " + fmt(st.lockLow) + " – " + fmt(st.lockHigh) +
-                 ". A new break of these levels now counts as an indication.");
+            st.armed = true;
+            emit(t, "FRESH", sName + " closed inside the NTZ " + fmt(st.lockLow) + " – " + fmt(st.lockHigh) +
+                 ". A fresh break out of it now counts as an indication.");
           }
           continue;
         }
         if (b.c > st.lockHigh || b.c < st.lockLow) {
-          st.dir = b.c > st.lockHigh ? "buy" : "sell";
+          var up = b.c > st.lockHigh, swTs = up ? st.lockHiTs : st.lockLoTs;
+          if (st.usedSwing && st.usedSwing.dir === (up ? "buy" : "sell") && st.usedSwing.ts === swTs) {
+            if (st.usedNoted !== swTs) emit(t, "USED|" + swTs, sName + " closed " + (up ? "above " : "below ") + fmt(up ? st.lockHigh : st.lockLow) +
+                 " — NOT an indication: the last cycle already broke this swing. Waiting for a new swing " +
+                 (up ? "high" : "low") + " to confirm.", "log-warn");
+            st.usedNoted = swTs;
+            continue;
+          }
+          st.dir = up ? "buy" : "sell";
           st.phase = "INDICATION"; st.status = "ACTIVE";
           st.indBarTs = b.ts; st.waitCount = 0;
           st.indClose = b.c; st.indTs = t;
@@ -3230,8 +3245,8 @@ function runIccCycle(p, data, mods) {
              "Cycle INVALIDATED. Resetting.", "log-warn",
              { act: "disrespect", wasDir: st.dir, level: bull() ? st.lockLow : st.lockHigh });
         reset(t, "RESET", "DISRESPECT");
-        // The same close may already be the break the other way: re-check it against the
-        // re-locked levels.
+        // Re-check the same close against the re-locked levels: like every reset it can only
+        // re-arm the NTZ (a close inside it), never start the opposite cycle by itself.
         i--;
         continue;
       }
@@ -3846,7 +3861,11 @@ function renderModelPanels() {
     set(pre + "Expires", ex.text, ex.cls);
     set(pre + "Pos", pv.text, pv.cls);
     set(pre + "Ntz", st.lockHigh !== null
-        ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) + (st.needsFreshBreak ? "  (waiting for price back inside)" : "")
+        ? fmt(st.lockHigh) + " / " + fmt(st.lockLow) + (st.dir ? "" : !st.armed ? "  (waiting for a close inside)"
+            : st.usedSwing && st.usedSwing.ts === (st.usedSwing.dir === "buy" ? st.lockHiTs : st.lockLoTs)
+              ? "  (" + (st.usedSwing.dir === "buy" ? "high" : "low") + " used — waiting for a new swing " +
+                (st.usedSwing.dir === "buy" ? "high" : "low") + ")"
+            : "")
         : (st.pendHi !== null ? fmt(st.pendHi) : "high pending") + " / " + (st.pendLo !== null ? fmt(st.pendLo) : "low pending"),
         st.lockHigh !== null ? "" : "muted");
     if (alignOn) {

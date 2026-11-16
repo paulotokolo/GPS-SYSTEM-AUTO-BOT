@@ -312,15 +312,16 @@ const RUN = [[107, 105, 103.5, 103], [104.5, 106, 109, 111]];
 
 // ---------------------------------------------------------------- 5: resets
 {
-  // Disrespect: a 4H close below 101 after the bullish break. The same close is the break the
-  // other way, so it re-locks and indicates BEARISH straight away.
+  // Disrespect: a 4H close below 101 after the bullish break. Like every cycle ending, it goes
+  // back to WAITING: price is already outside the re-locked NTZ, so that close is NOT a new
+  // indication — a fresh break needs a close back inside first.
   const g = BASE.slice(0, 7).concat([[105, 103, 101, 100.5]]);
   const s = series(g, START);
   const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
   check("5: a 4H body close back through the NTZ is DISRESPECT",
     st.events.some((e) => /LEVEL DISRESPECTED — 4H body closed below 101\.00/.test(e.text)));
-  check("5: and that same close is the bearish INDICATION of the next cycle",
-    st.dir === "sell" && st.phase === "INDICATION", st.dir + " " + st.phase);
+  check("5: and it goes back to WAITING, not straight into a bearish indication",
+    !st.dir && st.phase === "WAITING" && st.armed === false && st.lastCycle.why === "DISRESPECT", st.dir + " " + st.phase);
 }
 {
   const g = BASE.slice(0, 7).concat([[110, 111, 112, 113], [114, 115, 116, 117], [118, 119, 120, 121]]);
@@ -366,7 +367,7 @@ const RUN = [[107, 105, 103.5, 103], [104.5, 106, 109, 111]];
   const s = series(g, START - 4 * H4);
   const st = cycle(modelSandbox(), { d1: [], h4: s.h4, h1: s.h1 });
   const locks = st.events.filter((e) => e.type === "LOCK");
-  check("5: after COMPLETE, the next lock uses fresh swings", locks.length >= 2 && !/104\.00/.test(locks[1].text),
+  check("5: after COMPLETE, the next lock uses fresh swings", locks.length >= 2 && !/Swing high locked: 104\.00/.test(locks[1].text),
     locks.map((e) => e.text).join(" || "));
 }
 
@@ -414,6 +415,63 @@ const RUN = [[107, 105, 103.5, 103], [104.5, 106, 109, 111]];
   daily.cfg.iccStructTf = "daily";
   daily.placeIccModelEntry(ev(10 * 60));
   check("5b: on Daily structure the window is one Daily candle (10 h late still placed)", daily.__orders.length === 1);
+}
+
+// ---------------------------------------------------------------- 5c: every cycle ending resets the same way
+// The client's XAUUSD case: a bearish cycle hits its target, the re-lock keeps the low it broke
+// (no new swing low confirmed yet) with a NEW swing high, and price is already far below. The
+// old guard only fired on the exact same pair, so the next 4H close re-indicated off the
+// spent low. Now: back to WAITING (NTZ latest), no indication until a close inside the NTZ,
+// and never through the swing the last cycle broke.
+function ramp(closes4, start) {     // each 4H close made of four 1H steps towards it
+  const h1 = [], h4 = []; let prev = closes4[0];
+  closes4.forEach((c, gi) => {
+    const g = [prev + (c - prev) * 0.25, prev + (c - prev) * 0.5, prev + (c - prev) * 0.75, c];
+    const bars = g.map((x, k) => { const o = k ? g[k - 1] : prev;
+      return { ts: start + (gi * 4 + k) * H1, o, h: Math.max(o, x) + 0.2, l: Math.min(o, x) - 0.2, c: x, v: 1 }; });
+    prev = c; h1.push(...bars);
+    h4.push({ ts: bars[0].ts, o: bars[0].o, h: Math.max(...bars.map((b) => b.h)), l: Math.min(...bars.map((b) => b.l)), c, v: 4 });
+  });
+  return { h1, h4 };
+}
+const at4 = (closes, k) => END - closes.length * H4 + (k + 1) * H4;     // close time of 4H candle k
+{
+  const C = [100, 101, 106, 103, 101, 102, 103, 100, 104, 99, 90, 88, 87, 86, 90, 92, 85];
+  const run = (n) => { const s = ramp(C.slice(0, n), END - C.length * H4);
+    return cycle(modelSandbox({ iccSwingStrength: 2 }), { d1: [], h4: s.h4, h1: s.h1 }); };
+  const st = run(12);
+  const done = st.events.find((e) => e.type === "COMPLETE");
+  check("5c: the bearish cycle completes at its target (89)", !!done && st.lastCycle.why === "COMPLETE");
+  check("5c: re-locked 104 / 101 — the low is the one the cycle broke", st.lockHigh === 104 && st.lockLow === 101, st.lockHigh + "/" + st.lockLow);
+  check("5c: the next 4H close (88, far below 101) is NOT a new indication — back to WAITING, waiting for a close inside",
+    !st.dir && st.phase === "WAITING" && st.armed === false && !st.events.some((e) => e.type === "INDICATION" && e.ts > done.ts),
+    st.phase + " " + st.dir);
+  const sbp = modelSandbox({ iccSwingStrength: 2 }); sbp.engines = []; sbp.iccCycle = st; sbp.renderModelPanels();
+  check("5c: panel — NTZ (latest) with 'waiting for a close inside'",
+    sbp.document.getElementById("mIccNtz").textContent === "104.00 / 101.00  (waiting for a close inside)" &&
+    /^NTZ levels \(latest\)/.test(sbp.document.getElementById("mIccNtzLabel").textContent),
+    sbp.document.getElementById("mIccNtz").textContent);
+  const st2 = run(17);
+  const relock = st2.events.find((e) => e.type === "RELOCK" && /Swing low: 86\.00/.test(e.text));
+  check("5c: while waiting the NTZ follows the new swing low (86)", !!relock && relock.ts === at4(C, 15));
+  check("5c: a close inside the updated NTZ re-arms it", st2.events.some((e) => e.type === "FRESH" && e.ts === at4(C, 15)));
+  const ind = st2.events.filter((e) => e.type === "INDICATION").pop();
+  check("5c: then a fresh 4H close below the new low is the next indication", !!ind && ind.ts === at4(C, 16) &&
+    /closed below NTZ 86\.00/.test(ind.text), ind && ind.text);
+}
+{
+  // Strength 3: price comes back inside before the new swing low confirms, then closes below
+  // the same low the last cycle broke — that is not an indication.
+  const C = [99, 99.5, 100, 101, 106, 103, 102.5, 101, 102, 103, 103.5, 100, 104, 99, 90, 88, 102, 100, 99.5, 98, 103];
+  const s = ramp(C, END - C.length * H4);
+  const st = cycle(modelSandbox({ iccSwingStrength: 3 }), { d1: [], h4: s.h4, h1: s.h1 });
+  const used = st.events.find((e) => e.type.startsWith("USED"));
+  check("5c: back inside, then a close below the spent low (101) is NOT an indication", !!used && used.ts === at4(C, 17) &&
+    /NOT an indication: the last cycle already broke this swing\. Waiting for a new swing low/.test(used.text), used && used.text);
+  check("5c: no bearish indication off 101 after the cycle ended",
+    !st.events.some((e) => e.type === "INDICATION" && e.ts > used.ts - 1 && /below NTZ 101\.00/.test(e.text)));
+  check("5c: once new swings confirm, a fresh break is an indication again",
+    st.dir === "buy" && st.events.filter((e) => e.type === "INDICATION").pop().ts === at4(C, 20));
 }
 
 // ---------------------------------------------------------------- 6: alignment entries
@@ -695,7 +753,7 @@ function liveFvgOrder(over, cycleOver) {
   const sb = fvgSandbox();
   sb.engines = [];
   const T0 = Math.floor(Date.now() / M15) * M15 - FVG_ROWS.length * M15;
-  const base = { waitCount: 0, lastCycle: null, needsFreshBreak: false, indClose: null, indTs: null, align: { d: "NTZ", h4: "NTZ" } };
+  const base = { waitCount: 0, lastCycle: null, indClose: null, indTs: null, align: { d: "NTZ", h4: "NTZ" } };
   const txt = () => sb.document.getElementById("mGpsEngines").textContent;
   sb.iccCycle = liveCycle(T0, Object.assign({}, base, { phase: "CORRECTION", m: { gps: { active: false }, icc: {} } }));
   sb.renderModelPanels();
@@ -909,8 +967,8 @@ const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], 
   st.events.filter((e) => !/IGNORED/.test(e.type)).forEach((e) => console.log(e.text));
   check("8c: after the timeout the NTZ is re-locked immediately (never blank)",
     st.lastCycle.why === "TIMEOUT" && st.lockHigh === 104 && st.lockLow === 101);
-  check("8c: it is marked as waiting for price back inside",
-    st.needsFreshBreak === true && st.status === "WAITING FOR INDICATION");
+  check("8c: it is marked as waiting for a close back inside",
+    st.armed === false && st.status === "WAITING FOR INDICATION");
   check("8c: a close still above the re-used high does NOT start a new cycle", st.phase === "WAITING" && !st.dir);
 }
 {
@@ -918,7 +976,7 @@ const RERUN = [[99, 100, 100, 100], [102, 104, 104, 104], [103, 102, 101, 101], 
   const s = series(RERUN.concat([[120, 110, 105, 103]]), START - 7 * H4);
   const st = cycle(sb, { d1: [], h4: s.h4, h1: s.h1 });
   check("8c: once a newer swing confirms it replaces the re-used pair",
-    st.lockHigh === 125 && st.needsFreshBreak === false, st.lockHigh + " " + st.needsFreshBreak);
+    st.lockHigh === 125 && st.lockLow === 101 && st.armed === true && st.phase === "WAITING", st.lockHigh + " " + st.lockLow + " " + st.armed);
 }
 {
   // The panel: current status and last cycle are separate, so they never contradict.

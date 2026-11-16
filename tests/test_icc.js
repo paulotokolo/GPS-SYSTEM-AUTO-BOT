@@ -196,7 +196,7 @@ function flipScenario(over) {
   console.log("\n===== 5: DISRESPECT AGAINST AN OPEN BUY =====");
   sb.__logLines.filter((l) => /ICC|Closed/.test(l)).forEach((l) => console.log(l));
   check("5: the disrespect close is logged", sb.__logLines.some((l) => /LEVEL DISRESPECTED — 4H body closed below 101\.00/.test(l)));
-  check("5: and that same close flips the shared cycle (and the filter) BEARISH", sb.icc.bias === "BEARISH", sb.icc.bias);
+  check("5: after the reset the filter is back to NTZ — the disrespect close is not a new indication", sb.icc.bias === "NTZ", sb.icc.bias);
   check("5: the open BUY gets an invalidation warning",
     sb.__logLines.some((l) => /ICC INVALIDATION WARNING — 4H candle closed below 101\.00 against open buy position \(B1\)/.test(l)));
   check("5: with auto close OFF nothing is closed", !sb.__orders.some((o) => o.tradingAction === "CLOSE"));
